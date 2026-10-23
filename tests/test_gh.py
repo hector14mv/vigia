@@ -153,12 +153,32 @@ def test_prs_reads_ci_from_pr_view_when_pr_list_lags():
 
 
 def test_prs_returns_every_listed_pr_sorted_by_number_in_the_pr_dict_shape():
-    views = {n: {"number": n, "headRefOid": f"sha{n}"} for n in (9, 3, 7)}
+    views = {
+        n: {"number": n, "headRefOid": f"sha{n}", "labels": [{"name": "vigia:ready"}]} for n in (9, 3, 7)
+    }
     runner = RoutedRunner([{"number": 9}, {"number": 3}, {"number": 7}], views)
     gh = GitHub("acme/app", runner=runner)
     result = gh.prs("vigia:ready")
     assert [p["number"] for p in result] == [3, 7, 9]
     assert result == [gh.pr(3), gh.pr(7), gh.pr(9)]
+
+
+def test_prs_drops_a_listed_pr_whose_fresh_labels_no_longer_carry_the_label():
+    views = {
+        2: {"number": 2, "labels": [{"name": "T0"}]},  # label removed after the listing
+        3: {"number": 3, "labels": [{"name": "vigia:ready"}]},
+    }
+    runner = RoutedRunner([{"number": 2}, {"number": 3}], views)
+    assert [p["number"] for p in GitHub("acme/app", runner=runner).prs("vigia:ready")] == [3]
+
+
+def test_prs_drops_a_listed_pr_that_is_no_longer_open():
+    views = {
+        2: {"number": 2, "state": "MERGED", "labels": [{"name": "vigia:ready"}]},
+        3: {"number": 3, "state": "OPEN", "labels": [{"name": "vigia:ready"}]},
+    }
+    runner = RoutedRunner([{"number": 2}, {"number": 3}], views)
+    assert [p["number"] for p in GitHub("acme/app", runner=runner).prs("vigia:ready")] == [3]
 
 
 def test_prs_is_empty_when_nothing_carries_the_label():

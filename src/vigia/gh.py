@@ -194,7 +194,8 @@ class GitHub:
         """The open PRs carrying `label`, sorted by number.
 
         `gh pr list` only picks the numbers: its `statusCheckRollup` can lag minutes behind GitHub, so each
-        PR's state is read with `gh pr view`, the same call `pr()` makes.
+        PR's state is read with `gh pr view`, the same call `pr()` makes. The view is fresher than the
+        listing, so a PR closed or stripped of `label` in between is dropped.
         """
         out = self._gh(
             "pr",
@@ -211,7 +212,8 @@ class GitHub:
             "number",
         )
         numbers = sorted(r["number"] for r in json.loads(out or "[]"))
-        return [self.pr(n) for n in numbers]
+        fresh = [self.pr(n) for n in numbers]
+        return [p for p in fresh if p["state"] == "OPEN" and label in p["labels"]]
 
     def pr(self, number: int) -> dict:
         return _pr(json.loads(self._gh("pr", "view", str(number), "-R", self.repo, "--json", PR_FIELDS)))
