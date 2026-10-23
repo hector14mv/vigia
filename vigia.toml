@@ -1,0 +1,42 @@
+# vigia — AI agents write the code. A different lab reviews it. A script with no AI merges it.
+# Docs: https://github.com/hector14mv/vigia/blob/main/docs/operating-model.md
+
+[repo]
+name = "hector14mv/vigia"
+base = "main"
+
+# One table per damage tier. The gate must come from the other lab than the builder.
+# T0: cosmetic, docs, tests, internal tooling — builder + gate.
+# T1: product logic with no money and no other people's data — + a stronger reviewer.
+# T2: money, auth, data, migrations, messages to customers, credentials — + a human label.
+
+[tiers.T0]
+builder = { engine = "claude", model = "claude-sonnet-5-5", effort = "medium" }
+gate = { engine = "codex", model = "gpt-6.1-sol", effort = "medium" }
+
+[tiers.T1]
+builder = { engine = "claude", model = "claude-sonnet-5-5", effort = "high" }
+gate = { engine = "codex", model = "gpt-6.1-sol", effort = "medium" }
+reviewer = { engine = "claude", model = "claude-opus-5-5", effort = "high" }
+
+[tiers.T2]
+builder = { engine = "claude", model = "claude-opus-5-5", effort = "high" }
+gate = { engine = "codex", model = "gpt-6.1-sol", effort = "high" }
+reviewer = { engine = "claude", model = "claude-fable-5-1", effort = "high" }
+human = true
+
+[caps]
+gate_rounds = 2
+fix_rounds = 2
+review_rounds = 2
+attempts = 3
+session_minutes = 30
+
+[checks]
+require_ci = true
+test_command = "uv run --quiet --with pytest --with ruff sh -c 'ruff check . && ruff format --check . && pytest -q'"
+humans = ["hector14mv"]
+
+[watch]
+build = true
+interval_seconds = 120
