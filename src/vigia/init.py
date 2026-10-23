@@ -80,6 +80,13 @@ def _detect(runner: Callable[..., proc.Result], cwd: Path) -> tuple[str | None, 
     return None, "main"
 
 
+def _login(runner: Callable[..., proc.Result]) -> str | None:
+    """The logged-in GitHub login, or None when it cannot be read."""
+    r = _ok(runner, ["gh", "api", "user", "--jq", ".login"])
+    login = r.stdout.strip() if r and r.code == 0 else ""
+    return login if login and len(login.split()) == 1 else None
+
+
 def _test_command(root: Path) -> str:
     if (root / "pyproject.toml").exists() or (root / "setup.py").exists():
         python = "python" if shutil.which("python") else "python3"  # macOS ships only python3
@@ -159,11 +166,23 @@ def init(
     guess = _test_command(root)
     test_command = guess if assume_yes else ask("Test command builders run (optional)", guess)
 
+    login = _login(runner)
+    humans = [login] if login else []
+    if not assume_yes:
+        answer = ask(
+            "Who may add vigia:human-ok on T2 changes? (comma-separated GitHub logins)", login or ""
+        ).strip()
+        if answer:
+            humans = [h for h in (part.strip() for part in answer.split(",")) if h]
+    if not humans:
+        say("Could not read your GitHub login: humans = [], so anyone with write access can approve T2.")
+
     cfg = Config(
         repo=repo,
         base=base,
         tiers=tiers,
         test_command=test_command.strip() or None,
+        humans=tuple(humans),
         engine_args={e: dict(r) for e, r in config_mod.DEFAULT_ENGINE_ARGS.items()},
     )
     text = config_mod.render(cfg)

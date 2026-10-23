@@ -10,12 +10,16 @@ from vigia.proc import Result
 OK_CLAUDE = json.dumps({"loggedIn": True})
 
 
-def make_runner(root: Path, claude: str = OK_CLAUDE, codex: str = "Logged in using ChatGPT"):
+def make_runner(
+    root: Path, claude: str = OK_CLAUDE, codex: str = "Logged in using ChatGPT", login: str | None = "octocat"
+):
     calls: list[list[str]] = []
 
     def runner(args, **kwargs):
         calls.append(list(args))
         head = list(args[:2])
+        if list(args) == ["gh", "api", "user", "--jq", ".login"]:
+            return Result(0, f"{login}\n", "") if login is not None else Result(1, "", "not logged in")
         if head == ["git", "--version"]:
             return Result(0, "git version 2.40.0\n", "")
         if head == ["git", "rev-parse"]:
@@ -130,6 +134,60 @@ def test_init_builder_codex_gates_with_claude(tmp_path):
         policy = cfg.policy(tier)
         assert policy.builder.engine == "codex"
         assert policy.gate.engine == "claude"
+
+
+HUMANS_PROMPT = "Who may add vigia:human-ok on T2 changes? (comma-separated GitHub logins)"
+
+
+def scripted_ask(humans_answer: str | None):
+    """Accept every default except the humans prompt; record the default it was offered."""
+    seen: dict[str, str] = {}
+
+    def ask(prompt: str, default: str) -> str:
+        if prompt == HUMANS_PROMPT:
+            seen["default"] = default
+            return default if humans_answer is None else humans_answer
+        return default
+
+    ask.seen = seen
+    return ask
+
+
+def test_init_yes_writes_the_logged_in_login_as_humans(tmp_path):
+    path, messages = run_init(tmp_path)
+    assert config_mod.load(path).humans == ("octocat",)
+    assert 'humans = ["octocat"]' in path.read_text(encoding="utf-8")
+    assert not any("anyone with write access" in m for m in messages)
+
+
+def test_init_interactive_default_is_the_login_and_empty_answer_keeps_it(tmp_path):
+    ask = scripted_ask("")
+    path = init(tmp_path, ask, lambda m: None, runner=make_runner(tmp_path), create_labels=False)
+    assert ask.seen["default"] == "octocat"
+    assert config_mod.load(path).humans == ("octocat",)
+
+
+def test_init_interactive_answer_with_two_logins(tmp_path):
+    ask = scripted_ask(" alice, bob ,")
+    path = init(tmp_path, ask, lambda m: None, runner=make_runner(tmp_path), create_labels=False)
+    assert config_mod.load(path).humans == ("alice", "bob")
+
+
+def test_init_login_unreadable_writes_empty_humans_and_warns(tmp_path):
+    path, messages = run_init(tmp_path, runner=make_runner(tmp_path, login=None))
+    assert config_mod.load(path).humans == ()
+    assert "humans = []" in path.read_text(encoding="utf-8")
+    warnings = [m for m in messages if "anyone with write access" in m]
+    assert len(warnings) == 1 and "T2" in warnings[0]
+
+
+def test_init_login_unreadable_interactive_empty_answer_stays_empty(tmp_path):
+    ask = scripted_ask("")
+    messages: list[str] = []
+    path = init(tmp_path, ask, messages.append, runner=make_runner(tmp_path, login=None), create_labels=False)
+    assert ask.seen["default"] == ""
+    assert config_mod.load(path).humans == ()
+    assert any("anyone with write access" in m for m in messages)
 
 
 def test_init_uses_only_the_fake_runner_for_the_clone(tmp_path):
