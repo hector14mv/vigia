@@ -54,7 +54,7 @@ class Ctx:
             gh=GitHub(cfg.repo, cwd=root),
             git=Git(clone, root),
             ledger=Ledger(state / "ledger.jsonl"),
-            engines=Engines(cfg, state / "logs"),
+            engines=Engines(cfg, state / "logs", root=root),
             root=root,
             say=say,
         )

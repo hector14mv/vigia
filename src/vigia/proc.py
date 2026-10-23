@@ -65,8 +65,12 @@ def run_session(
     input: str,
     timeout: float,
     log: Path,
+    env: dict[str, str] | None = None,
 ) -> Result:
-    """Run an engine session: its own process group (so a timeout kills the whole tree), output to `log`."""
+    """Run an engine session: its own process group (so a timeout kills the whole tree), output to `log`.
+
+    `env`, when given, is the session's whole environment (not merged into ours), so it can leave variables out.
+    """
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w", encoding="utf-8") as err:
         try:
@@ -78,6 +82,7 @@ def run_session(
                 stderr=err,
                 text=True,
                 start_new_session=True,
+                env=env,
             )
         except FileNotFoundError:
             return Result(127, "", f"{args[0]}: command not found")

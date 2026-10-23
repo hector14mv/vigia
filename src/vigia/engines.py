@@ -7,16 +7,30 @@ Both return their final message; reviewers must return the verdict JSON describe
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import proc
+from . import proc, safety
 from .config import DEFAULT_ENGINE_ARGS, Config, Seat
 
 SessionRunner = Callable[..., proc.Result]
+
+# Variables through which `gh`, git or a script could act as the user on GitHub. GIT_ASKPASS is there because an
+# editor's askpass helper (VS Code sets one) answers git's password prompt with the editor's GitHub login.
+GITHUB_SECRETS = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "GIT_ASKPASS",
+)
+# Command-scope git config, read after every config file: an empty helper clears the helpers set before it
+# (`gh auth git-credential`, the keychain), for github.com and for every other host.
+_NO_CREDENTIAL_HELPER = (("credential.helper", ""), ("credential.https://github.com.helper", ""))
 
 VERDICT_SCHEMA = {
     "type": "object",
@@ -55,9 +69,16 @@ class Outcome:
 
 
 class Engines:
-    def __init__(self, cfg: Config, logs: Path, runner: SessionRunner = proc.run_session):
+    def __init__(
+        self,
+        cfg: Config,
+        logs: Path,
+        runner: SessionRunner = proc.run_session,
+        root: Path | None = None,
+    ):
         self.cfg = cfg
         self.logs = logs
+        self.root = root or logs  # vigia's work root: each session's empty `gh` config lives under it
         self._run = runner
 
     def command(
@@ -105,20 +126,47 @@ class Engines:
             schema_file = self.logs / f"{name}.schema.json"
             schema_file.write_text(json.dumps(VERDICT_SCHEMA), encoding="utf-8")
         cmd = self.command(seat, role, workdir, out_file, schema_file)
+        gh_config = self.root / f".gh-config-{name}"
+        safety.remove(gh_config, self.root)  # an interrupted run's: start logged out, never from its state
+        gh_config.mkdir(parents=True)
         started = time.monotonic()
-        result = self._run(
-            cmd,
-            cwd=workdir,
-            input=prompt,
-            timeout=self.cfg.caps.session_minutes * 60,
-            log=self.logs / f"{name}.log",
-        )
+        try:
+            result = self._run(
+                cmd,
+                cwd=workdir,
+                input=prompt,
+                timeout=self.cfg.caps.session_minutes * 60,
+                log=self.logs / f"{name}.log",
+                env=session_env(os.environ, gh_config),
+            )
+        finally:
+            safety.remove(gh_config, self.root)
         seconds = round(time.monotonic() - started, 1)
         text = _final_text(seat.engine, result.stdout, out_file)
         ok = result.code == 0 and not result.timed_out and bool(text.strip())
         if seat.engine == "claude":
             ok = ok and not _claude_error(result.stdout)
         return Outcome(ok, text, result.code, result.timed_out, seconds, self.logs / f"{name}.log")
+
+
+def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
+    """`base` without the user's GitHub login: an engine session must not label, comment, push or merge.
+
+    Only vigia's own code talks to GitHub. Everything else (PATH, HOME, the engines' own logins) passes through.
+    """
+    env = {k: v for k, v in base.items() if k not in GITHUB_SECRETS}
+    env["GH_CONFIG_DIR"] = str(gh_config)  # an empty config: `gh` inside the session is logged out
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:  # keep any command-scope config the caller already set, and add ours after it
+        count = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
+    except ValueError:
+        count = 0
+    for key, value in _NO_CREDENTIAL_HELPER:
+        env[f"GIT_CONFIG_KEY_{count}"] = key
+        env[f"GIT_CONFIG_VALUE_{count}"] = value
+        count += 1
+    env["GIT_CONFIG_COUNT"] = str(count)
+    return env
 
 
 def _claude_error(stdout: str) -> bool:

@@ -1,8 +1,21 @@
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
+from vigia import proc
 from vigia.config import Config, Seat, default_tiers
-from vigia.engines import Engines, handoff_body, handoff_commit, parse_verdict
+from vigia.engines import (
+    GITHUB_SECRETS,
+    Engines,
+    handoff_body,
+    handoff_commit,
+    parse_verdict,
+    session_env,
+)
 from vigia.proc import Result
 
 CFG = Config(repo="o/r", base="main", tiers=default_tiers())
@@ -86,7 +99,7 @@ def test_claude_builder_keeps_its_shell(tmp_path):
 def test_run_reads_codex_final_message_and_claude_json(tmp_path):
     seen = {}
 
-    def runner(cmd, cwd, input, timeout, log):
+    def runner(cmd, cwd, input, timeout, log, env=None):
         seen.update(cmd=cmd, input=input, timeout=timeout)
         if cmd[0] == "codex":
             out = Path(cmd[cmd.index("-o") + 1])
@@ -103,15 +116,117 @@ def test_run_reads_codex_final_message_and_claude_json(tmp_path):
 
 
 def test_run_is_not_ok_on_error_or_timeout(tmp_path):
-    def err(cmd, cwd, input, timeout, log):
+    def err(cmd, cwd, input, timeout, log, env=None):
         return Result(0, json.dumps({"is_error": True, "result": "rate limited"}), "")
 
-    def slow(cmd, cwd, input, timeout, log):
+    def slow(cmd, cwd, input, timeout, log, env=None):
         return Result(-9, "", "", timed_out=True)
 
     seat = Seat("claude", "claude-sonnet-5-5")
     assert not Engines(CFG, tmp_path, runner=err).run(seat, "builder", "p", tmp_path, "x").ok
     assert not Engines(CFG, tmp_path, runner=slow).run(seat, "builder", "p", tmp_path, "y").ok
+
+
+TOKENS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+
+
+@pytest.mark.parametrize("engine", ["claude", "codex"])
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_sessions_run_without_the_users_github_login(tmp_path, monkeypatch, engine, role):
+    for var in TOKENS:
+        monkeypatch.setenv(var, "ghp_secret")
+    monkeypatch.setenv("GIT_ASKPASS", "/editor/askpass.sh")
+    monkeypatch.setenv("GH_CONFIG_DIR", str(tmp_path / "users-gh"))  # where the user's own login lives
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")  # the engines' own logins pass through
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-oai")
+    root = tmp_path / "work"
+    stale = root / ".gh-config-s1"  # an interrupted run's config, logged in: must not survive
+    stale.mkdir(parents=True)
+    (stale / "hosts.yml").write_text("github.com:\n    oauth_token: ghp_secret\n")
+    seen = {}
+
+    def runner(cmd, cwd, input, timeout, log, env=None):
+        gh_dir = Path(env["GH_CONFIG_DIR"])
+        seen.update(env=env, exists=gh_dir.is_dir(), contents=list(gh_dir.iterdir()))
+        return Result(0, json.dumps({"is_error": False, "result": "done"}), "")
+
+    Engines(CFG, tmp_path / "logs", runner=runner, root=root).run(
+        Seat(engine, "m"), role, "p", tmp_path, "s1"
+    )
+    env = seen["env"]
+    assert not {*TOKENS, "GIT_ASKPASS"} & env.keys()
+    assert Path(env["GH_CONFIG_DIR"]).is_relative_to(root)
+    assert seen["exists"] and seen["contents"] == []
+    assert not list(root.iterdir())  # removed again once the session is over
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    pairs = {
+        (env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"])
+        for i in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+    assert ("credential.helper", "") in pairs
+    for var in ("PATH", "HOME", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        assert env[var] == os.environ[var]
+
+
+def test_session_env_keeps_the_callers_git_config_entries(tmp_path):
+    base = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name", "GIT_CONFIG_VALUE_0": "Me"}
+    env = session_env(base, tmp_path)
+    assert (env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]) == ("user.name", "Me")
+    assert env["GIT_CONFIG_KEY_1"] == "credential.helper" and env["GIT_CONFIG_VALUE_1"] == ""
+    assert int(env["GIT_CONFIG_COUNT"]) == 3
+    assert set(GITHUB_SECRETS) >= set(TOKENS)
+
+
+def _isolated_git(tmp_path: Path) -> dict[str, str]:
+    """An environment whose global git config holds a credential helper that hands out a password."""
+    gitconfig = tmp_path / "gitconfig"
+    helper = "!f() { echo username=me; echo password=ghp_from_helper; }; f"
+    subprocess.run(
+        ["git", "config", "--file", str(gitconfig), "credential.https://github.com.helper", helper],
+        check=True,
+    )
+    keep = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return {**keep, "GIT_CONFIG_GLOBAL": str(gitconfig), "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def _fill(env: dict[str, str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "credential", "fill"],
+        input="protocol=https\nhost=github.com\n\n",
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+
+
+def test_git_in_a_session_cannot_borrow_the_users_credential_helper(tmp_path):
+    base = _isolated_git(tmp_path)
+    assert "password=ghp_from_helper" in _fill(base).stdout  # the helper does work outside a session
+    out = _fill(session_env(base, tmp_path / "gh"))
+    assert out.returncode != 0 and "ghp_from_helper" not in out.stdout
+
+
+@pytest.mark.skipif(shutil.which("gh") is None, reason="gh is not installed")
+def test_gh_in_a_session_is_logged_out(tmp_path):
+    (tmp_path / "gh").mkdir()
+    env = session_env({**os.environ, "GH_TOKEN": "ghp_secret"}, tmp_path / "gh")
+    out = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, env=env, timeout=30)
+    assert out.returncode != 0 and "not logged in" in (out.stdout + out.stderr).lower()
+
+
+def test_run_session_uses_the_given_environment_whole(tmp_path, monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "ghp_secret")
+    env = {"PATH": os.environ["PATH"], "ONLY": "this"}
+    result = proc.run_session(
+        ["sh", "-c", 'printf "%s|%s" "$ONLY" "${GH_TOKEN-unset}"'],
+        cwd=tmp_path,
+        input="",
+        timeout=30,
+        log=tmp_path / "s.log",
+        env=env,
+    )
+    assert result.stdout == "this|unset"
 
 
 def test_parse_verdict_accepts_fenced_json_and_counts():
