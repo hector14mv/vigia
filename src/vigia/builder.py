@@ -97,6 +97,45 @@ def _fail_issue(ctx: Ctx, issue: dict, reason: str, outcome: Outcome | None) -> 
     ctx.say(f"#{issue['number']}: build failed — {reason}")
 
 
+def enroll(ctx: Ctx, pr: int, issue: int, tier: str) -> None:
+    """Make a PR vigia opened visible to the watcher (its labels) and release the issue.
+
+    Idempotent, and `enrolled` is recorded last: if any step fails, `recover` repeats all of them.
+    """
+    labels = ctx.cfg.labels
+    ctx.gh.add_labels(pr, labels.review, labels.tier(tier))
+    ctx.gh.remove_label(issue, labels.building)
+    ctx.ledger.append("enrolled", pr=pr, issue=issue)
+
+
+def recover(ctx: Ctx) -> None:
+    """Finish the enrollment of PRs whose label step failed after `pr_opened` was recorded.
+
+    The watcher finds PRs only through the review label, so such a PR would otherwise never be seen.
+    Only an issue still marked `building` with its PR still open is touched: anything else was
+    enrolled before `enrolled` events existed, or has moved on.
+    """
+    done = {r["pr"] for r in ctx.ledger.events("enrolled")}
+    for row in ctx.ledger.events("pr_opened"):
+        pr, issue = row["pr"], row.get("issue")
+        if pr in done:
+            continue
+        done.add(pr)
+        try:
+            if (
+                issue
+                and ctx.gh.pr(pr)["state"] == "OPEN"
+                and ctx.cfg.labels.building in ctx.gh.issue(issue)["labels"]
+            ):
+                enroll(ctx, pr, issue, row["tier"])
+                ctx.say(f"PR #{pr}: finished enrolling after an earlier failure")
+            else:
+                ctx.ledger.append("enrolled", pr=pr, issue=issue)
+        except CommandError as exc:  # the next tick tries again
+            ctx.ledger.append("error", pr=pr, issue=issue, action="enroll", detail=str(exc)[:500])
+            ctx.say(f"PR #{pr}: enrolling failed — {exc}")
+
+
 def build(ctx: Ctx, issue: dict) -> int | None:
     """Build one launchable issue. Returns the new PR number, or None if the build failed."""
     cfg, labels, n = ctx.cfg, ctx.cfg.labels, issue["number"]
@@ -162,12 +201,11 @@ def build(ctx: Ctx, issue: dict) -> int | None:
             seconds=outcome.seconds,
         )
         ctx.ledger.append("head_seen", pr=pr, sha=head)
-        ctx.gh.add_labels(pr, labels.review, labels.tier(tier))
+        enroll(ctx, pr, n, tier)
         handoff = comments.handoff(
             head, seat, "builder", n, tier, outcome.seconds, outcome.code, tests, files, handoff_body(notes)
         )
         ctx.gh.comment(pr, handoff)
-        ctx.gh.remove_label(n, labels.building)
         ctx.say(f"#{n}: opened PR #{pr} at {head[:8]}")
         return pr
     except CommandError as exc:
@@ -247,9 +285,17 @@ def fix(ctx: Ctx, pr: dict, stage: str) -> bool:
             ctx.say(f"PR #{n}: push failed — {exc}")
             return False
         ctx.ledger.append("pushed", pr=n, from_sha=sha, sha=head, stage=stage)
-        ctx.ledger.append("head_seen", pr=n, sha=head)
+        # The new head is recorded only once the old approval is gone; otherwise `_track` (which
+        # retries the removal on the next tick) would see the head as already handled.
+        cleared = True
         if labels.human_ok in pr["labels"]:
-            ctx.gh.remove_label(n, labels.human_ok)
+            try:
+                ctx.gh.remove_label(n, labels.human_ok)
+            except CommandError as exc:
+                cleared = False
+                ctx.ledger.append("error", pr=n, action="clear_human_ok", detail=str(exc)[:500])
+        if cleared:
+            ctx.ledger.append("head_seen", pr=n, sha=head)
         ctx.gh.comment(
             n,
             comments.handoff(

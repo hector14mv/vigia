@@ -6,7 +6,8 @@ executes the step; nothing here can be talked into a merge.
 
 Order of the checks, and why:
 1. Closed, parked or draft PRs are left alone.
-2. Structural problems park immediately (no tier, unknown builder, a same-lab gate, conflicts).
+2. Structural problems park immediately (no tier, unknown builder, a same-lab gate, conflicts, a
+   destination other than the configured base: the reviewed diff is only right for that base).
 3. CI runs before any review: a red CI repaired after the gate would move the head and waste a round.
 4. The cross-lab gate reviews the exact head. A P1 finding asks for one fix round; the gate then
    reviews the new head. At most `caps.gate_rounds` heads are ever gated.
@@ -58,6 +59,7 @@ class PRState:
     draft: bool = False
     parked: bool = False
     human_ok: bool = False
+    on_base: bool = True  # the PR targets the configured base branch
     # Everything below counts only since the PR was last unparked: unparking is a human's fresh start.
     verdicts: tuple[Verdict, ...] = field(default_factory=tuple)
     fix_rounds: int = 0
@@ -98,6 +100,10 @@ def decide(pr: PRState, cfg: Config) -> Decision:
         return wait("parked — remove the parked label to resume")
     if pr.draft:
         return wait("draft")
+    if not pr.on_base:
+        return park(
+            f"the PR does not target the base branch `{cfg.base}`: reviews cover the diff against it only"
+        )
     if pr.tier not in cfg.tiers:
         return park("no tier label: add exactly one of " + ", ".join(cfg.labels.tier(t) for t in cfg.tiers))
     policy = cfg.policy(pr.tier)

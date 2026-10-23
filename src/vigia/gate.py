@@ -36,6 +36,11 @@ def review(ctx: Ctx, pr: dict, kind: str, round_no: int) -> str | None:
     seat = policy.gate if kind == "gate" else policy.reviewer
     if seat is None:
         return None
+    if (
+        pr["base"] != cfg.base
+    ):  # the diff below is computed against cfg.base; it is wrong for any other target
+        ctx.say(f"PR #{n}: targets `{pr['base']}`, not `{cfg.base}`; no review")
+        return None
     builder_family = ctx.builder_family(n)
     if kind == "gate" and builder_family in (None, seat.family):
         ctx.say(

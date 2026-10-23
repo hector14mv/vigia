@@ -14,7 +14,7 @@ from vigia.context import Ctx
 from vigia.engines import Engines
 from vigia.git import Git
 from vigia.ledger import Ledger
-from vigia.watch import tick
+from vigia.watch import merge, sense, tick
 
 TICKET = """\
 ## Outcome
@@ -243,3 +243,115 @@ def test_a_rejected_push_fails_the_build_cleanly(world):
     assert "vigia:building" not in gh.issues_[n]["labels"] and "vigia:parked" in gh.issues_[n]["labels"]
     assert "failed after the session" in gh.bodies(n)[-1]
     assert not any(ctx.root.iterdir())
+
+
+def _fail_once(gh, method, match):
+    """Make `gh.<method>` raise a 503 the first time `match(*args)` holds, then behave normally."""
+    from vigia.proc import CommandError
+
+    real, state = getattr(gh, method), {"left": 1}
+
+    def flaky(*args):
+        if state["left"] and match(*args):
+            state["left"] -= 1
+            raise CommandError(["gh", "api"], 1, "", "HTTP 503")
+        return real(*args)
+
+    setattr(gh, method, flaky)
+
+
+def _push_behind_its_back(ctx, gh, pr):
+    from fakes import git
+
+    wt = ctx.root / f"manual-{len(list(ctx.root.iterdir()))}"
+    git("worktree", "add", "--quiet", "--detach", str(wt), gh.prs_[pr]["head"], cwd=ctx.clone)
+    (wt / "extra.txt").write_text("x")
+    git("add", "-A", cwd=wt)
+    git("commit", "--quiet", "-m", "manual", cwd=wt)
+    git("push", "--quiet", "origin", f"HEAD:refs/heads/{gh.prs_[pr]['branch']}", cwd=wt)
+    return git("rev-parse", "HEAD", cwd=wt)
+
+
+def test_a_failed_label_removal_is_retried_before_the_new_head_counts(world):
+    gh, build = world
+    ctx, _ = build([APPROVE] * 4)
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    tick(ctx, build=True)
+    pr = next(iter(gh.prs_))
+    tick(ctx)  # gate
+    tick(ctx)  # review
+    gh.human_label(pr)
+    new_head = _push_behind_its_back(ctx, gh, pr)
+    _fail_once(gh, "remove_label", lambda n, label: label == "vigia:human-ok")
+    assert decisions(tick(ctx, build=False)) == [(pr, "gate")]  # the old approval is not trusted meanwhile
+    assert not [r for r in ctx.ledger.events("head_seen", pr=pr) if r["sha"] == new_head]
+    assert "vigia:human-ok" in gh.prs_[pr]["labels"]
+    assert ctx.ledger.last("error", pr=pr)["action"] == "clear_human_ok"
+    # next tick retries the removal; the new head has no approval and no merge happens
+    assert decisions(tick(ctx, build=False)) == [(pr, "review")]
+    assert [r for r in ctx.ledger.events("head_seen", pr=pr) if r["sha"] == new_head]
+    assert "vigia:human-ok" not in gh.prs_[pr]["labels"]
+    assert gh.merged == []
+
+
+def test_a_fix_round_whose_label_removal_fails_does_not_keep_the_approval(world):
+    gh, build = world
+    ctx, _ = build([CHANGES, APPROVE, APPROVE])
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    tick(ctx, build=True)
+    pr = next(iter(gh.prs_))
+    tick(ctx)  # gate -> CHANGES
+    gh.human_label(pr)
+    _fail_once(gh, "remove_label", lambda n, label: label == "vigia:human-ok")
+    assert decisions(tick(ctx, build=False)) == [(pr, "fix")]
+    assert "vigia:human-ok" in gh.prs_[pr]["labels"]
+    assert not any(
+        r.get("sha") == gh.branch_sha(gh.prs_[pr]["branch"]) for r in ctx.ledger.events("head_seen")
+    )
+    tick(ctx, build=False)  # _track sees the unrecorded head and removes the label
+    assert "vigia:human-ok" not in gh.prs_[pr]["labels"]
+
+
+def test_a_pr_aimed_at_another_branch_is_parked_not_reviewed(world):
+    gh, build = world
+    ctx, run = build([APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    gh.prs_[pr]["base"] = "release"
+    assert decisions(tick(ctx, build=False)) == [(pr, "park")]
+    assert not [c for c in run.calls if c["role"] == "reviewer"]
+    assert gh.merged == []
+
+
+def test_a_retarget_after_approval_blocks_the_merge(world):
+    gh, build = world
+    ctx, _ = build([APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    tick(ctx, build=False)  # gate approves; merge decision is next
+    s = sense(ctx, track=False)[0]
+    assert s.decision.action == "merge"
+    gh.prs_[pr]["base"] = "release"
+    assert merge(ctx, s) is False and gh.merged == []
+
+
+def test_a_build_whose_labels_failed_is_enrolled_by_the_next_tick(world):
+    from vigia.proc import CommandError
+
+    gh, build = world
+    ctx, _ = build([APPROVE])
+    n = gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    _fail_once(gh, "add_labels", lambda pr, *labels: "vigia:review" in labels)
+    with pytest.raises(CommandError):
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    assert "vigia:review" not in gh.prs_[pr]["labels"] and "vigia:building" in gh.issues_[n]["labels"]
+    assert ctx.ledger.last("pr_opened", pr=pr)
+    assert decisions(tick(ctx)) == [(pr, "gate")]  # recovered, then gated in the same tick
+    assert set(gh.prs_[pr]["labels"]) == {"vigia:review", "tier:T0"}
+    assert "vigia:building" not in gh.issues_[n]["labels"]
+    assert ctx.ledger.last("enrolled", pr=pr)
+    tick(ctx)
+    assert len(ctx.ledger.events("enrolled", pr=pr)) == 1

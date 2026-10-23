@@ -35,15 +35,25 @@ def _track(ctx: Ctx, pr: dict) -> None:
     n, labels = pr["number"], ctx.cfg.labels
     seen = ctx.ledger.last("head_seen", pr=n)
     if seen is None or seen.get("sha") != pr["head"]:
+        stale = seen is not None and labels.human_ok in pr["labels"]
+        if stale:
+            # The head is recorded only once the old approval is gone: if the removal fails, the next
+            # tick still sees an unrecorded head and retries. Meanwhile this tick treats the PR as unapproved.
+            try:
+                ctx.gh.remove_label(n, labels.human_ok)
+            except CommandError as exc:
+                ctx.ledger.append("error", pr=n, action="clear_human_ok", detail=str(exc)[:500])
+                ctx.say(f"PR #{n}: could not remove `{labels.human_ok}` — {exc}")
+                pr["labels"] = [x for x in pr["labels"] if x != labels.human_ok]
+                return
         ctx.ledger.append("head_seen", pr=n, sha=pr["head"])
-        if seen is not None and labels.human_ok in pr["labels"]:
-            ctx.gh.remove_label(n, labels.human_ok)
+        if stale:
+            pr["labels"] = [x for x in pr["labels"] if x != labels.human_ok]
             ctx.gh.comment(
                 n,
                 f"New head `{pr['head']}`: the `{labels.human_ok}` label was for the previous head "
                 "and has been removed. Add it again after checking this head.\n",
             )
-            pr["labels"] = [x for x in pr["labels"] if x != labels.human_ok]
     rows = [r for r in ctx.ledger.rows() if r.get("pr") == n and r["event"] in ("parked", "unparked")]
     if rows and rows[-1]["event"] == "parked" and labels.parked not in pr["labels"]:
         ctx.ledger.append("unparked", pr=n, sha=pr["head"])
@@ -66,6 +76,7 @@ def state(ctx: Ctx, pr: dict) -> PRState:
         draft=pr["draft"],
         parked=cfg.labels.parked in pr["labels"],
         human_ok=human_ok,
+        on_base=pr["base"] == cfg.base,
         verdicts=tuple(
             Verdict(r["kind"], r["sha"], r["verdict"], r.get("p1", 0), r.get("p2", 0))
             for r in window
@@ -131,6 +142,7 @@ def tick(ctx: Ctx, build: bool | None = None) -> list[Seen]:
     """One pass. Returns what was seen and decided."""
     build = ctx.cfg.build_in_watch if build is None else build
     with ctx.lock():
+        builder.recover(ctx)
         seen = sense(ctx)
         for s in seen:
             try:
