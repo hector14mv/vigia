@@ -175,6 +175,9 @@ def test_session_env_is_an_allowlist(tmp_path):
         "PATH": "/bin",
         "LC_ALL": "C",
         "OPENAI_API_KEY": "sk-oai",
+        "HTTPS_PROXY": "http://proxy.example:3128",
+        "ALL_PROXY": "http://proxy.example:3128",
+        "all_proxy": "socks5://proxy.example:1080",
         "GIT_CONFIG_COUNT": "1",
         "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
         "GIT_CONFIG_VALUE_0": "Authorization: Basic secret",
@@ -184,6 +187,8 @@ def test_session_env_is_an_allowlist(tmp_path):
     }
     env = session_env(base, tmp_path)
     assert {"PATH", "LC_ALL", "OPENAI_API_KEY"} <= env.keys()
+    for proxy in ("HTTPS_PROXY", "ALL_PROXY", "all_proxy"):
+        assert env[proxy] == base[proxy]
     assert not {"GIT_SSH_COMMAND", "SSH_AUTH_SOCK", "DATABASE_URL"} & env.keys()
     pairs = {
         (env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"])
