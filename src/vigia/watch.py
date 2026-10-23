@@ -1,0 +1,168 @@
+"""`vigia watch`: one tick reads GitHub and the ledger, decides with `rules.decide()`, and acts.
+
+Cheap actions (merge, park) run for every PR in the tick. At most one engine session runs per
+tick (a gate, a review, a fix or a build), oldest PR first, so vigia never has two models working
+on the same repository at once in v0.1.
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+
+from . import builder, comments, gate, tickets
+from .context import Ctx
+from .proc import CommandError
+from .rules import Decision, PRState, Verdict, decide
+
+
+@dataclass
+class Seen:
+    pr: dict
+    state: PRState
+    decision: Decision
+
+
+def _window(ctx: Ctx, n: int) -> list[dict]:
+    """This PR's ledger rows since it was last unparked (a human's fresh start resets every counter)."""
+    rows = [r for r in ctx.ledger.rows() if r.get("pr") == n]
+    start = max((i for i, r in enumerate(rows) if r["event"] == "unparked"), default=-1)
+    return rows[start + 1 :]
+
+
+def _track(ctx: Ctx, pr: dict) -> None:
+    """Record head changes and unparks. A new head clears the human label: it approved the old one."""
+    n, labels = pr["number"], ctx.cfg.labels
+    seen = ctx.ledger.last("head_seen", pr=n)
+    if seen is None or seen.get("sha") != pr["head"]:
+        ctx.ledger.append("head_seen", pr=n, sha=pr["head"])
+        if seen is not None and labels.human_ok in pr["labels"]:
+            ctx.gh.remove_label(n, labels.human_ok)
+            ctx.gh.comment(
+                n,
+                f"New head `{pr['head']}`: the `{labels.human_ok}` label was for the previous head "
+                "and has been removed. Add it again after checking this head.\n",
+            )
+            pr["labels"] = [x for x in pr["labels"] if x != labels.human_ok]
+    rows = [r for r in ctx.ledger.rows() if r.get("pr") == n and r["event"] in ("parked", "unparked")]
+    if rows and rows[-1]["event"] == "parked" and labels.parked not in pr["labels"]:
+        ctx.ledger.append("unparked", pr=n, sha=pr["head"])
+
+
+def state(ctx: Ctx, pr: dict) -> PRState:
+    cfg, n = ctx.cfg, pr["number"]
+    window = _window(ctx, n)
+    human_ok = cfg.labels.human_ok in pr["labels"]
+    if human_ok and cfg.humans:
+        human_ok = ctx.gh.label_actor(n, cfg.labels.human_ok) in cfg.humans
+    return PRState(
+        number=n,
+        head=pr["head"],
+        tier=tickets.tier(pr["labels"], cfg.labels.tier_prefix),
+        builder_family=ctx.builder_family(n),
+        ci=pr["ci"],
+        mergeable=pr["mergeable"],
+        open=pr["state"] == "OPEN",
+        draft=pr["draft"],
+        parked=cfg.labels.parked in pr["labels"],
+        human_ok=human_ok,
+        verdicts=tuple(
+            Verdict(r["kind"], r["sha"], r["verdict"], r.get("p1", 0), r.get("p2", 0))
+            for r in window
+            if r["event"] == "verdict"
+        ),
+        fix_rounds=sum(1 for r in window if r["event"] == "fix_started"),
+        failures=sum(1 for r in window if r["event"] == "engine_failed" and r.get("sha") == pr["head"]),
+    )
+
+
+def sense(ctx: Ctx, track: bool = True) -> list[Seen]:
+    out = []
+    for pr in ctx.gh.prs(ctx.cfg.labels.review):
+        if track:
+            _track(ctx, pr)
+        st = state(ctx, pr)
+        out.append(Seen(pr, st, decide(st, ctx.cfg)))
+    return out
+
+
+def _why(ctx: Ctx, n: int, sha: str, tier: str) -> list[str]:
+    why = ["CI green on this head"]
+    for kind in ("gate", "review"):
+        v = ctx.ledger.last("verdict", pr=n, kind=kind, sha=sha)
+        if v:
+            what = "cross-lab gate" if kind == "gate" else f"{tier} reviewer"
+            why.append(
+                f"{what}: {v['verdict']} by {v['engine']} · {v['model']} (lab {v['family']}), "
+                f"{v.get('p1', 0)} P1 · {v.get('p2', 0)} P2"
+            )
+    if ctx.cfg.policy(tier).human:
+        why.append(f"human label `{ctx.cfg.labels.human_ok}` on this head")
+    why.append("`gh pr merge --squash --match-head-commit` — no model ran this step")
+    return why
+
+
+def merge(ctx: Ctx, seen: Seen) -> bool:
+    n, sha = seen.pr["number"], seen.decision.sha
+    fresh = ctx.gh.pr(n)  # re-read and re-decide right before the merge: the tick's snapshot may be old
+    st = state(ctx, fresh)
+    again = decide(st, ctx.cfg)
+    if again.action != "merge" or fresh["head"] != sha:
+        ctx.say(f"PR #{n}: not merging — {again}")
+        return False
+    ctx.gh.merge(n, sha)
+    opened = ctx.ledger.last("pr_opened", pr=n) or {}
+    ctx.ledger.append("merged", pr=n, sha=sha, tier=st.tier, issue=opened.get("issue"))
+    ctx.gh.delete_branch(fresh["branch"])
+    ctx.gh.comment(n, comments.merged(sha, st.tier or "?", _why(ctx, n, sha, st.tier or "T2")))
+    ctx.say(f"PR #{n}: merged {sha[:8]}")
+    return True
+
+
+def park(ctx: Ctx, seen: Seen) -> None:
+    n, d, labels = seen.pr["number"], seen.decision, ctx.cfg.labels
+    ctx.gh.add_labels(n, labels.parked)
+    ctx.gh.comment(n, comments.parked(d.sha, d.reason, labels.parked))
+    ctx.ledger.append("parked", pr=n, sha=d.sha, reason=d.reason)
+    ctx.say(f"PR #{n}: parked — {d.reason}")
+
+
+def tick(ctx: Ctx, build: bool | None = None) -> list[Seen]:
+    """One pass. Returns what was seen and decided."""
+    build = ctx.cfg.build_in_watch if build is None else build
+    with ctx.lock():
+        seen = sense(ctx)
+        for s in seen:
+            try:
+                if s.decision.action == "merge":
+                    merge(ctx, s)
+                elif s.decision.action == "park":
+                    park(ctx, s)
+            except CommandError as exc:  # one PR's failure must not stop the others; the next tick re-decides
+                ctx.ledger.append("error", pr=s.pr["number"], action=s.decision.action, detail=str(exc)[:500])
+                ctx.say(f"PR #{s.pr['number']}: {s.decision.action} failed — {exc}")
+        for s in seen:
+            d = s.decision
+            if d.action in ("gate", "review"):
+                gate.review(ctx, s.pr, d.action, int(d.stage or 1))
+                return seen
+            if d.action == "fix":
+                builder.fix(ctx, s.pr, d.stage)
+                return seen
+        if build:
+            issue = builder.next_issue(ctx)
+            if issue is not None:
+                builder.build(ctx, issue)
+        return seen
+
+
+def loop(ctx: Ctx, interval: int, build: bool | None = None) -> None:
+    ctx.say(f"vigia watching {ctx.cfg.repo} every {interval} s (Ctrl-C to stop)")
+    while True:
+        started = time.monotonic()
+        try:
+            tick(ctx, build)
+        except Exception as exc:  # one bad tick must not stop the watcher; the next one starts clean
+            ctx.ledger.append("error", detail=str(exc)[:500])
+            ctx.say(f"tick failed: {exc}")
+        time.sleep(max(5, interval - (time.monotonic() - started)))
