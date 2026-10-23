@@ -75,7 +75,8 @@ class Engines:
                 ]
                 extra += ["--sandbox", "read-only"]
             else:
-                extra += ["--disallowedTools", "Edit", "Write", "NotebookEdit"]
+                # a deny rule beats any allow rule, even under bypassPermissions: no shell, no writes
+                extra += ["--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit"]
         if seat.engine == "claude":
             cmd = ["claude", "-p", "--model", seat.model]
             if seat.effort:
