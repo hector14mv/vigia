@@ -178,8 +178,6 @@ model given by alias.
 - A PR that conflicts with its base is parked, not rebased.
 - Fix rounds use the tier's builder engine, so they stay in the builder's lab.
 - The ledger lives in the clone you run vigia from; run it from one place.
-- `vigia status` reads PR state through `gh pr list`, which can lag a few minutes behind GitHub
-  ([#9](https://github.com/hector14mv/vigia/issues/9)); merges always re-read the PR first.
 - Engines run with your credentials and permissions — read [SECURITY.md](SECURITY.md) first.
 - Not on PyPI yet: install from git.
 
