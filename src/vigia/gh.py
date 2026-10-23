@@ -160,12 +160,19 @@ class GitHub:
         ]
 
     def label_event(self, number: int, label: str) -> dict | None:
-        """{'actor', 'ts'} of the latest time `label` was added (from the issue's event history), or None."""
+        """{'actor', 'ts', 'id'} of the latest time `label` was added (from the issue's event history), or None.
+
+        `id` is GitHub's own event id; it grows with each event, so two ids compare in GitHub's order.
+        """
         rows = self._api("GET", f"repos/{self.repo}/issues/{number}/events?per_page=100", paginate=True) or []
         found = None
         for r in rows:
             if r.get("event") == "labeled" and (r.get("label") or {}).get("name") == label:
-                found = {"actor": (r.get("actor") or {}).get("login"), "ts": r.get("created_at") or ""}
+                found = {
+                    "actor": (r.get("actor") or {}).get("login"),
+                    "ts": r.get("created_at") or "",
+                    "id": r.get("id"),
+                }
         return found
 
     def ensure_label(self, name: str, color: str, description: str) -> None:

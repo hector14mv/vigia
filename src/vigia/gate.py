@@ -23,6 +23,12 @@ def _issue(ctx: Ctx, pr: dict) -> dict | None:
         return None
 
 
+def recover(ctx: Ctx) -> None:
+    """Remove review worktrees an interrupted session left behind. Runs under the tick lock, so no review is live."""
+    for path in sorted(ctx.root.glob("gate-*")) + sorted(ctx.root.glob("review-*")):
+        ctx.git.remove_worktree(path)
+
+
 def review(ctx: Ctx, pr: dict, kind: str, round_no: int) -> str | None:
     """Run the gate (`kind="gate"`) or the tier reviewer (`kind="review"`) on `pr`'s head.
 
@@ -62,12 +68,14 @@ def review(ctx: Ctx, pr: dict, kind: str, round_no: int) -> str | None:
     previous = (earlier[-1].get("findings") or []) if earlier else []
     gate_findings: list[dict] = []
     if kind == "review":
-        on_head = ctx.ledger.last("verdict", pr=n, kind="gate", sha=sha) or {}
+        on_head = ctx.ledger.last("verdict", pr=n, kind="gate", sha=sha, tier=tier) or {}
         gate_findings = on_head.get("findings") or []
 
     attempt = 1 + len(ctx.ledger.events("verdict", pr=n, kind=kind, sha=sha))
     name = f"{kind}-{n}-{sha[:8]}-{attempt}"
     ctx.say(f"PR #{n}: {kind} round {round_no} on {sha[:8]} with {seat.label()}")
+    if (ctx.root / name).exists():  # left by an interrupted run of this very review
+        ctx.git.remove_worktree(ctx.root / name)
     wt = ctx.git.worktree_detached(ctx.root / name, sha)
     try:
         prompt = prompts.reviewer(
@@ -90,6 +98,7 @@ def review(ctx: Ctx, pr: dict, kind: str, round_no: int) -> str | None:
         pr=n,
         kind=kind,
         sha=sha,
+        tier=tier,
         verdict=verdict,
         round=round_no,
         p1=parsed["p1"] if parsed else 0,

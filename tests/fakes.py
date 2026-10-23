@@ -60,7 +60,8 @@ class FakeGitHub:
         self.issues_: dict[int, dict] = {}
         self.prs_: dict[int, dict] = {}
         self.thread: dict[int, list[dict]] = {}
-        self.label_events: dict[int, list[tuple[str, str, str]]] = {}  # (label, actor, ts)
+        self.label_events: dict[int, list[tuple[str, str, str, int]]] = {}  # (label, actor, ts, event id)
+        self.event_ids = 0
         self.ci: dict[str, str] = {}  # sha -> ci state (default passing)
         self.merged: list[tuple[int, str]] = []
         self.next = 1
@@ -84,7 +85,8 @@ class FakeGitHub:
 
     def human_label(self, n: int, actor: str = "owner") -> None:
         self.add_labels(n, "vigia:human-ok")
-        self.label_events.setdefault(n, []).append(("vigia:human-ok", actor, self.clock()))
+        self.event_ids += 1
+        self.label_events.setdefault(n, []).append(("vigia:human-ok", actor, self.clock(), self.event_ids))
 
     def bodies(self, n: int) -> list[str]:
         return [c["body"] for c in self.thread.get(n, [])]
@@ -118,8 +120,8 @@ class FakeGitHub:
         return list(self.thread.get(n, []))
 
     def label_event(self, n: int, label: str) -> dict | None:
-        found = [(a, ts) for name, a, ts in self.label_events.get(n, []) if name == label]
-        return {"actor": found[-1][0], "ts": found[-1][1]} if found else None
+        found = [(a, ts, i) for name, a, ts, i in self.label_events.get(n, []) if name == label]
+        return {"actor": found[-1][0], "ts": found[-1][1], "id": found[-1][2]} if found else None
 
     def ensure_label(self, name: str, color: str, description: str) -> None:
         pass

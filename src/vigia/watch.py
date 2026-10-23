@@ -33,15 +33,18 @@ def _window(ctx: Ctx, n: int) -> list[dict]:
 def _track(ctx: Ctx, pr: dict) -> None:
     """Record head changes and unparks.
 
-    Recording a new head is what invalidates an earlier human approval: `human_approved()` only accepts
-    a label added after the current head was first seen. Removing the stale label is a courtesy to the
-    people reading the PR; if the removal fails, the stale label still counts for nothing.
+    Recording a new head is what invalidates an earlier human approval: the row stores the id of the
+    latest `human_ok` event GitHub had then, and `human_approved()` only accepts a label event with a
+    higher id (both ids are GitHub's, so no local clock is involved). Removing the stale label is a
+    courtesy to the people reading the PR; if the removal fails, the stale label still counts for nothing.
     """
     n, labels = pr["number"], ctx.cfg.labels
     seen = ctx.ledger.last("head_seen", pr=n)
-    if seen is None or seen.get("sha") != pr["head"]:
-        ctx.ledger.append("head_seen", pr=n, sha=pr["head"])
-        if seen is not None and labels.human_ok in pr["labels"]:
+    moved = seen is None or seen.get("sha") != pr["head"]
+    if moved or "human_ok_event" not in seen:  # a row from before the baseline existed is recorded again
+        if not builder.record_head(ctx, n, pr["head"], labels.human_ok in pr["labels"]):
+            return
+        if moved and seen is not None and labels.human_ok in pr["labels"]:
             try:
                 ctx.gh.remove_label(n, labels.human_ok)
                 ctx.gh.comment(
@@ -60,7 +63,8 @@ def _track(ctx: Ctx, pr: dict) -> None:
 def human_approved(ctx: Ctx, pr: dict) -> bool:
     """True when the human label was added after vigia first saw the PR's current head (by one of
     `checks.humans`, when that list is set). A label from before the head moved never counts, whether or
-    not it could be removed."""
+    not it could be removed. "After" is GitHub's event order, never a comparison of local and GitHub
+    clocks; a head recorded without that baseline (an older ledger) is re-recorded, so the label must be added again."""
     label = ctx.cfg.labels.human_ok
     if label not in pr["labels"]:
         return False
@@ -68,7 +72,8 @@ def human_approved(ctx: Ctx, pr: dict) -> bool:
     if seen is None or seen.get("sha") != pr["head"]:
         return False
     event = ctx.gh.label_event(pr["number"], label)
-    if event is None or not event["ts"] or event["ts"] <= seen["ts"]:
+    baseline = seen.get("human_ok_event")
+    if event is None or baseline is None or not event.get("id") or event["id"] <= baseline:
         return False
     return not ctx.cfg.humans or event["actor"] in ctx.cfg.humans
 
@@ -77,10 +82,11 @@ def state(ctx: Ctx, pr: dict) -> PRState:
     cfg, n = ctx.cfg, pr["number"]
     window = _window(ctx, n)
     human_ok = human_approved(ctx, pr)
+    tier = tickets.tier(pr["labels"], cfg.labels.tier_prefix)
     return PRState(
         number=n,
         head=pr["head"],
-        tier=tickets.tier(pr["labels"], cfg.labels.tier_prefix),
+        tier=tier,
         builder_family=ctx.builder_family(n),
         ci=pr["ci"],
         mergeable=pr["mergeable"],
@@ -93,6 +99,7 @@ def state(ctx: Ctx, pr: dict) -> PRState:
             Verdict(r["kind"], r["sha"], r["verdict"], r.get("p1", 0), r.get("p2", 0))
             for r in window
             if r["event"] == "verdict"
+            and r.get("tier") == tier  # a verdict covers only the tier it was run for
         ),
         fix_rounds=sum(1 for r in window if r["event"] == "fix_started"),
         failures=sum(1 for r in window if r["event"] == "engine_failed" and r.get("sha") == pr["head"]),
@@ -112,7 +119,7 @@ def sense(ctx: Ctx, track: bool = True) -> list[Seen]:
 def _why(ctx: Ctx, n: int, sha: str, tier: str) -> list[str]:
     why = ["CI green on this head"]
     for kind in ("gate", "review"):
-        v = ctx.ledger.last("verdict", pr=n, kind=kind, sha=sha)
+        v = ctx.ledger.last("verdict", pr=n, kind=kind, sha=sha, tier=tier)
         if v:
             what = "cross-lab gate" if kind == "gate" else f"{tier} reviewer"
             why.append(
@@ -155,6 +162,7 @@ def tick(ctx: Ctx, build: bool | None = None) -> list[Seen]:
     build = ctx.cfg.build_in_watch if build is None else build
     with ctx.lock():
         builder.recover(ctx)
+        gate.recover(ctx)
         seen = sense(ctx)
         for s in seen:
             try:

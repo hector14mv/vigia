@@ -308,6 +308,93 @@ def test_a_stale_human_label_never_counts_even_if_it_cannot_be_removed(world):
     assert decisions(tick(ctx, build=False)) == [(pr, "merge")]
 
 
+def test_a_stale_human_label_never_counts_when_the_local_clock_runs_behind(world):
+    gh, build = world
+    ctx, _ = build([APPROVE] * 4)
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    tick(ctx, build=True)
+    pr = next(iter(gh.prs_))
+    tick(ctx)  # gate
+    tick(ctx)  # review
+    gh.human_label(pr)  # a human approves head A; GitHub stamps it 2026-10-24
+    _removal_always_fails(gh)
+    ctx.ledger.clock = lambda: "2026-01-01T00:00:00Z"  # this machine's clock is far behind GitHub's
+    _push_behind_its_back(ctx, gh, pr)  # head B
+    for expected in ("gate", "review", "wait"):
+        assert decisions(tick(ctx, build=False)) == [(pr, expected)]
+    assert gh.merged == []
+    gh.human_label(pr)  # a human approves head B
+    assert decisions(tick(ctx, build=False)) == [(pr, "merge")]
+
+
+def test_a_head_recorded_before_the_event_baseline_needs_the_label_again(world):
+    gh, build = world
+    ctx, _ = build([APPROVE] * 2)
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    tick(ctx, build=True)
+    pr = next(iter(gh.prs_))
+    tick(ctx)
+    tick(ctx)
+    gh.human_label(pr)
+    rows = ctx.ledger.path.read_text().splitlines()
+    ctx.ledger.path.write_text("\n".join(r.replace(', "human_ok_event": 0', "") for r in rows) + "\n")
+    assert decisions(tick(ctx, build=False)) == [(pr, "wait")]
+    gh.human_label(pr)
+    assert decisions(tick(ctx, build=False)) == [(pr, "merge")]
+
+
+def test_a_tier_change_discards_verdicts_run_for_the_old_tier(world):
+    gh, build = world
+    ctx, run = build([APPROVE] * 4)
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T1"])
+    tick(ctx, build=True)
+    pr = next(iter(gh.prs_))
+    assert decisions(tick(ctx, build=False)) == [(pr, "gate")]
+    assert decisions(tick(ctx, build=False)) == [(pr, "review")]
+    gh.remove_label(pr, "tier:T1")
+    gh.add_labels(pr, "tier:T2")  # the risk was misclassified; the head is unchanged
+    gh.human_label(pr)
+    seen = sense(ctx, track=False)
+    assert decisions(seen) == [(pr, "gate")]  # the T1 verdicts do not cover T2
+    assert decisions(tick(ctx, build=False)) == [(pr, "gate")]
+    assert decisions(tick(ctx, build=False)) == [(pr, "review")]
+    assert ctx.ledger.last("verdict", pr=pr, kind="review")["tier"] == "T2"
+    assert decisions(tick(ctx, build=False)) == [(pr, "merge")]
+
+
+def test_an_interrupted_review_leaves_no_worktree_that_blocks_the_next_one(world):
+    gh, build = world
+    ctx, _ = build([APPROVE] * 2)
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T1"])
+    tick(ctx, build=True)
+    pr = next(iter(gh.prs_))
+    head = gh.prs_[pr]["head"]
+    from fakes import git
+
+    # vigia died after making the gate worktree and before recording a verdict
+    stale = ctx.root / f"gate-{pr}-{head[:8]}-1"
+    git("worktree", "add", "--quiet", "--detach", str(stale), head, cwd=ctx.clone)
+    assert decisions(tick(ctx, build=False)) == [(pr, "gate")]
+    assert ctx.ledger.last("verdict", pr=pr, kind="gate")["verdict"] == "APPROVE"
+    assert not stale.exists()
+
+
+def test_review_replaces_a_worktree_left_under_its_own_name(world):
+    from vigia.gate import review
+
+    gh, build = world
+    ctx, _ = build([APPROVE])
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T1"])
+    tick(ctx, build=True)
+    pr = next(iter(gh.prs_))
+    head = gh.prs_[pr]["head"]
+    stale = ctx.root / f"gate-{pr}-{head[:8]}-1"
+    stale.mkdir()
+    (stale / "junk").write_text("x")
+    assert review(ctx, gh.pr(pr), "gate", 1) == "APPROVE"
+    assert not stale.exists()
+
+
 def test_a_fix_round_invalidates_the_human_label_even_if_removal_fails(world):
     gh, build = world
     ctx, _ = build([CHANGES, APPROVE, APPROVE])

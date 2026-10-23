@@ -119,6 +119,26 @@ def _unfinished_builds(ctx: Ctx) -> list[int]:
     return sorted(open_builds)
 
 
+def record_head(ctx: Ctx, n: int, sha: str, human_ok_on: bool) -> bool:
+    """Record that vigia has seen `sha` as PR `n`'s head. False if that could not be recorded.
+
+    The row carries the id of the latest `human_ok` event GitHub has now. `watch.human_approved` accepts
+    only a label event with a higher id, so an approval of an earlier head never carries over, and no
+    local clock is compared with GitHub's. Without a row for the current head nothing counts as approved.
+    """
+    baseline = 0  # no label on the PR: any later labeled event is newer than this head
+    if human_ok_on:
+        try:
+            event = ctx.gh.label_event(n, ctx.cfg.labels.human_ok)
+        except CommandError as exc:
+            ctx.ledger.append("error", pr=n, action="read_human_ok", detail=str(exc)[:500])
+            ctx.say(f"PR #{n}: could not read the `{ctx.cfg.labels.human_ok}` history — retrying next tick")
+            return False
+        baseline = (event or {}).get("id") or 0
+    ctx.ledger.append("head_seen", pr=n, sha=sha, human_ok_event=baseline)
+    return True
+
+
 def recover(ctx: Ctx) -> None:
     """Repair what an interrupted step left behind. Runs at the start of every tick, under the lock.
 
@@ -231,7 +251,7 @@ def build(ctx: Ctx, issue: dict) -> int | None:
             family=seat.family,
             seconds=outcome.seconds,
         )
-        ctx.ledger.append("head_seen", pr=pr, sha=head)
+        record_head(ctx, pr, head, human_ok_on=False)  # a PR vigia just opened has no approval yet
         enroll(ctx, pr, n, tier)
         handoff = comments.handoff(
             head, seat, "builder", n, tier, outcome.seconds, outcome.code, tests, files, handoff_body(notes)
@@ -318,7 +338,7 @@ def fix(ctx: Ctx, pr: dict, stage: str) -> bool:
         ctx.ledger.append("pushed", pr=n, from_sha=sha, sha=head, stage=stage)
         # Recording the new head is what invalidates an earlier human approval (watch.human_approved);
         # removing the stale label is only a courtesy to the people reading the PR.
-        ctx.ledger.append("head_seen", pr=n, sha=head)
+        record_head(ctx, n, head, human_ok_on=labels.human_ok in pr["labels"])
         if labels.human_ok in pr["labels"]:
             try:
                 ctx.gh.remove_label(n, labels.human_ok)
