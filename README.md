@@ -7,8 +7,10 @@ vigia turns GitHub issues into merged pull requests with three rules that do not
 1. **Review depth is set by damage.** Every ticket has a tier — T0 (docs, tests, tooling), T1
    (product logic), T2 (money, auth, personal data, migrations, messages to customers). The tier,
    not the model that wrote the change, decides how much review it gets.
-2. **The reviewer is always from the other lab.** If Claude wrote it, Codex reviews it, and the
-   other way round, on the exact commit and in a read-only checkout. No verdict means no merge.
+2. **The gate is always from the other lab.** A model from the other lab reviews every change on
+   the exact commit, in a read-only checkout: Codex gates Claude's work, and Claude gates Codex's
+   work when a tier's builder is Codex (`vigia init --builder codex`). T1 and T2 add a stronger
+   reviewer after the gate, by default from the builder's lab. No verdict means no merge.
 3. **The merge is a decision table, not a judgement.** `vigia watch` is plain Python that never
    calls a model. It merges only when every rule holds on the exact head, with
    `gh pr merge --match-head-commit`, and writes every step to an append-only ledger.
