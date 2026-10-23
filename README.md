@@ -191,8 +191,9 @@ model given by alias.
 ## Development
 
 ```bash
-uv venv && uv pip install -e . pytest ruff
-ruff check . && ruff format --check . && pytest
+uv run --with pytest --with ruff ruff check .
+uv run --with pytest --with ruff ruff format --check .
+uv run --with pytest --with ruff pytest
 ```
 
 Tests never touch a real repository: the end-to-end test drives a real git remote created in a
