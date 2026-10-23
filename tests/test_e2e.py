@@ -471,6 +471,37 @@ def test_a_retarget_after_approval_blocks_the_merge(world):
     assert merge(ctx, s) is False and gh.merged == []
 
 
+def test_removing_the_review_label_before_the_merge_withdraws_the_pr(world):
+    gh, build = world
+    ctx, _ = build([APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    tick(ctx, build=False)  # gate approves; merge decision is next
+    s = sense(ctx, track=False)[0]
+    assert s.decision.action == "merge"
+    gh.remove_label(pr, "vigia:review")  # an operator withdraws the PR after the tick sensed it
+    assert merge(ctx, s) is False and gh.merged == []
+
+
+def test_a_failed_parking_comment_still_records_the_park(world):
+    gh, build = world
+    ctx, _ = build([CHANGES, CHANGES, APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    for expected in ("gate", "fix", "gate"):
+        assert decisions(tick(ctx)) == [(pr, expected)]
+    _fail_once(gh, "comment", lambda n, body: body.startswith("PARKED "))
+    assert decisions(tick(ctx)) == [(pr, "park")]
+    assert "vigia:parked" in gh.prs_[pr]["labels"]
+    assert ctx.ledger.last("parked", pr=pr)
+    # the operator unparks: the counters restart and the gate runs a fresh round instead of parking again
+    gh.remove_label(pr, "vigia:parked")
+    assert decisions(tick(ctx)) == [(pr, "gate")]
+    assert ctx.ledger.last("unparked", pr=pr)
+
+
 def test_a_build_whose_labels_failed_is_enrolled_by_the_next_tick(world):
     from vigia.proc import CommandError
 

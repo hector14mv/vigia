@@ -137,6 +137,9 @@ def merge(ctx: Ctx, seen: Seen) -> bool:
     fresh = ctx.gh.pr(n)  # re-read and re-decide right before the merge: the tick's snapshot may be old
     st = state(ctx, fresh)
     again = decide(st, ctx.cfg)
+    if ctx.cfg.labels.review not in fresh["labels"]:  # an operator withdrew the PR from automation
+        ctx.say(f"PR #{n}: not merging — `{ctx.cfg.labels.review}` was removed")
+        return False
     if again.action != "merge" or fresh["head"] != sha:
         ctx.say(f"PR #{n}: not merging — {again}")
         return False
@@ -152,9 +155,15 @@ def merge(ctx: Ctx, seen: Seen) -> bool:
 def park(ctx: Ctx, seen: Seen) -> None:
     n, d, labels = seen.pr["number"], seen.decision, ctx.cfg.labels
     ctx.gh.add_labels(n, labels.parked)
-    ctx.gh.comment(n, comments.parked(d.sha, d.reason, labels.parked))
+    # The record comes before the comment: once the label is on, `_track` needs the `parked` row to
+    # notice the unpark, so a failed comment must not lose it.
     ctx.ledger.append("parked", pr=n, sha=d.sha, reason=d.reason)
     ctx.say(f"PR #{n}: parked — {d.reason}")
+    try:
+        ctx.gh.comment(n, comments.parked(d.sha, d.reason, labels.parked))
+    except CommandError as exc:
+        ctx.ledger.append("error", pr=n, action="park_comment", detail=str(exc)[:500])
+        ctx.say(f"PR #{n}: parked, but the explaining comment failed — {exc}")
 
 
 def tick(ctx: Ctx, build: bool | None = None) -> list[Seen]:
