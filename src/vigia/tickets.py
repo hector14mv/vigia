@@ -42,12 +42,55 @@ Must still hold: <existing behaviour this change could break and must not, each 
 _HEADER = re.compile(r"^##\s+(.+?)\s*$", re.M)
 
 
+_FENCE_OPEN = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+
+
+def _fence_lines(text: str) -> list[tuple[int, bool, str]]:
+    """Per line: (start offset, inside a fence, text that counts as content). Fences are three or more
+    backticks or tildes, closed by a line of the same character at least as long. A one-line fence
+    (```pytest -q```) keeps its text; a marker line, with its language tag, keeps nothing."""
+    lines = text.split("\n")
+    starts = [sum(len(x) + 1 for x in lines[:i]) for i in range(len(lines))]  # offsets in the original text
+    lines = [x.removesuffix("\r") for x in lines]  # CRLF bodies: the \r must not hide a fence delimiter
+    out: list[tuple[int, bool, str]] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = _FENCE_OPEN.match(line)
+        if not m:
+            out.append((starts[i], False, line))
+            i += 1
+            continue
+        run, rest = m.group(1), m.group(2)
+        char, size = run[0], len(run)
+        one = re.fullmatch(rf"(.*?)[ \t]*{re.escape(char)}{{{size},}}[ \t]*", rest)
+        if one:
+            out.append((starts[i], False, one.group(1)))
+            i += 1
+            continue
+        if char == "`" and "`" in rest:  # a backtick info string is not a fence opener
+            out.append((starts[i], False, line))
+            i += 1
+            continue
+        close = re.compile(rf"[ \t]*{re.escape(char)}{{{size},}}[ \t]*")
+        end = next((j for j in range(i + 1, len(lines)) if close.fullmatch(lines[j])), None)
+        out.append((starts[i], True, ""))
+        # never closed: the fence runs to the end of the body, as in CommonMark
+        out.extend((starts[j], True, lines[j]) for j in range(i + 1, len(lines) if end is None else end))
+        if end is None:
+            break
+        out.append((starts[end], True, ""))
+        i = end + 1
+    return out
+
+
 def sections(body: str) -> dict[str, str]:
     """Section title -> its text, for `## Title` headers. A header inside a code fence does not start a
-    section, but the fenced text still belongs to the section it sits in."""
-    body = body or ""
-    fences = [m.span() for m in re.finditer(r"```.*?```", body, flags=re.S)]
-    matches = [m for m in _HEADER.finditer(body) if not any(a <= m.start() < b for a, b in fences)]
+    section, but the fenced text still belongs to the section it sits in. CRLF and CR line endings are
+    read as LF first, so a body GitHub stored with Windows endings parses exactly like the same text."""
+    body = (body or "").replace("\r\n", "\n").replace("\r", "\n")
+    inside = {start for start, fenced, _ in _fence_lines(body) if fenced}
+    matches = [m for m in _HEADER.finditer(body) if m.start() not in inside]
     out: dict[str, str] = {}
     for i, m in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
@@ -61,7 +104,7 @@ _PLACEHOLDER = re.compile(r"<[^>\n]*>")
 
 def _filled(text: str) -> bool:
     """True when the text says something once template placeholders and checkbox markers are removed."""
-    stripped = re.sub(r"(?m)^\s*```.*$", "", text)  # a fence marker (or its language tag) is not content
+    stripped = "\n".join(kept for _, _, kept in _fence_lines(text))  # fence markers and tags are not content
     stripped = _PLACEHOLDER.sub("", stripped)
     stripped = re.sub(r"(?m)^\s*-\s*\[[ xX]?\]\s*", "", stripped)
     return bool(re.search(r"\w", stripped))
