@@ -16,6 +16,7 @@ from vigia.engines import (
     handoff_commit,
     parse_verdict,
     session_env,
+    session_guards,
 )
 from vigia.proc import Result
 
@@ -156,8 +157,9 @@ def test_sessions_run_without_the_users_github_login(tmp_path, monkeypatch, engi
         Seat(engine, "m"), role, "p", tmp_path, "s1"
     )
     env = seen["env"]
-    assert env["GH_TOKEN"] == SESSION_GH_TOKEN  # a sentinel GitHub rejects, never the user's token
-    assert not ({*TOKENS, "SSH_ASKPASS"} - {"GH_TOKEN"}) & env.keys()
+    # every token variable gh reads is the sentinel GitHub rejects, never the user's token, or absent
+    assert all(env.get(var, SESSION_GH_TOKEN) == SESSION_GH_TOKEN for var in TOKENS)
+    assert "GITHUB_TOKEN" not in env and "SSH_ASKPASS" not in env
     assert env["GIT_ASKPASS"] == ""
     assert Path(env["GH_CONFIG_DIR"]).is_relative_to(root)
     assert seen["exists"] and seen["contents"] == []
@@ -338,3 +340,40 @@ def test_handoff_commit_line():
     assert subject == "fix: keep ledger events after a torn tail, escape TOML control"
     dangling = "Commit: fix: keep approvals and reviews tied to the right head, base and enrollment state"
     assert handoff_commit(dangling, "x") == "fix: keep approvals and reviews tied to the right head, base"
+
+
+def test_codex_commands_carry_the_guards_into_every_command_they_run(tmp_path):
+    import tomllib
+
+    guards = session_guards(tmp_path / "gh")
+    cmd = Engines(CFG, tmp_path).command(
+        Seat("codex", "gpt-6.1-sol"), "builder", tmp_path, tmp_path / "o", None, guards
+    )
+    values = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-c"]
+    assert 'shell_environment_policy.inherit="all"' in values
+    table = next(v for v in values if v.startswith("shell_environment_policy.set="))
+    parsed = tomllib.loads("set = " + table.split("=", 1)[1])["set"]
+    assert (
+        parsed == guards and parsed["GH_TOKEN"] == SESSION_GH_TOKEN and parsed["GIT_ALLOW_PROTOCOL"] == "file"
+    )
+    assert cmd[-1] == "-"
+
+
+def test_a_codex_session_gets_the_guards_in_its_command_line(tmp_path):
+    seen = {}
+
+    def runner(cmd, cwd, input, timeout, log, env=None):
+        seen.update(cmd=cmd, env=env)
+        Path(cmd[cmd.index("-o") + 1]).write_text("done")
+        return Result(0, "", "")
+
+    Engines(CFG, tmp_path / "logs", runner=runner, root=tmp_path / "work").run(
+        Seat("codex", "gpt-6.1-sol"), "builder", "p", tmp_path, "s1"
+    )
+    table = next(a for a in seen["cmd"] if a.startswith("shell_environment_policy.set="))
+    assert seen["env"]["GH_CONFIG_DIR"] in table and SESSION_GH_TOKEN in table
+
+
+def test_enterprise_hosts_get_the_sentinel_too():
+    env = session_env({"PATH": "/bin", "GH_ENTERPRISE_TOKEN": "ghe_secret"}, Path("/tmp/x"))
+    assert env["GH_ENTERPRISE_TOKEN"] == env["GITHUB_ENTERPRISE_TOKEN"] == SESSION_GH_TOKEN

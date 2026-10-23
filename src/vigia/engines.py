@@ -116,7 +116,13 @@ class Engines:
         self._run = runner
 
     def command(
-        self, seat: Seat, role: str, workdir: Path, out_file: Path, schema_file: Path | None
+        self,
+        seat: Seat,
+        role: str,
+        workdir: Path,
+        out_file: Path,
+        schema_file: Path | None,
+        guards: Mapping[str, str] | None = None,
     ) -> list[str]:
         extra = list(
             self.cfg.engine_args.get(seat.engine, {}).get(role, DEFAULT_ENGINE_ARGS[seat.engine][role])
@@ -145,6 +151,17 @@ class Engines:
             if seat.effort:
                 cmd += ["-c", f"model_reasoning_effort={seat.effort}"]
             cmd += extra + ["-C", str(workdir), "-o", str(out_file)]
+            if guards:
+                # Codex builds the environment of the commands it runs from its own policy (a user's config may
+                # keep only "core" variables), which would drop the session's guards: pass everything the session
+                # has, and set the guards on top so they reach every command whatever the config says.
+                table = ", ".join(f"{k} = {json.dumps(v)}" for k, v in guards.items())
+                cmd += [
+                    "-c",
+                    'shell_environment_policy.inherit="all"',
+                    "-c",
+                    f"shell_environment_policy.set={{{table}}}",
+                ]
             if schema_file is not None:
                 cmd += ["--output-schema", str(schema_file)]
             return cmd + ["-"]  # the prompt comes on stdin
@@ -159,8 +176,8 @@ class Engines:
         if role == "reviewer":
             schema_file = self.logs / f"{name}.schema.json"
             schema_file.write_text(json.dumps(VERDICT_SCHEMA), encoding="utf-8")
-        cmd = self.command(seat, role, workdir, out_file, schema_file)
         gh_config = self.root / f".gh-config-{name}"
+        cmd = self.command(seat, role, workdir, out_file, schema_file, guards=session_guards(gh_config))
         safety.remove(gh_config, self.root)  # an interrupted run's: start logged out, never from its state
         gh_config.mkdir(parents=True)
         started = time.monotonic()
@@ -183,6 +200,28 @@ class Engines:
         return Outcome(ok, text, result.code, result.timed_out, seconds, self.logs / f"{name}.log")
 
 
+def session_guards(gh_config: Path) -> dict[str, str]:
+    """The variables that keep a session off the user's GitHub login. They go into the session's environment and,
+    for Codex, into the environment of every command it runs (`Engines.command`)."""
+    guards = {
+        "GH_CONFIG_DIR": str(gh_config),  # an empty config: no account, no settings
+        # gh falls back to the OS keyring for a host's token even with an empty config (`gh auth token` would print
+        # the user's). A token in the environment comes first, so a sentinel GitHub rejects closes that path, for
+        # github.com (GH_TOKEN) and for GitHub Enterprise hosts, which read their own variables.
+        "GH_TOKEN": SESSION_GH_TOKEN,
+        "GH_ENTERPRISE_TOKEN": SESSION_GH_TOKEN,
+        "GITHUB_ENTERPRISE_TOKEN": SESSION_GH_TOKEN,
+        "GIT_ALLOW_PROTOCOL": "file",  # git may reach no remote: no https, ssh or git transport at all
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "",  # set but empty: git runs no askpass program (it is asked before core.askPass)
+        "GIT_CONFIG_COUNT": str(len(_NO_CREDENTIAL_HELPER)),
+    }
+    for i, (key, value) in enumerate(_NO_CREDENTIAL_HELPER):
+        guards[f"GIT_CONFIG_KEY_{i}"] = key
+        guards[f"GIT_CONFIG_VALUE_{i}"] = value
+    return guards
+
+
 def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
     """The environment of an engine session: what it needs to run, and no way to act as the user on GitHub.
 
@@ -196,17 +235,7 @@ def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
     example, read credential stores itself. For that, run vigia under a separate OS user or in a container.
     """
     env = {k: v for k, v in base.items() if k in SESSION_ENV or k.startswith(SESSION_ENV_PREFIXES)}
-    env["GH_CONFIG_DIR"] = str(gh_config)  # an empty config: no account, no settings
-    # gh falls back to the OS keyring for a host's token even with an empty config (`gh auth token` would print
-    # the user's). A token in the environment comes first, so a sentinel that GitHub rejects closes that path.
-    env["GH_TOKEN"] = SESSION_GH_TOKEN
-    env["GIT_ALLOW_PROTOCOL"] = "file"  # git may reach no remote: no https, ssh or git transport at all
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    env["GIT_ASKPASS"] = ""  # set but empty: git runs no askpass program (it is asked before core.askPass)
-    env["GIT_CONFIG_COUNT"] = str(len(_NO_CREDENTIAL_HELPER))
-    for i, (key, value) in enumerate(_NO_CREDENTIAL_HELPER):
-        env[f"GIT_CONFIG_KEY_{i}"] = key
-        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    env.update(session_guards(gh_config))
     return env
 
 
