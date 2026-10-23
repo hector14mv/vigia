@@ -218,6 +218,25 @@ def cmd_workspace(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mesa(args: argparse.Namespace) -> int:
+    from . import mesa
+
+    found = _workspace()
+    contexts = found[1] if found else [Ctx.load(Path.cwd())]
+    srv = mesa.server(contexts, args.host, args.port, tuple(args.allow_host or ()))
+    names = ", ".join(c.cfg.repo for c in contexts)
+    print(f"vigia Mesa for {names}: http://{args.host}:{srv.server_address[1]}/  (read-only; Ctrl-C to stop)")
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            "Warning: the Mesa has no login of its own. Prefer 127.0.0.1 behind `tailscale serve` (docs/server.md)."
+        )
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     found = _workspace()
     if found and not args.html:
@@ -295,6 +314,16 @@ def parser() -> argparse.ArgumentParser:
     )
     s.add_argument("--force", action="store_true", help="overwrite an existing vigia.workspace.toml")
     s.set_defaults(func=cmd_workspace)
+
+    s = sub.add_parser(
+        "mesa", help="the control desk in a browser: what needs you, every PR's next step, events, fuel"
+    )
+    s.add_argument("--host", default="127.0.0.1", help="interface to listen on (default 127.0.0.1)")
+    s.add_argument("--port", type=int, default=8790, help="port (default 8790)")
+    s.add_argument(
+        "--allow-host", action="append", help="extra host name the Mesa answers to (e.g. a reverse proxy's)"
+    )
+    s.set_defaults(func=cmd_mesa)
 
     s = sub.add_parser("job", help=argparse.SUPPRESS)  # what `vigia watch` starts for each parallel session
     s.add_argument("action", choices=jobs.ACTIONS)
