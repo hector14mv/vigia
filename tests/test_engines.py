@@ -40,6 +40,49 @@ def test_claude_reviewer_cannot_edit(tmp_path):
     assert "--json-schema" in cmd
 
 
+def _last_denied(cmd: list[str]) -> list[str]:
+    start = len(cmd) - cmd[::-1].index("--disallowedTools")
+    end = next((i for i in range(start, len(cmd)) if cmd[i].startswith("--")), len(cmd))
+    return cmd[start:end]
+
+
+def test_claude_reviewer_default_has_no_shell(tmp_path):
+    cmd = Engines(CFG, tmp_path).command(
+        Seat("claude", "claude-opus-5-5"), "reviewer", tmp_path, tmp_path / "o", None
+    )
+    assert not [a for a in cmd if a.startswith("Bash(")]
+    allowed = cmd[cmd.index("--allowedTools") + 1 :]
+    assert allowed[: allowed.index("--disallowedTools")] == ["Read", "Glob", "Grep"]
+    assert {"Bash", "Edit", "Write", "NotebookEdit"} <= set(_last_denied(cmd))
+
+
+def test_claude_reviewer_override_cannot_reenable_shell_or_writes(tmp_path):
+    override = ["--permission-mode", "acceptEdits", "--allowedTools", "Bash", "Read"]
+    cfg = Config(
+        repo="o/r",
+        base="main",
+        tiers=default_tiers(),
+        engine_args={"claude": {"reviewer": tuple(override)}},
+    )
+    schema = tmp_path / "s.json"
+    schema.write_text('{"type": "object"}')
+    cmd = Engines(cfg, tmp_path).command(
+        Seat("claude", "claude-opus-5-5"), "reviewer", tmp_path, tmp_path / "o", schema
+    )
+    assert cmd[4:9] == override  # the override is passed through ...
+    # ... and the forced deny list comes after it, so no allow rule it adds survives
+    assert cmd.index("--disallowedTools") > cmd.index("--allowedTools")
+    assert {"Bash", "Edit", "Write", "NotebookEdit"} <= set(_last_denied(cmd))
+    assert cmd[cmd.index("--json-schema") + 1] == '{"type": "object"}'
+
+
+def test_claude_builder_keeps_its_shell(tmp_path):
+    cmd = Engines(CFG, tmp_path).command(
+        Seat("claude", "claude-sonnet-5-5"), "builder", tmp_path, tmp_path / "o", None
+    )
+    assert "--disallowedTools" not in cmd and "Bash" in cmd
+
+
 def test_run_reads_codex_final_message_and_claude_json(tmp_path):
     seen = {}
 
