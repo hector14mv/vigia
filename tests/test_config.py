@@ -140,3 +140,12 @@ def test_seat_label_and_family():
     assert seat.family == "openai"
     assert seat.label() == "codex · gpt-6.1-sol · effort medium"
     assert TierPolicy(builder=seat, gate=Seat("claude", "claude-opus-5-5")).reviewer is None
+
+
+def test_multiline_and_control_characters_round_trip():
+    command = 'ruff check .\npytest -q\r\n\techo "done" \\ \x01'
+    doc = base_doc()
+    doc["checks"] = {"test_command": command}
+    cfg = parse(doc)
+    assert cfg.test_command == command.strip()
+    assert parse(tomllib.loads(render(cfg))).test_command == cfg.test_command

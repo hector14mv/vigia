@@ -43,14 +43,16 @@ _HEADER = re.compile(r"^##\s+(.+?)\s*$", re.M)
 
 
 def sections(body: str) -> dict[str, str]:
-    """Section title -> its text, for `## Title` headers. Text inside code fences is not parsed."""
-    unfenced = re.sub(r"```.*?```", "", body or "", flags=re.S)
-    matches = list(_HEADER.finditer(unfenced))
+    """Section title -> its text, for `## Title` headers. A header inside a code fence does not start a
+    section, but the fenced text still belongs to the section it sits in."""
+    body = body or ""
+    fences = [m.span() for m in re.finditer(r"```.*?```", body, flags=re.S)]
+    matches = [m for m in _HEADER.finditer(body) if not any(a <= m.start() < b for a, b in fences)]
     out: dict[str, str] = {}
     for i, m in enumerate(matches):
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(unfenced)
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
         title = m.group(1).split("(")[0].strip()
-        out.setdefault(title, unfenced[m.end() : end].strip())
+        out.setdefault(title, body[m.end() : end].strip())
     return out
 
 
@@ -59,7 +61,8 @@ _PLACEHOLDER = re.compile(r"<[^>\n]*>")
 
 def _filled(text: str) -> bool:
     """True when the text says something once template placeholders and checkbox markers are removed."""
-    stripped = _PLACEHOLDER.sub("", text)
+    stripped = re.sub(r"(?m)^\s*```.*$", "", text)  # a fence marker (or its language tag) is not content
+    stripped = _PLACEHOLDER.sub("", stripped)
     stripped = re.sub(r"(?m)^\s*-\s*\[[ xX]?\]\s*", "", stripped)
     return bool(re.search(r"\w", stripped))
 

@@ -330,8 +330,18 @@ def find(start: Path) -> Path:
 # --- rendering --------------------------------------------------------------------------------
 
 
+_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t", "\b": "\\b", "\f": "\\f"}
+
+
 def _q(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """A TOML basic string; control characters are escaped so the value stays on one line."""
+    return (
+        '"'
+        + "".join(
+            _ESCAPES.get(c) or (f"\\u{ord(c):04x}" if ord(c) < 0x20 or c == "\x7f" else c) for c in value
+        )
+        + '"'
+    )
 
 
 def _seat_toml(seat: Seat) -> str:

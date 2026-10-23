@@ -64,3 +64,16 @@ def test_slug_and_linked_issue():
     assert linked_issue("Closes #12\n\nmore") == 12
     assert linked_issue("fixes #3") == 3
     assert linked_issue("see #4") is None
+
+
+def test_fenced_section_content_counts_but_fenced_headers_do_not():
+    body = GOOD.replace("`python -m pytest -q` passes.", "```sh\npytest -q\n```")
+    assert missing(body) == []
+    assert sections(body)["Done-test"].endswith("pytest -q\n```")
+    nested = GOOD.replace("`python -m pytest -q` passes.", "```md\n## Risks\nfake\n```\nrun it")
+    assert sections(nested)["Risks"] == "None: pure function."
+
+
+def test_an_empty_fence_is_not_content():
+    body = GOOD.replace("`python -m pytest -q` passes.", "```sh\n```")
+    assert "section `## Done-test` is empty" in missing(body)

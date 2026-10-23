@@ -48,3 +48,26 @@ def test_events_and_last_filter_by_fields(tmp_path):
 
 def test_missing_file_reads_empty(tmp_path):
     assert ledger(tmp_path).rows() == []
+
+
+def test_append_after_a_torn_tail_keeps_the_new_event(tmp_path):
+    lg = ledger(tmp_path)
+    lg.append("a")
+    with lg.path.open("ab") as fh:
+        fh.write(b'{"event":"interrupted"')
+    lg.append("verdict", pr=1, kind="gate", verdict="CHANGES", p1=1)
+    assert [r["event"] for r in lg.rows()] == ["a", "verdict"]
+    assert lg.last("verdict", pr=1)["p1"] == 1
+
+
+def test_a_write_cut_inside_a_multibyte_character_is_skipped(tmp_path):
+    lg = ledger(tmp_path)
+    lg.append("a")
+    with lg.path.open("ab") as fh:
+        fh.write(b'{"event":"torn","reason":"\xc3')
+    assert [r["event"] for r in lg.rows()] == ["a"]
+    assert lg.events("torn") == []
+    assert lg.last("a")["event"] == "a"
+    lg.append("b", text="café")
+    assert [r["event"] for r in lg.rows()] == ["a", "b"]
+    assert lg.last("b")["text"] == "café"

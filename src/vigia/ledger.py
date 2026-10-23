@@ -32,8 +32,12 @@ class Ledger:
         if "\n" in line:
             raise ValueError("ledger rows must serialise to a single line")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        with self.path.open("a+b") as fh:
+            # An interrupted write can leave the file without a final newline; start a fresh line so
+            # this event is not glued onto the torn one (which would lose both).
+            if fh.seek(0, os.SEEK_END) and (fh.seek(-1, os.SEEK_END), fh.read(1))[1] != b"\n":
+                fh.write(b"\n")
+            fh.write(line.encode("utf-8") + b"\n")
             fh.flush()
             os.fsync(fh.fileno())
         return row
@@ -44,7 +48,9 @@ class Ledger:
 
     def _iter(self) -> Iterator[dict]:
         try:
-            fh = self.path.open(encoding="utf-8")
+            # errors="replace": a write cut inside a multibyte character leaves invalid UTF-8 on the
+            # torn line, which then fails JSON parsing and is skipped like any other torn line.
+            fh = self.path.open(encoding="utf-8", errors="replace")
         except FileNotFoundError:
             return
         with fh:
