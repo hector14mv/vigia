@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
-from . import __version__, builder, gate, status, watch
+from . import __version__, builder, gate, jobs, status, watch, workspace
+from . import config as config_mod
 from . import init as init_mod
 from .config import ConfigError
 from .context import Busy, Ctx
@@ -84,9 +86,40 @@ def cmd_fix(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _workspace() -> tuple[workspace.Workspace, list[Ctx]] | None:
+    """The workspace to work on when the command runs outside any repo but inside a workspace folder."""
+    try:
+        config_mod.find(Path.cwd())
+        return None  # inside a repo: that repo only
+    except ConfigError:
+        pass
+    path = workspace.find(Path.cwd())
+    if path is None:
+        return None
+    ws = workspace.load(path)
+    return ws, [Ctx.load(repo) for repo in ws.repos]
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
-    ctx = Ctx.load(Path.cwd())
     build = False if args.no_build else None
+    found = _workspace()
+    if found:
+        ws, contexts = found
+        if args.slots:
+            ws = workspace.Workspace(ws.path, ws.repos, args.slots)
+        if args.once:
+            watch.workspace_tick(ws, contexts, build)
+            return 0
+        try:
+            watch.workspace_loop(
+                ws, contexts, args.interval or min(c.cfg.interval_seconds for c in contexts), build
+            )
+        except KeyboardInterrupt:
+            print("\nstopped")
+        return 0
+    ctx = Ctx.load(Path.cwd())
+    if args.slots:
+        ctx.cfg = replace(ctx.cfg, slots=args.slots)
     if args.once:
         watch.tick(ctx, build)  # tick reports each decision itself, before acting on it
         return 0
@@ -97,7 +130,37 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_job(args: argparse.Namespace) -> int:
+    ctx = Ctx.load(Path.cwd())
+    return 0 if jobs.run(ctx, args.action, args.number, args.stage or "") else 1
+
+
+def cmd_workspace(args: argparse.Namespace) -> int:
+    folder = Path.cwd()
+    target = folder / workspace.WORKSPACE_NAME
+    if target.exists() and not args.force:
+        raise SystemExit(f"{target} already exists (use --force to overwrite)")
+    repos = workspace.discover(folder)
+    if not repos:
+        raise SystemExit(
+            f"no sub-folder of {folder} has a vigia.toml: clone your repos here and run `vigia init` in each"
+        )
+    slots = args.slots or workspace.recommend_slots()
+    target.write_text(workspace.render(slots, repos), encoding="utf-8")
+    print(f"Wrote {target}: {len(repos)} repo(s) ({', '.join(repos)}), {slots} slot(s).")
+    print("Run `vigia watch` and `vigia status` from this folder.")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
+    found = _workspace()
+    if found and not args.html:
+        _, contexts = found
+        if args.json:
+            print("[" + ",\n".join(status.show(c, as_json=True) for c in contexts) + "]")
+        else:
+            print("\n\n".join(status.show(c) for c in contexts))
+        return 0
     ctx = Ctx.load(Path.cwd())
     if args.html:
         try:
@@ -145,7 +208,25 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--once", action="store_true", help="one tick, then exit")
     s.add_argument("--interval", type=int, help="seconds between ticks (default: watch.interval_seconds)")
     s.add_argument("--no-build", action="store_true", help="do not build new issues, only move open PRs")
+    s.add_argument(
+        "--slots", type=int, help="engine sessions at once (default: watch.slots, or the workspace's)"
+    )
     s.set_defaults(func=cmd_watch)
+
+    s = sub.add_parser(
+        "workspace", help="write vigia.workspace.toml here: one folder that drives every clone below it"
+    )
+    s.add_argument(
+        "--slots", type=int, help="engine sessions at once across all repos (default: what this machine fits)"
+    )
+    s.add_argument("--force", action="store_true", help="overwrite an existing vigia.workspace.toml")
+    s.set_defaults(func=cmd_workspace)
+
+    s = sub.add_parser("job", help=argparse.SUPPRESS)  # what `vigia watch` starts for each parallel session
+    s.add_argument("action", choices=jobs.ACTIONS)
+    s.add_argument("number", type=int)
+    s.add_argument("stage", nargs="?")
+    s.set_defaults(func=cmd_job)
 
     s = sub.add_parser("status", help="queue, open PRs and their next step, parked reasons, recent events")
     out = s.add_mutually_exclusive_group()

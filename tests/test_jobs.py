@@ -1,0 +1,182 @@
+"""Parallel slots: job locks, the watcher filling free slots, jobs re-deciding, recovery leaving live jobs alone,
+the ledger under concurrent writers, and the multi-repo workspace."""
+
+import json
+import multiprocessing
+from dataclasses import replace
+
+from fakes import APPROVE
+from test_e2e import TICKET, decisions, world  # noqa: F401  (world is a fixture)
+from vigia import fuel, jobs, workspace
+from vigia.ledger import Ledger
+from vigia.watch import tick
+
+
+def test_a_held_lock_is_busy_and_released_on_exit(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    assert not jobs.busy(ctx, "pr-7")
+    with jobs.hold(ctx, "pr-7") as got:
+        assert got and jobs.busy(ctx, "pr-7") and jobs.live(ctx) == ["pr-7"]
+        with jobs.hold(ctx, "pr-7") as second:
+            assert not second  # nobody takes a target twice
+    assert not jobs.busy(ctx, "pr-7") and jobs.live(ctx) == []
+
+
+def test_the_watcher_fills_free_slots_and_returns(world, monkeypatch):  # noqa: F811
+    gh, build = world
+    ctx, run = build([APPROVE] * 4)
+    for title in ("One", "Two", "Three"):
+        gh.add_issue(title, TICKET, ["vigia:ready", "tier:T0"])
+    spawned = []
+    monkeypatch.setattr(jobs, "spawn", lambda c, action, number, stage="": spawned.append((action, number)))
+    ctx.cfg = replace(ctx.cfg, slots=2)
+    tick(ctx)
+    assert spawned == [("build", 1), ("build", 2)]  # two slots, two builds, nothing run inline
+    assert run.calls == []
+
+
+def test_a_target_with_a_live_job_gets_no_second_session(world, monkeypatch):  # noqa: F811
+    gh, build = world
+    ctx, run = build([APPROVE])
+    gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)  # slots 1: builds inline
+    pr = next(iter(gh.prs_))
+    spawned = []
+    monkeypatch.setattr(jobs, "spawn", lambda c, action, number, stage="": spawned.append((action, number)))
+    ctx.cfg = replace(ctx.cfg, slots=3)
+    with jobs.hold(ctx, jobs.target("gate", pr)):
+        seen = tick(ctx)
+    assert spawned == [] and decisions(seen) == [(pr, "wait")]
+    tick(ctx)
+    assert spawned == [("gate", pr)]
+
+
+def test_a_job_decides_again_before_spending_a_session(world):  # noqa: F811
+    gh, build = world
+    ctx, run = build([APPROVE])
+    gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    assert jobs.run(ctx, "gate", pr, "1") is True  # due: it runs
+    reviews = [c for c in run.calls if c["role"] == "reviewer"]
+    assert len(reviews) == 1
+    assert jobs.run(ctx, "gate", pr, "1") is False  # the verdict is in: a stale job does nothing
+    assert len([c for c in run.calls if c["role"] == "reviewer"]) == 1
+    rows = [r["event"] for r in ctx.ledger.rows() if r["event"].startswith("job_")]
+    assert rows == ["job_started", "job_finished"]
+
+
+def test_jobs_run_end_to_end_with_two_slots(world, monkeypatch):  # noqa: F811
+    gh, build = world
+    ctx, run = build([APPROVE, APPROVE])
+    for title in ("One", "Two"):
+        gh.add_issue(title, TICKET, ["vigia:ready", "tier:T0"])
+    # run each job right away in this process, as `vigia job` would in its own
+    monkeypatch.setattr(jobs, "spawn", lambda c, action, number, stage="": jobs.run(c, action, number, stage))
+    ctx.cfg = replace(ctx.cfg, slots=2)
+    for _ in range(4):
+        tick(ctx)
+    assert len(gh.merged) == 2
+
+
+def test_recovery_leaves_a_live_build_alone(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    n = gh.add_issue("One", TICKET, ["tier:T0", "vigia:building"])
+    ctx.ledger.append("build_started", issue=n, tier="T0", engine="claude", model="m", branch="b")
+    with jobs.hold(ctx, jobs.target("build", n)):
+        tick(ctx, build=False)
+        assert "vigia:parked" not in gh.issues_[n]["labels"]  # in flight, not interrupted
+    tick(ctx, build=False)
+    assert "vigia:parked" in gh.issues_[n]["labels"]  # its job is gone: now it was interrupted
+
+
+def test_recovery_keeps_the_worktree_of_a_live_review(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    live = ctx.root / "gate-5-abcdef12-1"
+    stale = ctx.root / "gate-6-abcdef12-1"
+    live.mkdir(parents=True)
+    stale.mkdir(parents=True)
+    with jobs.hold(ctx, jobs.target("gate", 5)):
+        tick(ctx, build=False)
+    assert live.exists() and not stale.exists()
+
+
+def _append_many(path, n):
+    lg = Ledger(path)
+    for i in range(n):
+        lg.append("ping", i=i, text="x" * 200)
+
+
+def test_parallel_writers_never_tear_a_ledger_line(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    procs = [multiprocessing.Process(target=_append_many, args=(path, 150)) for _ in range(4)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+    lines = path.read_text().splitlines()
+    assert len(lines) == 600 and all(json.loads(line)["event"] == "ping" for line in lines)
+
+
+def test_workspace_load_discover_and_share_slots(tmp_path):
+    from vigia.config import Config, default_tiers, render
+
+    for name, repo in (("app", "acme/app"), ("api", "acme/api")):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "vigia.toml").write_text(
+            render(Config(repo=repo, base="main", tiers=default_tiers()))
+        )
+    (tmp_path / "notes").mkdir()
+    assert workspace.discover(tmp_path) == ["api", "app"]
+    (tmp_path / workspace.WORKSPACE_NAME).write_text(workspace.render(3, ["app", "api"]))
+    ws = workspace.load(workspace.find(tmp_path / "app"))
+    assert ws.slots == 3 and [r.name for r in ws.repos] == ["app", "api"]
+    app, api = ws.repos
+    assert workspace.allowance(3, {app: 1, api: 0}, app) == 3  # its one job + the two free slots
+    assert workspace.allowance(3, {app: 2, api: 1}, api) == 1  # full: only what it already runs
+
+
+def test_recommended_slots_follow_the_machine_and_the_quota():
+    assert workspace.recommend_slots(cpus=16, ram_gb=64) == 6  # never more than six
+    assert workspace.recommend_slots(cpus=8, ram_gb=8) == 4
+    assert workspace.recommend_slots(cpus=2, ram_gb=4) == 1
+    assert workspace.recommend_slots(cpus=8, ram_gb=16, quota_used=80) == 2
+    assert workspace.recommend_slots(cpus=1, ram_gb=1) == 1
+
+
+def test_codex_weekly_quota_is_read_from_the_newest_rollout(tmp_path):
+    day = tmp_path / "2026" / "10" / "24"
+    day.mkdir(parents=True)
+    row = {
+        "payload": {
+            "rate_limits": {
+                "primary": {"used_percent": 12.0, "window_minutes": 10080, "resets_at": 1793386331}
+            }
+        }
+    }
+    (day / "rollout-a.jsonl").write_text('{"type": "session"}\n' + json.dumps(row) + "\n")
+    tank = fuel.codex_weekly(tmp_path)
+    assert tank["used_percent"] == 12.0 and tank["resets_at"] == "2026-10-30T18:52:11Z"
+    assert fuel.codex_weekly(tmp_path / "missing") is None
+
+
+def test_spawn_starts_a_detached_vigia_job_in_the_clone(world, monkeypatch):  # noqa: F811
+    import subprocess
+    import sys
+
+    gh, build = world
+    ctx, _ = build([])
+    seen = {}
+
+    def fake_popen(cmd, **kw):
+        seen.update(cmd=cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    jobs.spawn(ctx, "fix", 12, "gate")
+    assert seen["cmd"] == [sys.executable, "-m", "vigia", "job", "fix", "12", "gate"]
+    assert seen["cwd"] == ctx.clone and seen["start_new_session"] is True
+    assert seen["stdin"] == subprocess.DEVNULL
+    assert ctx.ledger.last("job_spawned")["target"] == "pr-12"

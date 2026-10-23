@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import config as config_mod
-from . import proc, tickets
+from . import fuel, proc, tickets, workspace
 from .config import TIERS, Config, Labels, Seat, default_tiers, other
 from .gh import GitHub
 from .proc import CommandError
@@ -180,12 +180,26 @@ def init(
         reason = "Your answer had no logins" if typed_answer else "Could not read your GitHub login"
         say(f"{reason}: humans = [], so anyone with write access can approve T2.")
 
+    tank = fuel.codex_weekly()
+    recommended = workspace.recommend_slots(quota_used=tank["used_percent"] if tank else None)
+    say(
+        f"This machine fits {recommended} engine session(s) at once"
+        + (f"; Codex's weekly quota is {tank['used_percent']:.0f} % used" if tank else "")
+        + ". Every PR also spends one gate from the other lab."
+    )
+    slots = recommended
+    if not assume_yes:
+        answer = ask("Engine sessions at once (watch.slots)", str(recommended)).strip()
+        if answer.isdigit() and 1 <= int(answer) <= 32:
+            slots = int(answer)
+
     cfg = Config(
         repo=repo,
         base=base,
         tiers=tiers,
         test_command=test_command.strip() or None,
         humans=tuple(humans),
+        slots=slots,
         engine_args={e: dict(r) for e, r in config_mod.DEFAULT_ENGINE_ARGS.items()},
     )
     text = config_mod.render(cfg)

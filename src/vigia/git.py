@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import fcntl
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import proc, safety
@@ -19,8 +21,22 @@ class Git:
     def _git(self, *args: str, cwd: Path | None = None, check: bool = True) -> proc.Result:
         return self._run(["git", *args], cwd=cwd or self.clone, check=check)
 
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """One process at a time changes the clone's shared state (refs, the worktree list, info/exclude):
+        parallel jobs would otherwise race on git's own lock files and fail."""
+        path = self.clone / ".vigia" / "git.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
     def fetch(self, *refs: str) -> None:
-        self._git("fetch", "--quiet", "origin", *refs)
+        with self._locked():
+            self._git("fetch", "--quiet", "origin", *refs)
 
     def rev(self, ref: str, cwd: Path | None = None) -> str:
         return self._git("rev-parse", ref, cwd=cwd).stdout.strip()
@@ -40,18 +56,24 @@ class Git:
     def worktree_detached(self, path: Path, commit: str) -> Path:
         """A worktree at exactly `commit`, on no branch. Builders and fixers push with HEAD:<branch>."""
         target = self._check_new(path)
-        self._git("worktree", "add", "--quiet", "--detach", str(target), commit)
-        self.exclude(".vigia-handoff.md")
+        with self._locked():
+            self._git("worktree", "add", "--quiet", "--detach", str(target), commit)
+            self._exclude(".vigia-handoff.md")
         return target
 
     def remove_worktree(self, path: Path) -> None:
         target = safety.inside(path, self.root)
-        self._git("worktree", "remove", "--force", str(target), check=False)
-        safety.remove(target, self.root)
-        self._git("worktree", "prune", check=False)
+        with self._locked():
+            self._git("worktree", "remove", "--force", str(target), check=False)
+            safety.remove(target, self.root)
+            self._git("worktree", "prune", check=False)
 
     def exclude(self, pattern: str) -> None:
         """Add `pattern` to the clone's info/exclude (shared by all its worktrees), once."""
+        with self._locked():
+            self._exclude(pattern)
+
+    def _exclude(self, pattern: str) -> None:
         common = Path(self._git("rev-parse", "--git-common-dir").stdout.strip())
         if not common.is_absolute():
             common = self.clone / common

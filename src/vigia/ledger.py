@@ -7,6 +7,7 @@ decisions read the ledger, which only vigia writes.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 from collections.abc import Callable, Iterator
@@ -33,6 +34,9 @@ class Ledger:
             raise ValueError("ledger rows must serialise to a single line")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a+b") as fh:
+            # Parallel jobs append to the same ledger: one writer at a time, so the torn-tail check below and
+            # the write after it cannot interleave with another process's line.
+            fcntl.flock(fh, fcntl.LOCK_EX)
             # An interrupted write can leave the file without a final newline; start a fresh line so
             # this event is not glued onto the torn one (which would lose both).
             if fh.seek(0, os.SEEK_END) and (fh.seek(-1, os.SEEK_END), fh.read(1))[1] != b"\n":

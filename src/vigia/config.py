@@ -91,8 +91,9 @@ class Config:
     humans: tuple[
         str, ...
     ] = ()  # GitHub logins allowed to add the human label; empty = anyone with write access
-    build_in_watch: bool = True  # `vigia watch` also builds ready issues, one at a time
+    build_in_watch: bool = True  # `vigia watch` also builds ready issues
     interval_seconds: int = 120
+    slots: int = 1  # engine sessions at once; 1 runs them inline, one per tick (vigia.jobs)
     engine_args: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=lambda: default_engine_args())
     path: Path | None = None
 
@@ -273,6 +274,9 @@ def parse(data: dict, path: Path | None = None) -> Config:
     interval = watch_t.get("interval_seconds", 120)
     if not isinstance(interval, int) or isinstance(interval, bool) or interval < 10:
         raise ConfigError("watch.interval_seconds: expected an integer >= 10")
+    slots = watch_t.get("slots", 1)
+    if not isinstance(slots, int) or isinstance(slots, bool) or not 1 <= slots <= 32:
+        raise ConfigError("watch.slots: expected an integer from 1 to 32")
     build_in_watch = watch_t.get("build", True)
     if not isinstance(build_in_watch, bool):
         raise ConfigError("watch.build: expected true or false")
@@ -299,6 +303,7 @@ def parse(data: dict, path: Path | None = None) -> Config:
         humans=tuple(humans),
         build_in_watch=build_in_watch,
         interval_seconds=interval,
+        slots=slots,
         engine_args=engine_args,
         path=path,
     )
@@ -390,6 +395,7 @@ def render(cfg: Config) -> str:
         "[watch]",
         f"build = {'true' if cfg.build_in_watch else 'false'}",
         f"interval_seconds = {cfg.interval_seconds}",
+        f"slots = {cfg.slots}  # engine sessions at once (gate, review, fix or build)",
     ]
     defaults = Labels()
     changed = {
