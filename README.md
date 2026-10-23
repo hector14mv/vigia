@@ -193,6 +193,8 @@ ruff check . && ruff format --check . && pytest
 Tests never touch a real repository: the end-to-end test drives a real git remote created in a
 temporary directory, with GitHub and the engines replaced by fakes (`tests/fakes.py`).
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to propose and submit a change.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
