@@ -94,15 +94,22 @@ its brief. The gate then reviews the new head. There are at most two gate rounds
 that the PR is parked for a human.
 
 **T1 and T2** add a stronger reviewer on the same exact head (by default Claude Opus 5.5 for T1 and
-Claude Fable 5.1 for T2). **T2** also waits for a person to add `vigia:human-ok` on that head; any
-new push removes the label.
+Claude Fable 5.1 for T2). **T2** also waits for a person to add `vigia:human-ok` on that head. The
+label counts only if GitHub recorded it after vigia first saw the head, so an approval never carries
+over to a later push (vigia also removes the stale label, as a courtesy).
 
 **The merge** is `rules.decide()`, a pure function tested row by row in
 [`tests/test_rules.py`](tests/test_rules.py). In order: closed, parked or draft PRs are left alone;
-a missing tier, an unknown builder, a same-lab gate or a conflict parks; CI must be green on the
-head before any review; then the gate, the reviewer and the human label, each on the exact head;
-then `gh pr merge --squash --match-head-commit <sha>`. Right before merging, vigia re-reads the PR
-and decides again.
+a PR aimed at another branch than the base, a missing tier, an unknown builder, a same-lab gate or a
+conflict parks; CI must be green on the head before any review; then the gate, the reviewer and the
+human label, each on the exact head and each counted only for the PR's current tier; then
+`gh pr merge --squash --match-head-commit <sha>`. Right before merging, vigia re-reads the PR and
+decides again.
+
+**Crashes** are expected, not exceptional. Every paid step writes the ledger before its side effects
+on GitHub, so a verdict is never paid for twice; at the start of each tick vigia parks a build that
+was interrupted, finishes enrolling a PR whose labels failed, and removes worktrees a killed session
+left behind.
 
 **The ledger** is `.vigia/ledger.jsonl`: one JSON line per action (`pr_opened`, `verdict`,
 `fix_started`, `pushed`, `parked`, `merged`, …), opened in append mode only. It is what the
@@ -167,10 +174,12 @@ model given by alias.
 
 - Tested on macOS and Linux, with GitHub, Claude Code 2.1 and Codex CLI 0.159. No Windows, no
   GitLab, no other engines yet.
-- One engine session at a time per repository. The factory this comes from ran six in parallel.
+- One engine session at a time per clone. The factory this comes from ran six in parallel.
 - A PR that conflicts with its base is parked, not rebased.
 - Fix rounds use the tier's builder engine, so they stay in the builder's lab.
 - The ledger lives in the clone you run vigia from; run it from one place.
+- `vigia status` reads PR state through `gh pr list`, which can lag a few minutes behind GitHub
+  ([#9](https://github.com/hector14mv/vigia/issues/9)); merges always re-read the PR first.
 - Engines run with your credentials and permissions — read [SECURITY.md](SECURITY.md) first.
 - Not on PyPI yet: install from git.
 

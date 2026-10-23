@@ -109,7 +109,8 @@ ledger is `.vigia/ledger.jsonl`, opened in append mode only (`ledger.Ledger`).
 ## What a human still does
 
 - **Decides what to build**: writes, or approves, the ticket and its tier.
-- **Owns T2**: adds `vigia:human-ok` on the exact head of every T2 change. A new head removes it.
+- **Owns T2**: adds `vigia:human-ok` on the exact head of every T2 change. A label added before the
+  head moved never counts (`watch.human_approved` compares GitHub's own event order, not clocks).
 - **Unparks**: reads the reason, deals with it, removes `vigia:parked`. The round and fix counters
   start again from zero.
 - **Owns the credentials** the engines run with (see [SECURITY.md](../SECURITY.md)).
