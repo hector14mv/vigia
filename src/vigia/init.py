@@ -225,6 +225,14 @@ def init(
         for name, color, description in label_specs(cfg.labels):
             gh.ensure_label(name, color, description)
         say(f"Created {len(label_specs(cfg.labels))} labels on {repo}")
+    if not assume_yes:
+        where = ask(
+            "Where will vigia run: laptop or server? (a server keeps the factory on day and night)", "server"
+        )
+        if where.strip().lower().startswith("s"):
+            say(
+                "Server: follow docs/server.md (systemd, logins over SSH, the Mesa on your phone via Tailscale)."
+            )
     say("")
     say("Next: commit vigia.toml, .gitignore and the ticket template; open an issue from the template")
     say("with a tier label and `vigia:ready`; then run `vigia run` (one build) or `vigia watch` (the loop).")

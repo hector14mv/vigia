@@ -44,6 +44,10 @@ flowchart LR
 The fifteen minutes run from install to your first merged pull request; a small T0 change takes
 about three minutes end to end once vigia is set up.
 
+> **Let an agent do it.** Paste [docs/agents/install.md](docs/agents/install.md) into Claude Code or Codex on the
+> machine that should run vigia. It installs and configures everything and stops for you at every login. For an
+> always-on factory on a server, with the Mesa on your phone, see [docs/server.md](docs/server.md).
+
 You need macOS or Linux, Python 3.11+, git, [uv](https://docs.astral.sh/uv/) (or
 [pipx](https://pipx.pypa.io)), and three CLIs logged in:
 [GitHub CLI](https://cli.github.com) (`gh auth login`),
