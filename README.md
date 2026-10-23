@@ -108,7 +108,7 @@ decides again.
 
 **Crashes** are expected, not exceptional. Every paid step writes the ledger before its side effects
 on GitHub, so a verdict is never paid for twice; at the start of each tick vigia parks a build that
-was interrupted, finishes enrolling a PR whose labels failed, and removes worktrees a killed session
+was interrupted, finishes enrolling a PR whose labels failed, and removes review worktrees a killed session
 left behind.
 
 **The ledger** is `.vigia/ledger.jsonl`: one JSON line per action (`pr_opened`, `verdict`,
