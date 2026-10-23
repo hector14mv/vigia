@@ -117,6 +117,76 @@ def test_pr_defaults_when_gh_omits_fields():
     assert pr["ci"] == "none"
 
 
+# -- prs --
+
+
+class RoutedRunner:
+    """Answers by gh subcommand, so a test can make `pr list` and `pr view` disagree."""
+
+    def __init__(self, listing: list[dict], views: dict[int, dict]):
+        self.listing = listing
+        self.views = views
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args, *, cwd=None, input=None, **kwargs):
+        self.calls.append(list(args))
+        if args[:3] == ["gh", "pr", "list"]:
+            return Result(0, json.dumps(self.listing), "")
+        if args[:3] == ["gh", "pr", "view"]:
+            return Result(0, json.dumps(self.views[int(args[3])]), "")
+        raise AssertionError(f"unexpected call {args}")
+
+
+def test_prs_reads_ci_from_pr_view_when_pr_list_lags():
+    # `pr list` still says the run is going; `pr view` already has the result.
+    stale = {"number": 2, "statusCheckRollup": [check_run(status="IN_PROGRESS", conclusion="")]}
+    fresh = {"number": 2, "statusCheckRollup": [check_run()], "labels": [{"name": "vigia:ready"}]}
+    runner = RoutedRunner([stale], {2: fresh})
+    [pr] = GitHub("acme/app", runner=runner).prs("vigia:ready")
+    assert pr["ci"] == "passing"
+    assert pr["labels"] == ["vigia:ready"]
+    list_args = next(c for c in runner.calls if c[:3] == ["gh", "pr", "list"])
+    assert "--label" in list_args
+    assert "statusCheckRollup" not in list_args[list_args.index("--json") + 1]
+    view_args = next(c for c in runner.calls if c[:3] == ["gh", "pr", "view"])
+    assert view_args[:6] == ["gh", "pr", "view", "2", "-R", "acme/app"]
+
+
+def test_prs_returns_every_listed_pr_sorted_by_number_in_the_pr_dict_shape():
+    views = {
+        n: {"number": n, "headRefOid": f"sha{n}", "labels": [{"name": "vigia:ready"}]} for n in (9, 3, 7)
+    }
+    runner = RoutedRunner([{"number": 9}, {"number": 3}, {"number": 7}], views)
+    gh = GitHub("acme/app", runner=runner)
+    result = gh.prs("vigia:ready")
+    assert [p["number"] for p in result] == [3, 7, 9]
+    assert result == [gh.pr(3), gh.pr(7), gh.pr(9)]
+
+
+def test_prs_drops_a_listed_pr_whose_fresh_labels_no_longer_carry_the_label():
+    views = {
+        2: {"number": 2, "labels": [{"name": "T0"}]},  # label removed after the listing
+        3: {"number": 3, "labels": [{"name": "vigia:ready"}]},
+    }
+    runner = RoutedRunner([{"number": 2}, {"number": 3}], views)
+    assert [p["number"] for p in GitHub("acme/app", runner=runner).prs("vigia:ready")] == [3]
+
+
+def test_prs_drops_a_listed_pr_that_is_no_longer_open():
+    views = {
+        2: {"number": 2, "state": "MERGED", "labels": [{"name": "vigia:ready"}]},
+        3: {"number": 3, "state": "OPEN", "labels": [{"name": "vigia:ready"}]},
+    }
+    runner = RoutedRunner([{"number": 2}, {"number": 3}], views)
+    assert [p["number"] for p in GitHub("acme/app", runner=runner).prs("vigia:ready")] == [3]
+
+
+def test_prs_is_empty_when_nothing_carries_the_label():
+    runner = RoutedRunner([], {})
+    assert GitHub("acme/app", runner=runner).prs("vigia:ready") == []
+    assert len(runner.calls) == 1
+
+
 # -- remove_label --
 
 
