@@ -74,6 +74,13 @@ vigia status    # the queue, every open PR with its next step, parked reasons, r
 pull request went through exactly this: open any merged PR and read the handoff, the gate's
 verdict and the merge comment.
 
+### Write tickets with Claude Code
+
+The [`vigia-ticket`](skills/vigia-ticket/SKILL.md) skill turns a rough idea into an issue vigia
+accepts. Install it by copying the `skills/vigia-ticket/` folder into `~/.claude/skills/` (every
+project) or into a repository's `.claude/skills/`, then ask Claude Code to "turn this into a
+vigia ticket".
+
 ## How it works
 
 **The builder** (`vigia run`, or `vigia watch` when the queue has work) takes the oldest ready
