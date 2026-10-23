@@ -137,3 +137,11 @@ def test_crlf_fenced_commands_are_content_and_empty_fences_are_not():
     assert missing(_with_done_test("```sh\npytest -q\n```").replace("\n", "\r\n")) == []
     empty = _with_done_test("```sh\n```").replace("\n", "\r\n")
     assert "section `## Done-test` is empty" in missing(empty)
+
+
+def test_crlf_and_lf_bodies_parse_identically():
+    body = GOOD.replace("`python -m pytest -q` passes.", "~~~sh\npython -m pytest -q\n~~~")
+    crlf = body.replace("\n", "\r\n")
+    assert sections(crlf) == sections(body)
+    assert sections(crlf)["Done-test"] == "~~~sh\npython -m pytest -q\n~~~"
+    assert missing(crlf) == missing(body) == []

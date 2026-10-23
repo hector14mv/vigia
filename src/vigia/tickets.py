@@ -86,8 +86,9 @@ def _fence_lines(text: str) -> list[tuple[int, bool, str]]:
 
 def sections(body: str) -> dict[str, str]:
     """Section title -> its text, for `## Title` headers. A header inside a code fence does not start a
-    section, but the fenced text still belongs to the section it sits in."""
-    body = body or ""
+    section, but the fenced text still belongs to the section it sits in. CRLF and CR line endings are
+    read as LF first, so a body GitHub stored with Windows endings parses exactly like the same text."""
+    body = (body or "").replace("\r\n", "\n").replace("\r", "\n")
     inside = {start for start, fenced, _ in _fence_lines(body) if fenced}
     matches = [m for m in _HEADER.finditer(body) if m.start() not in inside]
     out: dict[str, str] = {}
