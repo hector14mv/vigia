@@ -74,12 +74,11 @@ def _fence_lines(text: str) -> list[tuple[int, bool, str]]:
             continue
         close = re.compile(rf"[ \t]*{re.escape(char)}{{{size},}}[ \t]*")
         end = next((j for j in range(i + 1, len(lines)) if close.fullmatch(lines[j])), None)
-        if end is None:  # never closed: it hides nothing, and the marker is not content
-            out.append((starts[i], False, ""))
-            i += 1
-            continue
         out.append((starts[i], True, ""))
-        out.extend((starts[j], True, lines[j]) for j in range(i + 1, end))
+        # never closed: the fence runs to the end of the body, as in CommonMark
+        out.extend((starts[j], True, lines[j]) for j in range(i + 1, len(lines) if end is None else end))
+        if end is None:
+            break
         out.append((starts[end], True, ""))
         i = end + 1
     return out

@@ -111,6 +111,18 @@ def test_a_fence_closes_only_on_its_own_character_and_length():
     assert sections(longer)["Risks"] == "None: pure function."
 
 
+def test_an_unclosed_fence_runs_to_the_end_of_the_body():
+    for fence in ("```", "~~~", "````"):
+        assert sections(f"{fence}\n## Outcome\nx\n") == {}
+        assert sections(f"{fence}\r\n## Outcome\r\nx\r\n") == {}
+    body = GOOD.split("## Risks")[0] + "```sh\npytest -q\n## Risks\nfake"
+    assert "Risks" not in sections(body)
+    assert "section `## Risks`" in missing(body)
+    assert sections(body)["Done-test"].endswith("fake")
+    bare = GOOD.split("`python -m pytest -q` passes.")[0] + "~~~sh\n"
+    assert "section `## Done-test` is empty" in missing(bare)
+
+
 def test_crlf_endings_do_not_hide_fence_delimiters():
     assert "Outcome" not in sections("```\r\n## Outcome\r\nx\r\n```\r\n")
     assert "Outcome" not in sections("~~~\r\n## Outcome\r\nx\r\n~~~\r\n")
