@@ -489,3 +489,39 @@ def test_a_build_whose_labels_failed_is_enrolled_by_the_next_tick(world):
     assert ctx.ledger.last("enrolled", pr=pr)
     tick(ctx)
     assert len(ctx.ledger.events("enrolled", pr=pr)) == 1
+
+
+def test_a_label_added_while_the_fixer_works_does_not_approve_the_fixed_head(world):
+    gh, build = world
+    ctx, run = build([CHANGES, APPROVE, APPROVE])
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    tick(ctx, build=True)
+    pr = next(iter(gh.prs_))
+    tick(ctx)  # gate -> CHANGES
+    default = run.edit
+
+    def edit_and_label(cwd, k):
+        gh.human_label(pr)  # a human approves the old head while the fix session runs
+        default(cwd, k)
+
+    run.edit = edit_and_label
+    assert decisions(tick(ctx, build=False)) == [(pr, "fix")]
+    run.edit = default
+    for expected in ("gate", "review", "wait"):
+        assert decisions(tick(ctx, build=False)) == [(pr, expected)]
+    assert gh.merged == []
+
+
+def test_two_clones_of_one_repository_get_separate_work_roots(tmp_path, monkeypatch):
+    from vigia import safety
+    from vigia.config import render
+
+    monkeypatch.setattr(safety, "default_root", lambda: tmp_path / "tmp" / "vigia")
+    text = render(Config(repo="acme/textkit", base="main", tiers=default_tiers()))
+    roots = []
+    for name in ("clone-a", "clone-b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "vigia.toml").write_text(text)
+        roots.append(Ctx.load(tmp_path / name).root)
+    assert roots[0] != roots[1]
+    assert all(r.parent == (tmp_path / "tmp" / "vigia").resolve() for r in roots)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -41,7 +42,10 @@ class Ctx:
         path = config_mod.find(start)
         cfg = config_mod.load(path)
         clone = path.parent
-        root = safety.check_root(safety.default_root()) / cfg.repo.replace("/", "-")
+        # One work root per clone: the clone's lock is what makes recovery safe, so two clones of the same
+        # repository must never share the directory one of them cleans.
+        tag = hashlib.sha256(str(clone.resolve()).encode()).hexdigest()[:8]
+        root = safety.check_root(safety.default_root()) / f"{cfg.repo.replace('/', '-')}-{tag}"
         root.mkdir(parents=True, exist_ok=True)
         state = clone / ".vigia"
         return cls(

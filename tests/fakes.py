@@ -180,8 +180,6 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
         with (cwd / "textkit.py").open("a") as fh:
             fh.write(f"\n\ndef change_{k}():\n    return {k}\n")
 
-    edit = edits or default_edit
-
     def run(cmd, cwd, input, timeout, log):
         reviewer = "--json-schema" in cmd or "--output-schema" in cmd
         calls.append(
@@ -193,7 +191,7 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
                 Path(cmd[cmd.index("-o") + 1]).write_text(verdict)
                 return Result(0, "", "")
             return Result(0, json.dumps({"is_error": False, "result": verdict}), "")
-        edit(Path(cwd), len(calls))
+        run.edit(Path(cwd), len(calls))  # type: ignore[attr-defined]
         (Path(cwd) / ".vigia-handoff.md").write_text(
             "Commit: feat: scripted change\n## Summary\n- edited textkit.py\n## Tests run\n- none\n"
             "## Deviations\n- none\n## Risks\n- none\n## Follow-ups\n- none\n"
@@ -204,6 +202,7 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
         return Result(0, json.dumps({"is_error": False, "result": "done"}), "")
 
     run.calls = calls  # type: ignore[attr-defined]
+    run.edit = edits or default_edit  # type: ignore[attr-defined]  # tests may swap it between ticks
     return run
 
 

@@ -42,7 +42,7 @@ def _track(ctx: Ctx, pr: dict) -> None:
     seen = ctx.ledger.last("head_seen", pr=n)
     moved = seen is None or seen.get("sha") != pr["head"]
     if moved or "human_ok_event" not in seen:  # a row from before the baseline existed is recorded again
-        if not builder.record_head(ctx, n, pr["head"], labels.human_ok in pr["labels"]):
+        if not builder.record_head(ctx, n, pr["head"]):
             return
         if moved and seen is not None and labels.human_ok in pr["labels"]:
             try:
