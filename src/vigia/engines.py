@@ -19,14 +19,14 @@ from .config import DEFAULT_ENGINE_ARGS, Config, Seat
 
 SessionRunner = Callable[..., proc.Result]
 
-# Variables through which `gh`, git or a script could act as the user on GitHub. GIT_ASKPASS is there because an
-# editor's askpass helper (VS Code sets one) answers git's password prompt with the editor's GitHub login.
+# Variables through which `gh`, git or a script could act as the user on GitHub. SSH_ASKPASS is there because an
+# askpass program answers git's (and ssh's) password prompt, with an editor's or the keychain's GitHub login.
 GITHUB_SECRETS = (
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GH_ENTERPRISE_TOKEN",
     "GITHUB_ENTERPRISE_TOKEN",
-    "GIT_ASKPASS",
+    "SSH_ASKPASS",
 )
 # Command-scope git config, read after every config file: an empty helper clears the helpers set before it
 # (`gh auth git-credential`, the keychain), for github.com and for every other host.
@@ -157,6 +157,8 @@ def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
     env = {k: v for k, v in base.items() if k not in GITHUB_SECRETS}
     env["GH_CONFIG_DIR"] = str(gh_config)  # an empty config: `gh` inside the session is logged out
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # git asks GIT_ASKPASS before core.askPass and SSH_ASKPASS: set but empty, it runs no askpass program at all
+    env["GIT_ASKPASS"] = ""
     try:  # keep any command-scope config the caller already set, and add ours after it
         count = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
     except ValueError:
@@ -166,6 +168,10 @@ def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
         env[f"GIT_CONFIG_VALUE_{count}"] = value
         count += 1
     env["GIT_CONFIG_COUNT"] = str(count)
+    # git reads GIT_CONFIG_PARAMETERS (`git -c`) after GIT_CONFIG_COUNT, so a helper the caller set there would
+    # come back: repeat ours at its end, in the quoted 'key=value' form every git version parses
+    ours = " ".join(f"'{key}={value}'" for key, value in _NO_CREDENTIAL_HELPER)
+    env["GIT_CONFIG_PARAMETERS"] = f"{env.get('GIT_CONFIG_PARAMETERS', '')} {ours}".strip()
     return env
 
 

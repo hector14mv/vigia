@@ -136,6 +136,7 @@ def test_sessions_run_without_the_users_github_login(tmp_path, monkeypatch, engi
     for var in TOKENS:
         monkeypatch.setenv(var, "ghp_secret")
     monkeypatch.setenv("GIT_ASKPASS", "/editor/askpass.sh")
+    monkeypatch.setenv("SSH_ASKPASS", "/usr/libexec/ssh-askpass")
     monkeypatch.setenv("GH_CONFIG_DIR", str(tmp_path / "users-gh"))  # where the user's own login lives
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")  # the engines' own logins pass through
     monkeypatch.setenv("OPENAI_API_KEY", "sk-oai")
@@ -154,7 +155,8 @@ def test_sessions_run_without_the_users_github_login(tmp_path, monkeypatch, engi
         Seat(engine, "m"), role, "p", tmp_path, "s1"
     )
     env = seen["env"]
-    assert not {*TOKENS, "GIT_ASKPASS"} & env.keys()
+    assert not {*TOKENS, "SSH_ASKPASS"} & env.keys()
+    assert env["GIT_ASKPASS"] == ""
     assert Path(env["GH_CONFIG_DIR"]).is_relative_to(root)
     assert seen["exists"] and seen["contents"] == []
     assert not list(root.iterdir())  # removed again once the session is over
@@ -177,14 +179,16 @@ def test_session_env_keeps_the_callers_git_config_entries(tmp_path):
     assert set(GITHUB_SECRETS) >= set(TOKENS)
 
 
-def _isolated_git(tmp_path: Path) -> dict[str, str]:
-    """An environment whose global git config holds a credential helper that hands out a password."""
+def _isolated_git(tmp_path: Path, helper: bool = True) -> dict[str, str]:
+    """An environment whose global git config holds a credential helper that hands out a password (or nothing)."""
     gitconfig = tmp_path / "gitconfig"
-    helper = "!f() { echo username=me; echo password=ghp_from_helper; }; f"
-    subprocess.run(
-        ["git", "config", "--file", str(gitconfig), "credential.https://github.com.helper", helper],
-        check=True,
-    )
+    gitconfig.touch()
+    if helper:
+        value = "!f() { echo username=me; echo password=ghp_from_helper; }; f"
+        subprocess.run(
+            ["git", "config", "--file", str(gitconfig), "credential.https://github.com.helper", value],
+            check=True,
+        )
     keep = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return {**keep, "GIT_CONFIG_GLOBAL": str(gitconfig), "GIT_CONFIG_NOSYSTEM": "1"}
 
@@ -205,6 +209,41 @@ def test_git_in_a_session_cannot_borrow_the_users_credential_helper(tmp_path):
     assert "password=ghp_from_helper" in _fill(base).stdout  # the helper does work outside a session
     out = _fill(session_env(base, tmp_path / "gh"))
     assert out.returncode != 0 and "ghp_from_helper" not in out.stdout
+
+
+def _askpass(tmp_path: Path) -> str:
+    """A password program that answers every prompt, as an editor's or the keychain's askpass would."""
+    script = tmp_path / "askpass.sh"
+    script.write_text("#!/bin/sh\necho ghp_from_askpass\n")
+    script.chmod(0o755)
+    return str(script)
+
+
+@pytest.mark.parametrize("source", ["core.askPass", "SSH_ASKPASS", "GIT_ASKPASS"])
+def test_git_in_a_session_cannot_borrow_an_askpass_program(tmp_path, source):
+    base = _isolated_git(tmp_path, helper=False)
+    if source == "core.askPass":
+        subprocess.run(
+            ["git", "config", "--file", base["GIT_CONFIG_GLOBAL"], "core.askPass", _askpass(tmp_path)],
+            check=True,
+        )
+    else:
+        base[source] = _askpass(tmp_path)
+    assert "password=ghp_from_askpass" in _fill(base).stdout  # the askpass does answer outside a session
+    out = _fill(session_env(base, tmp_path / "gh"))
+    assert out.returncode != 0 and "ghp_from_askpass" not in out.stdout
+
+
+def test_git_in_a_session_cannot_borrow_a_helper_from_git_config_parameters(tmp_path):
+    base = _isolated_git(tmp_path, helper=False)
+    helper = "!f() { echo username=me; echo password=ghp_from_params; }; f"
+    base["GIT_CONFIG_PARAMETERS"] = f"'credential.helper={helper}' 'user.name=Me'"
+    assert "password=ghp_from_params" in _fill(base).stdout  # git -c's helper works outside a session
+    env = session_env(base, tmp_path / "gh")
+    out = _fill(env)
+    assert out.returncode != 0 and "ghp_from" not in out.stdout
+    name = subprocess.run(["git", "config", "user.name"], capture_output=True, text=True, env=env, timeout=30)
+    assert name.stdout.strip() == "Me"  # the caller's other command-scope config still applies
 
 
 @pytest.mark.skipif(shutil.which("gh") is None, reason="gh is not installed")
