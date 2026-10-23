@@ -77,3 +77,35 @@ def test_fenced_section_content_counts_but_fenced_headers_do_not():
 def test_an_empty_fence_is_not_content():
     body = GOOD.replace("`python -m pytest -q` passes.", "```sh\n```")
     assert "section `## Done-test` is empty" in missing(body)
+
+
+def _with_done_test(content: str) -> str:
+    return GOOD.replace("`python -m pytest -q` passes.", content)
+
+
+def test_a_one_line_fenced_command_is_content():
+    assert missing(_with_done_test("```pytest -q```")) == []
+    assert missing(_with_done_test("~~~pytest -q~~~")) == []
+
+
+def test_a_tilde_fenced_command_is_content():
+    assert missing(_with_done_test("~~~sh\npytest -q\n~~~")) == []
+    assert missing(_with_done_test("~~~\npytest -q\n~~~")) == []
+
+
+def test_an_empty_tilde_fence_is_not_content():
+    for fence in ("~~~sh\n~~~", "~~~\n~~~", "~~~~\n~~~~"):
+        assert "section `## Done-test` is empty" in missing(_with_done_test(fence))
+
+
+def test_headers_inside_tilde_fences_do_not_count():
+    assert "Outcome" not in sections("~~~\n## Outcome\nx\n~~~\n")
+    nested = _with_done_test("~~~md\n## Risks\nfake\n~~~\nrun it")
+    assert sections(nested)["Risks"] == "None: pure function."
+
+
+def test_a_fence_closes_only_on_its_own_character_and_length():
+    body = _with_done_test("~~~\n```\n## Risks\nfake\n```\n~~~\nrun it")
+    assert sections(body)["Risks"] == "None: pure function."
+    longer = _with_done_test("````\n```\n## Risks\nfake\n```\n````\nrun it")
+    assert sections(longer)["Risks"] == "None: pure function."
