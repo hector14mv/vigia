@@ -160,6 +160,10 @@ class Engines:
                     "-c",
                     'shell_environment_policy.inherit="all"',
                     "-c",
+                    "shell_environment_policy.include_only=[]",  # a user filter would drop the guards again
+                    "-c",
+                    "shell_environment_policy.exclude=[]",
+                    "-c",
                     f"shell_environment_policy.set={{{table}}}",
                 ]
             if schema_file is not None:

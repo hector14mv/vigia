@@ -351,6 +351,10 @@ def test_codex_commands_carry_the_guards_into_every_command_they_run(tmp_path):
     )
     values = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-c"]
     assert 'shell_environment_policy.inherit="all"' in values
+    assert (
+        "shell_environment_policy.include_only=[]" in values
+        and "shell_environment_policy.exclude=[]" in values
+    )
     table = next(v for v in values if v.startswith("shell_environment_policy.set="))
     parsed = tomllib.loads("set = " + table.split("=", 1)[1])["set"]
     assert (

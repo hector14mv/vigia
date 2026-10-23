@@ -23,7 +23,12 @@ login you already have. Engine sessions do not get that login (`session_env()` i
 That stops a session from using your GitHub login by accident, or because a file or an issue told
 it to. It is not a sandbox against a process determined to misbehave: a session runs as your user
 and could, for example, read your credential stores itself, or clear `GH_TOKEN` on purpose to let `gh`
-reach your keyring again. For that, run vigia under a separate OS
+reach your keyring again.
+
+One more limit: vigia controls the environment it starts a session with, not your shell's startup files. If
+`~/.zprofile`, `~/.zshenv`, `~/.bash_profile` or `~/.profile` exports a GitHub token, a login shell that a
+session opens exports it again. `gh` does not need such a line (it keeps its own login); remove it, or keep it
+only in the interactive `~/.zshrc`, which login shells do not read. For that, run vigia under a separate OS
 user or in a container (next section).
 
 ## The sandboxing vigia applies
