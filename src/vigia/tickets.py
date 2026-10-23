@@ -50,7 +50,8 @@ def _fence_lines(text: str) -> list[tuple[int, bool, str]]:
     backticks or tildes, closed by a line of the same character at least as long. A one-line fence
     (```pytest -q```) keeps its text; a marker line, with its language tag, keeps nothing."""
     lines = text.split("\n")
-    starts = [sum(len(x) + 1 for x in lines[:i]) for i in range(len(lines))]
+    starts = [sum(len(x) + 1 for x in lines[:i]) for i in range(len(lines))]  # offsets in the original text
+    lines = [x.removesuffix("\r") for x in lines]  # CRLF bodies: the \r must not hide a fence delimiter
     out: list[tuple[int, bool, str]] = []
     i = 0
     while i < len(lines):

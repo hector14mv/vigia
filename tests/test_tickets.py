@@ -109,3 +109,19 @@ def test_a_fence_closes_only_on_its_own_character_and_length():
     assert sections(body)["Risks"] == "None: pure function."
     longer = _with_done_test("````\n```\n## Risks\nfake\n```\n````\nrun it")
     assert sections(longer)["Risks"] == "None: pure function."
+
+
+def test_crlf_endings_do_not_hide_fence_delimiters():
+    assert "Outcome" not in sections("```\r\n## Outcome\r\nx\r\n```\r\n")
+    assert "Outcome" not in sections("~~~\r\n## Outcome\r\nx\r\n~~~\r\n")
+    crlf = GOOD.replace("\n", "\r\n")
+    assert missing(crlf) == []
+    nested = _with_done_test("```md\n## Risks\nfake\n```\nrun it").replace("\n", "\r\n")
+    assert sections(nested)["Risks"] == "None: pure function."
+
+
+def test_crlf_fenced_commands_are_content_and_empty_fences_are_not():
+    assert missing(_with_done_test("~~~pytest -q~~~").replace("\n", "\r\n")) == []
+    assert missing(_with_done_test("```sh\npytest -q\n```").replace("\n", "\r\n")) == []
+    empty = _with_done_test("```sh\n```").replace("\n", "\r\n")
+    assert "section `## Done-test` is empty" in missing(empty)
