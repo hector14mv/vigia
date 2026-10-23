@@ -23,11 +23,15 @@ The flags live in `DEFAULT_ENGINE_ARGS` in `src/vigia/config.py` and are passed 
   can run any command your user can run.
 - **Codex builders** run with `--sandbox workspace-write`. Writes are meant to stay in the
   workspace, and the sandbox is Codex's own: vigia relies on the CLI and does not verify it.
-- **Reviewers are always read-only**, whatever `vigia.toml` says. Codex gets `--sandbox read-only`
-  (any other `--sandbox` override is removed). Claude gets `--disallowedTools Edit Write NotebookEdit`
-  and, by default, only `Read`, `Glob`, `Grep` and `git diff`, `git log` and `git show`.
+- **Reviewers are read-only by default.** Codex reviewers always get `--sandbox read-only`; any
+  other `--sandbox` override is removed. Claude reviewers get `--disallowedTools Edit Write
+  NotebookEdit` appended and, by default, only `Read`, `Glob`, `Grep` and `git diff`, `git log`
+  and `git show`. That exclusion blocks those three tools only. It does not make a Claude reviewer
+  read-only if you override its tools: if `[engines.claude]` gives a reviewer unrestricted `Bash`
+  (or any permissive `--permission-mode` plus `Bash`), it can write or delete files through the shell.
 - You can replace these arguments under `[engines.<engine>]` in `vigia.toml`. For builders, that
-  is your call to make. A reviewer's write access is stripped regardless.
+  is your call to make. For a Claude reviewer, never add `Bash` beyond the read-only `git`
+  commands above, or you give it the same reach as a builder.
 
 Builders work in throwaway git worktrees under `vigia/` in the system temp directory. vigia only
 deletes inside that directory: `remove()` in `src/vigia/safety.py` refuses the filesystem root,
