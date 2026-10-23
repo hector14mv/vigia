@@ -60,6 +60,8 @@ SESSION_ENV = frozenset(
     }
 )
 SESSION_ENV_PREFIXES = ("LC_", "XDG_", "ANTHROPIC_", "CLAUDE_", "CODEX_", "OPENAI_", "UV_", "PIP_")
+# What `gh` sees as its token inside a session: not a credential, and GitHub answers it with "Bad credentials".
+SESSION_GH_TOKEN = "vigia-engine-session-has-no-github-access"
 # Command-scope git config outranks every config file: an empty helper clears the helpers set before it
 # (`gh auth git-credential`, the macOS keychain), so `git credential fill` hands out nothing.
 _NO_CREDENTIAL_HELPER = (("credential.helper", ""), ("credential.https://github.com.helper", ""))
@@ -194,7 +196,10 @@ def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
     example, read credential stores itself. For that, run vigia under a separate OS user or in a container.
     """
     env = {k: v for k, v in base.items() if k in SESSION_ENV or k.startswith(SESSION_ENV_PREFIXES)}
-    env["GH_CONFIG_DIR"] = str(gh_config)  # an empty config: `gh` inside the session is logged out
+    env["GH_CONFIG_DIR"] = str(gh_config)  # an empty config: no account, no settings
+    # gh falls back to the OS keyring for a host's token even with an empty config (`gh auth token` would print
+    # the user's). A token in the environment comes first, so a sentinel that GitHub rejects closes that path.
+    env["GH_TOKEN"] = SESSION_GH_TOKEN
     env["GIT_ALLOW_PROTOCOL"] = "file"  # git may reach no remote: no https, ssh or git transport at all
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_ASKPASS"] = ""  # set but empty: git runs no askpass program (it is asked before core.askPass)

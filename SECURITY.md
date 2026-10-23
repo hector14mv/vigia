@@ -15,13 +15,15 @@ login you already have. Engine sessions do not get that login (`session_env()` i
 
 - they inherit an allowlist of your environment (`SESSION_ENV`), so GitHub tokens, SSH agents,
   askpass programs and `GIT_*` settings never reach them;
-- `gh` inside a session is logged out (an empty `GH_CONFIG_DIR`);
+- `gh` inside a session has no account: an empty `GH_CONFIG_DIR`, and `GH_TOKEN` set to a sentinel that
+  GitHub rejects, because `gh` would otherwise fall back to the token in your OS keyring;
 - git inside a session has no credential helper or askpass program, and `GIT_ALLOW_PROTOCOL=file`
   makes it refuse every network transport (https, ssh, git), whatever your git config holds.
 
 That stops a session from using your GitHub login by accident, or because a file or an issue told
 it to. It is not a sandbox against a process determined to misbehave: a session runs as your user
-and could, for example, read your credential stores itself. For that, run vigia under a separate OS
+and could, for example, read your credential stores itself, or clear `GH_TOKEN` on purpose to let `gh`
+reach your keyring again. For that, run vigia under a separate OS
 user or in a container (next section).
 
 ## The sandboxing vigia applies

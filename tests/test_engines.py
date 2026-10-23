@@ -10,6 +10,7 @@ from vigia import proc
 from vigia.config import Config, Seat, default_tiers
 from vigia.engines import (
     SESSION_ENV,
+    SESSION_GH_TOKEN,
     Engines,
     handoff_body,
     handoff_commit,
@@ -155,7 +156,8 @@ def test_sessions_run_without_the_users_github_login(tmp_path, monkeypatch, engi
         Seat(engine, "m"), role, "p", tmp_path, "s1"
     )
     env = seen["env"]
-    assert not {*TOKENS, "SSH_ASKPASS"} & env.keys()
+    assert env["GH_TOKEN"] == SESSION_GH_TOKEN  # a sentinel GitHub rejects, never the user's token
+    assert not ({*TOKENS, "SSH_ASKPASS"} - {"GH_TOKEN"}) & env.keys()
     assert env["GIT_ASKPASS"] == ""
     assert Path(env["GH_CONFIG_DIR"]).is_relative_to(root)
     assert seen["exists"] and seen["contents"] == []
@@ -274,7 +276,15 @@ def test_gh_in_a_session_is_logged_out(tmp_path):
     (tmp_path / "gh").mkdir()
     env = session_env({**os.environ, "GH_TOKEN": "ghp_secret"}, tmp_path / "gh")
     out = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, env=env, timeout=30)
-    assert out.returncode != 0 and "not logged in" in (out.stdout + out.stderr).lower()
+    assert out.returncode != 0
+    # gh would fall back to the OS keyring for the token; the sentinel in GH_TOKEN comes first
+    token = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, env=env, timeout=30)
+    assert token.stdout.strip() in ("", SESSION_GH_TOKEN)
+
+
+def test_the_session_token_is_the_sentinel_never_the_users():
+    env = session_env({"PATH": "/bin", "GH_TOKEN": "ghp_secret", "GITHUB_TOKEN": "ghp_other"}, Path("/tmp/x"))
+    assert env["GH_TOKEN"] == SESSION_GH_TOKEN and "GITHUB_TOKEN" not in env
 
 
 def test_run_session_uses_the_given_environment_whole(tmp_path, monkeypatch):
