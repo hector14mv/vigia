@@ -37,11 +37,16 @@ Maintainers add `vigia:ready` when the ticket is ready to build.
 Hand-written pull requests are welcome and join the same flow. A handoff comment starts with
 `## Handoff <full 40-character head sha>` and has an `Engine:` line naming who wrote the change, for
 example `Engine: claude · claude-opus-5-5`. vigia reads it only from the GitHub account it runs as,
-so ask a maintainer to post it. It picks the other lab as reviewer. Without it the pull request is
-parked as having an unknown builder. A manual pull request also needs two labels, or vigia never
-picks it up: `vigia:review` and exactly one `tier:T0`, `tier:T1` or `tier:T2` (with none or several
-tier labels it is parked). The full
-operating model is in [docs/operating-model.md](docs/operating-model.md).
+so ask a maintainer to post it. Without it the pull request is parked as having an unknown builder.
+A manual pull request also needs two labels, or vigia never picks it up: `vigia:review` and exactly
+one `tier:T0`, `tier:T1` or `tier:T2` (with none or several tier labels it is parked).
+
+The gate of each tier is fixed in `vigia.toml`, and it is Codex in this repository. A gate from the
+builder's own lab is never used: a Codex-written pull request is parked. So a hand-written pull
+request must be Claude-written here. To gate Codex-written work, a maintainer has to change the
+`gate` in `vigia.toml` first.
+
+The full operating model is in [docs/operating-model.md](docs/operating-model.md).
 
 ## Commits
 
