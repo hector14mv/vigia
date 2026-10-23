@@ -9,7 +9,7 @@ import pytest
 from vigia import proc
 from vigia.config import Config, Seat, default_tiers
 from vigia.engines import (
-    GITHUB_SECRETS,
+    SESSION_ENV,
     Engines,
     handoff_body,
     handoff_commit,
@@ -170,13 +170,34 @@ def test_sessions_run_without_the_users_github_login(tmp_path, monkeypatch, engi
         assert env[var] == os.environ[var]
 
 
-def test_session_env_keeps_the_callers_git_config_entries(tmp_path):
-    base = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name", "GIT_CONFIG_VALUE_0": "Me"}
+def test_session_env_is_an_allowlist(tmp_path):
+    base = {
+        "PATH": "/bin",
+        "LC_ALL": "C",
+        "OPENAI_API_KEY": "sk-oai",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": "Authorization: Basic secret",
+        "GIT_SSH_COMMAND": "ssh -i ~/.ssh/github",
+        "SSH_AUTH_SOCK": "/tmp/agent.sock",
+        "DATABASE_URL": "postgres://prod",
+    }
     env = session_env(base, tmp_path)
-    assert (env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]) == ("user.name", "Me")
-    assert env["GIT_CONFIG_KEY_1"] == "credential.helper" and env["GIT_CONFIG_VALUE_1"] == ""
-    assert int(env["GIT_CONFIG_COUNT"]) == 3
-    assert set(GITHUB_SECRETS) >= set(TOKENS)
+    assert {"PATH", "LC_ALL", "OPENAI_API_KEY"} <= env.keys()
+    assert not {"GIT_SSH_COMMAND", "SSH_AUTH_SOCK", "DATABASE_URL"} & env.keys()
+    pairs = {
+        (env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"])
+        for i in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+    assert pairs == {("credential.helper", ""), ("credential.https://github.com.helper", "")}
+    assert not {"GH_TOKEN", "GITHUB_TOKEN"} & SESSION_ENV
+
+
+@pytest.mark.parametrize("url", ["https://example.invalid/o/r.git", "ssh://git@example.invalid/o/r.git"])
+def test_git_in_a_session_cannot_reach_any_remote(tmp_path, url):
+    env = session_env(_isolated_git(tmp_path, helper=False), tmp_path / "gh")
+    out = subprocess.run(["git", "ls-remote", url], capture_output=True, text=True, env=env, timeout=30)
+    assert out.returncode != 0 and "not allowed" in out.stderr  # refused before any connection is tried
 
 
 def _isolated_git(tmp_path: Path, helper: bool = True) -> dict[str, str]:
@@ -239,11 +260,8 @@ def test_git_in_a_session_cannot_borrow_a_helper_from_git_config_parameters(tmp_
     helper = "!f() { echo username=me; echo password=ghp_from_params; }; f"
     base["GIT_CONFIG_PARAMETERS"] = f"'credential.helper={helper}' 'user.name=Me'"
     assert "password=ghp_from_params" in _fill(base).stdout  # git -c's helper works outside a session
-    env = session_env(base, tmp_path / "gh")
-    out = _fill(env)
+    out = _fill(session_env(base, tmp_path / "gh"))
     assert out.returncode != 0 and "ghp_from" not in out.stdout
-    name = subprocess.run(["git", "config", "user.name"], capture_output=True, text=True, env=env, timeout=30)
-    assert name.stdout.strip() == "Me"  # the caller's other command-scope config still applies
 
 
 @pytest.mark.skipif(shutil.which("gh") is None, reason="gh is not installed")

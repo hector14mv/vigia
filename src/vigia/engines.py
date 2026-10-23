@@ -19,17 +19,47 @@ from .config import DEFAULT_ENGINE_ARGS, Config, Seat
 
 SessionRunner = Callable[..., proc.Result]
 
-# Variables through which `gh`, git or a script could act as the user on GitHub. SSH_ASKPASS is there because an
-# askpass program answers git's (and ssh's) password prompt, with an editor's or the keychain's GitHub login.
-GITHUB_SECRETS = (
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "GH_ENTERPRISE_TOKEN",
-    "GITHUB_ENTERPRISE_TOKEN",
-    "SSH_ASKPASS",
+# An engine session inherits only these variables (an allowlist: a denylist is the list that comes up one short).
+# GitHub tokens, SSH agents and askpass programs, and every GIT_* setting but where git's own config files live,
+# never reach it. Everything an engine needs to run and log in to its own lab is here.
+SESSION_ENV = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "COLORTERM",
+        "LANG",
+        "TZ",
+        "TMPDIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "NODE_EXTRA_CA_CERTS",
+        "VIRTUAL_ENV",
+        "PYENV_ROOT",
+        "NVM_DIR",
+        "GOPATH",
+        "GOROOT",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "JAVA_HOME",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+    }
 )
-# Command-scope git config, read after every config file: an empty helper clears the helpers set before it
-# (`gh auth git-credential`, the keychain), for github.com and for every other host.
+SESSION_ENV_PREFIXES = ("LC_", "XDG_", "ANTHROPIC_", "CLAUDE_", "CODEX_", "OPENAI_", "UV_", "PIP_")
+# Command-scope git config outranks every config file: an empty helper clears the helpers set before it
+# (`gh auth git-credential`, the macOS keychain), so `git credential fill` hands out nothing.
 _NO_CREDENTIAL_HELPER = (("credential.helper", ""), ("credential.https://github.com.helper", ""))
 
 VERDICT_SCHEMA = {
@@ -150,28 +180,26 @@ class Engines:
 
 
 def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
-    """`base` without the user's GitHub login: an engine session must not label, comment, push or merge.
+    """The environment of an engine session: what it needs to run, and no way to act as the user on GitHub.
 
-    Only vigia's own code talks to GitHub. Everything else (PATH, HOME, the engines' own logins) passes through.
+    Only vigia's own code labels, comments, pushes and merges. The session gets an allowlist of `base`
+    (`SESSION_ENV`), a logged-out `gh` (an empty config directory), no credential helper or askpass program for
+    git, and `GIT_ALLOW_PROTOCOL=file`, so git refuses every network transport (https, ssh, git) whatever
+    credentials or headers a config file holds.
+
+    This stops a session from using your GitHub login by accident or by following an instruction it read. It is
+    not a sandbox against a process determined to misbehave: the session runs as your user and could, for
+    example, read credential stores itself. For that, run vigia under a separate OS user or in a container.
     """
-    env = {k: v for k, v in base.items() if k not in GITHUB_SECRETS}
+    env = {k: v for k, v in base.items() if k in SESSION_ENV or k.startswith(SESSION_ENV_PREFIXES)}
     env["GH_CONFIG_DIR"] = str(gh_config)  # an empty config: `gh` inside the session is logged out
+    env["GIT_ALLOW_PROTOCOL"] = "file"  # git may reach no remote: no https, ssh or git transport at all
     env["GIT_TERMINAL_PROMPT"] = "0"
-    # git asks GIT_ASKPASS before core.askPass and SSH_ASKPASS: set but empty, it runs no askpass program at all
-    env["GIT_ASKPASS"] = ""
-    try:  # keep any command-scope config the caller already set, and add ours after it
-        count = max(int(env.get("GIT_CONFIG_COUNT", "0")), 0)
-    except ValueError:
-        count = 0
-    for key, value in _NO_CREDENTIAL_HELPER:
-        env[f"GIT_CONFIG_KEY_{count}"] = key
-        env[f"GIT_CONFIG_VALUE_{count}"] = value
-        count += 1
-    env["GIT_CONFIG_COUNT"] = str(count)
-    # git reads GIT_CONFIG_PARAMETERS (`git -c`) after GIT_CONFIG_COUNT, so a helper the caller set there would
-    # come back: repeat ours at its end, in the quoted 'key=value' form every git version parses
-    ours = " ".join(f"'{key}={value}'" for key, value in _NO_CREDENTIAL_HELPER)
-    env["GIT_CONFIG_PARAMETERS"] = f"{env.get('GIT_CONFIG_PARAMETERS', '')} {ours}".strip()
+    env["GIT_ASKPASS"] = ""  # set but empty: git runs no askpass program (it is asked before core.askPass)
+    env["GIT_CONFIG_COUNT"] = str(len(_NO_CREDENTIAL_HELPER))
+    for i, (key, value) in enumerate(_NO_CREDENTIAL_HELPER):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
     return env
 
 
