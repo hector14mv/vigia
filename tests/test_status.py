@@ -1,8 +1,15 @@
+import json
 import re
 
 import pytest
 
+from fakes import Clock, FakeGitHub, make_repo
 from vigia import cli, status
+from vigia.config import Config, default_tiers
+from vigia.context import Ctx
+from vigia.engines import Engines
+from vigia.git import Git
+from vigia.ledger import Ledger
 
 XSS = "<script>alert(1)</script>"
 
@@ -113,3 +120,63 @@ def test_cli_reports_an_unwritable_path(tmp_path, monkeypatch):
     monkeypatch.setattr(status, "collect", lambda ctx: data())
     with pytest.raises(SystemExit, match="cannot write"):
         cli.main(["status", "--html", str(tmp_path / "missing" / "out.html")])
+
+
+def fake_ctx(tmp_path) -> tuple[Ctx, FakeGitHub]:
+    origin, clone = make_repo(tmp_path)
+    clock = Clock()
+    gh = FakeGitHub(origin, clock=clock)
+    cfg = Config(repo=gh.repo, base="main", tiers=default_tiers("claude"), test_command="true")
+    ctx = Ctx(
+        cfg=cfg,
+        clone=clone,
+        gh=gh,
+        git=Git(clone, tmp_path / "work"),
+        ledger=Ledger(clone / ".vigia" / "ledger.jsonl", clock=clock),
+        engines=Engines(cfg, clone / ".vigia" / "logs", runner=lambda *a, **k: None),
+        root=tmp_path / "work",
+        say=lambda _: None,
+    )
+    return ctx, gh
+
+
+def test_json_has_exactly_the_documented_keys(tmp_path):
+    ctx, gh = fake_ctx(tmp_path)
+    labels = ctx.cfg.labels
+    gh.add_issue("queued", "", [labels.ready, f"{labels.tier_prefix}T0"])
+    gh.add_issue("building", "", [labels.ready, labels.building])
+    gh.add_issue("parked", "", [labels.parked])
+    ctx.ledger.append("merged", pr=1, sha="abc", tier="T0", issue=None)
+
+    out = json.loads(status.show(ctx, as_json=True))
+
+    assert set(out) == {"repo", "base", "queue", "building", "parked_issues", "prs", "recent", "merged"}
+    assert out["repo"] == "acme/textkit" and out["base"] == "main" and out["merged"] == 1
+    assert [i["title"] for i in out["queue"]] == ["queued"]
+    assert [i["title"] for i in out["building"]] == ["building"]
+    assert [i["title"] for i in out["parked_issues"]] == ["parked"]
+    assert out["prs"] == [] and [r["event"] for r in out["recent"]] == ["merged"]
+
+
+def test_cli_json_prints_the_same_keys(tmp_path, monkeypatch, capsys):
+    ctx, _ = fake_ctx(tmp_path)
+    monkeypatch.setattr(cli.Ctx, "load", classmethod(lambda cls, root: ctx))
+    assert cli.main(["status", "--json"]) == 0
+    assert set(json.loads(capsys.readouterr().out)) == {
+        "repo",
+        "base",
+        "queue",
+        "building",
+        "parked_issues",
+        "prs",
+        "recent",
+        "merged",
+    }
+
+
+def test_json_and_html_cannot_be_combined(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["status", "--json", "--html", str(tmp_path / "out.html")])
+    assert exc.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+    assert not (tmp_path / "out.html").exists()
