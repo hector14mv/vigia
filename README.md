@@ -39,15 +39,23 @@ flowchart LR
 
 ## Quickstart (about fifteen minutes)
 
-You need macOS or Linux, Python 3.11+, git, and three CLIs logged in:
+The fifteen minutes run from install to your first merged pull request; a small T0 change takes
+about three minutes end to end once vigia is set up.
+
+You need macOS or Linux, Python 3.11+, git, [uv](https://docs.astral.sh/uv/) (or
+[pipx](https://pipx.pypa.io)), and three CLIs logged in:
 [GitHub CLI](https://cli.github.com) (`gh auth login`),
 [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude auth login`) and
 [Codex CLI](https://github.com/openai/codex) (`codex login`). vigia uses your existing logins and
 subscriptions; it never asks for or stores a token.
 
 ```bash
-uv tool install git+https://github.com/hector14mv/vigia     # or: pipx install git+https://…
+uv tool install git+https://github.com/hector14mv/vigia
+# or: pipx install git+https://github.com/hector14mv/vigia
 ```
+
+If uv warns that its bin directory is not on your `PATH`, run `uv tool update-shell` and open a new
+terminal.
 
 In a clone of the repository you want vigia to work on:
 
@@ -60,7 +68,30 @@ tier, writes `vigia.toml`, adds `.vigia/` to `.gitignore`, writes the ticket tem
 `.github/ISSUE_TEMPLATE/vigia-ticket.md`, and creates the labels on GitHub. Commit those files.
 
 Then open an issue from the template — Outcome, Scope with `Not touched:` and `Must still hold:`,
-acceptance criteria, a done-test, risks — and give it one tier label and `vigia:ready`:
+acceptance criteria, a done-test, risks — and give it one tier label and `vigia:ready`. Either
+click *New issue* on GitHub and pick the "vigia ticket" template, or create `ticket.md` yourself:
+copy the section headings from `.github/ISSUE_TEMPLATE/vigia-ticket.md` and fill them in. A small
+filled-in example:
+
+```markdown
+## Outcome
+`truncate(text, n)` shortens text to at most n characters, cutting on a word boundary.
+
+## Scope
+`src/textutil.py` and its tests.
+Not touched: any other function in `textutil.py`.
+Must still hold: `truncate("short", 80)` returns `"short"` unchanged.
+
+## Acceptance criteria
+- [ ] `truncate("hello brave new world", 12)` returns `"hello brave"`
+- [ ] a test covers a word longer than n
+
+## Done-test
+`pytest -q tests/test_textutil.py`
+
+## Risks
+None: a pure function with no I/O.
+```
 
 ```bash
 gh issue create --title "feat: truncate() shortens text on a word boundary" \
@@ -69,6 +100,10 @@ vigia run       # build the oldest ready issue into a pull request, then stop
 vigia watch     # the loop: CI → gate → fix → review → merge or park, one session at a time
 vigia status    # the queue, every open PR with its next step, parked reasons, recent events
 ```
+
+`vigia watch` runs until you press Ctrl-C, and it also builds ready issues. `vigia watch --once`
+does a single tick and exits; `vigia watch --no-build` only moves PRs that are already open and
+builds nothing new.
 
 [`hector14mv/vigia-demo`](https://github.com/hector14mv/vigia-demo) is a tiny library where every
 pull request went through exactly this: open any merged PR and read the handoff, the gate's
@@ -162,6 +197,10 @@ test_command = "python3 -m pytest -q"   # vigia runs it after each build and rep
 humans = ["your-login"]                 # who may add vigia:human-ok (empty: anyone with write access)
 ```
 
+`checks.test_command` runs in the builder's worktree with whatever interpreter is on your `PATH`,
+not in your own virtual environment, so the project's dependencies must be installed there (or the
+command must install them, for example `uv run --with pytest pytest -q`).
+
 To make Codex build and Claude review, run `vigia init --builder codex`. vigia refuses a config in
 which a tier's gate comes from the same lab as its builder, a T2 without the human label, or a
 model given by alias.
@@ -170,16 +209,17 @@ model given by alias.
 
 | Command | What it does |
 |---|---|
-| `vigia init [--builder claude\|codex] [--yes]` | check tools, choose engines per tier, write `vigia.toml`, create labels |
-| `vigia run [--issue N]` | build one ready issue into a pull request |
-| `vigia watch [--once] [--no-build]` | the loop; one engine session per tick, merges and parks for every PR |
-| `vigia status [--json]` | queue, open PRs with their next step, parked reasons, recent ledger |
+| `vigia init [--repo OWNER/NAME] [--builder claude\|codex] [--yes] [--force] [--no-labels]` | check tools, choose engines per tier, write `vigia.toml`, create labels; `--repo` defaults to the clone's GitHub repo, `--yes` accepts the defaults, `--force` overwrites an existing `vigia.toml`, `--no-labels` skips creating labels |
+| `vigia run [--issue N]` | build one ready issue into a pull request (default: the oldest ready one) |
+| `vigia watch [--once] [--interval SECONDS] [--no-build]` | the loop, until Ctrl-C; one engine session per tick, merges and parks for every PR; `--once` runs one tick, `--interval` sets the seconds between ticks (default `watch.interval_seconds`), `--no-build` only moves open PRs |
+| `vigia status [--json \| --html PATH]` | queue, open PRs with their next step, parked reasons, recent ledger; `--json` prints JSON, `--html PATH` writes a self-contained HTML page and prints its path |
 | `vigia review --pr N [--kind gate\|review]` | run the gate or the tier reviewer on a PR's head now |
 | `vigia fix --pr N [--stage gate\|review\|ci]` | run one fix round now |
+| `vigia --version` | print the installed version |
 
 ## Limitations of v0.1
 
-- Tested on macOS and Linux, with GitHub, Claude Code 2.1 and Codex CLI 0.159. No Windows, no
+- Tested on macOS and Linux, with GitHub, Claude Code 2.1.294 and Codex CLI 0.159–0.164. No Windows, no
   GitLab, no other engines yet.
 - One engine session at a time per clone. The factory this comes from ran six in parallel.
 - A PR that conflicts with its base is parked, not rebased.
