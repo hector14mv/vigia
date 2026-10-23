@@ -13,6 +13,19 @@ from pathlib import Path
 from vigia.proc import Result
 
 
+class Clock:
+    """One clock for the ledger and the fake GitHub, one second per reading, so event order is exact."""
+
+    def __init__(self) -> None:
+        self.seconds = 0
+
+    def __call__(self) -> str:
+        self.seconds += 1
+        minutes, seconds = divmod(self.seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"2026-10-24T{hours:02d}:{minutes:02d}:{seconds:02d}Z"
+
+
 def git(*args: str, cwd: Path) -> str:
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
@@ -37,14 +50,17 @@ def make_repo(tmp_path: Path) -> tuple[Path, Path]:
 
 
 class FakeGitHub:
-    def __init__(self, origin: Path, repo: str = "acme/textkit", login: str = "owner"):
+    def __init__(
+        self, origin: Path, repo: str = "acme/textkit", login: str = "owner", clock: Clock | None = None
+    ):
         self.origin = origin
+        self.clock = clock or Clock()
         self.repo = repo
         self._login = login
         self.issues_: dict[int, dict] = {}
         self.prs_: dict[int, dict] = {}
         self.thread: dict[int, list[dict]] = {}
-        self.label_events: dict[int, list[tuple[str, str]]] = {}
+        self.label_events: dict[int, list[tuple[str, str, str]]] = {}  # (label, actor, ts)
         self.ci: dict[str, str] = {}  # sha -> ci state (default passing)
         self.merged: list[tuple[int, str]] = []
         self.next = 1
@@ -68,7 +84,7 @@ class FakeGitHub:
 
     def human_label(self, n: int, actor: str = "owner") -> None:
         self.add_labels(n, "vigia:human-ok")
-        self.label_events.setdefault(n, []).append(("vigia:human-ok", actor))
+        self.label_events.setdefault(n, []).append(("vigia:human-ok", actor, self.clock()))
 
     def bodies(self, n: int) -> list[str]:
         return [c["body"] for c in self.thread.get(n, [])]
@@ -101,9 +117,9 @@ class FakeGitHub:
     def comments(self, n: int) -> list[dict]:
         return list(self.thread.get(n, []))
 
-    def label_actor(self, n: int, label: str) -> str | None:
-        found = [a for name, a in self.label_events.get(n, []) if name == label]
-        return found[-1] if found else None
+    def label_event(self, n: int, label: str) -> dict | None:
+        found = [(a, ts) for name, a, ts in self.label_events.get(n, []) if name == label]
+        return {"actor": found[-1][0], "ts": found[-1][1]} if found else None
 
     def ensure_label(self, name: str, color: str, description: str) -> None:
         pass

@@ -106,3 +106,5 @@ def test_handoff_commit_line():
     long = "Commit: fix: keep ledger events after a torn tail, escape TOML control characters, keep fenced content"
     subject = handoff_commit(long, "fallback")
     assert subject == "fix: keep ledger events after a torn tail, escape TOML control"
+    dangling = "Commit: fix: keep approvals and reviews tied to the right head, base and enrollment state"
+    assert handoff_commit(dangling, "x") == "fix: keep approvals and reviews tied to the right head, base"

@@ -31,40 +31,52 @@ def _window(ctx: Ctx, n: int) -> list[dict]:
 
 
 def _track(ctx: Ctx, pr: dict) -> None:
-    """Record head changes and unparks. A new head clears the human label: it approved the old one."""
+    """Record head changes and unparks.
+
+    Recording a new head is what invalidates an earlier human approval: `human_approved()` only accepts
+    a label added after the current head was first seen. Removing the stale label is a courtesy to the
+    people reading the PR; if the removal fails, the stale label still counts for nothing.
+    """
     n, labels = pr["number"], ctx.cfg.labels
     seen = ctx.ledger.last("head_seen", pr=n)
     if seen is None or seen.get("sha") != pr["head"]:
-        stale = seen is not None and labels.human_ok in pr["labels"]
-        if stale:
-            # The head is recorded only once the old approval is gone: if the removal fails, the next
-            # tick still sees an unrecorded head and retries. Meanwhile this tick treats the PR as unapproved.
+        ctx.ledger.append("head_seen", pr=n, sha=pr["head"])
+        if seen is not None and labels.human_ok in pr["labels"]:
             try:
                 ctx.gh.remove_label(n, labels.human_ok)
+                ctx.gh.comment(
+                    n,
+                    f"New head `{pr['head']}`: the `{labels.human_ok}` label was for the previous head "
+                    "and has been removed. Add it again after checking this head.\n",
+                )
             except CommandError as exc:
                 ctx.ledger.append("error", pr=n, action="clear_human_ok", detail=str(exc)[:500])
-                ctx.say(f"PR #{n}: could not remove `{labels.human_ok}` — {exc}")
-                pr["labels"] = [x for x in pr["labels"] if x != labels.human_ok]
-                return
-        ctx.ledger.append("head_seen", pr=n, sha=pr["head"])
-        if stale:
-            pr["labels"] = [x for x in pr["labels"] if x != labels.human_ok]
-            ctx.gh.comment(
-                n,
-                f"New head `{pr['head']}`: the `{labels.human_ok}` label was for the previous head "
-                "and has been removed. Add it again after checking this head.\n",
-            )
+                ctx.say(f"PR #{n}: could not remove the stale `{labels.human_ok}` — it counts for nothing")
     rows = [r for r in ctx.ledger.rows() if r.get("pr") == n and r["event"] in ("parked", "unparked")]
     if rows and rows[-1]["event"] == "parked" and labels.parked not in pr["labels"]:
         ctx.ledger.append("unparked", pr=n, sha=pr["head"])
 
 
+def human_approved(ctx: Ctx, pr: dict) -> bool:
+    """True when the human label was added after vigia first saw the PR's current head (by one of
+    `checks.humans`, when that list is set). A label from before the head moved never counts, whether or
+    not it could be removed."""
+    label = ctx.cfg.labels.human_ok
+    if label not in pr["labels"]:
+        return False
+    seen = ctx.ledger.last("head_seen", pr=pr["number"])
+    if seen is None or seen.get("sha") != pr["head"]:
+        return False
+    event = ctx.gh.label_event(pr["number"], label)
+    if event is None or not event["ts"] or event["ts"] <= seen["ts"]:
+        return False
+    return not ctx.cfg.humans or event["actor"] in ctx.cfg.humans
+
+
 def state(ctx: Ctx, pr: dict) -> PRState:
     cfg, n = ctx.cfg, pr["number"]
     window = _window(ctx, n)
-    human_ok = cfg.labels.human_ok in pr["labels"]
-    if human_ok and cfg.humans:
-        human_ok = ctx.gh.label_actor(n, cfg.labels.human_ok) in cfg.humans
+    human_ok = human_approved(ctx, pr)
     return PRState(
         number=n,
         head=pr["head"],

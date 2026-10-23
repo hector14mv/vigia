@@ -108,7 +108,38 @@ def enroll(ctx: Ctx, pr: int, issue: int, tier: str) -> None:
     ctx.ledger.append("enrolled", pr=pr, issue=issue)
 
 
+def _unfinished_builds(ctx: Ctx) -> list[int]:
+    """Issues whose latest `build_started` has no `pr_opened` or `build_failed` after it."""
+    open_builds: dict[int, dict] = {}
+    for row in ctx.ledger.rows():
+        if row["event"] == "build_started":
+            open_builds[row["issue"]] = row
+        elif row["event"] in ("pr_opened", "build_failed") and row.get("issue") in open_builds:
+            del open_builds[row["issue"]]
+    return sorted(open_builds)
+
+
 def recover(ctx: Ctx) -> None:
+    """Repair what an interrupted step left behind. Runs at the start of every tick, under the lock.
+
+    1. A build that started but neither opened a PR nor failed was interrupted (a crash, a failed label
+       call): its issue is parked with the reason, never left outside the queue.
+    2. A PR whose label step failed after `pr_opened` was recorded is enrolled (next paragraph).
+    """
+    for number in _unfinished_builds(ctx):
+        try:
+            issue = ctx.gh.issue(number)
+            if issue["state"] == "OPEN":
+                _fail_issue(ctx, issue, "the build was interrupted before it opened a pull request", None)
+            else:
+                ctx.ledger.append("build_failed", issue=number, reason="interrupted; the issue is closed")
+        except CommandError as exc:  # the next tick tries again
+            ctx.ledger.append("error", issue=number, action="recover_build", detail=str(exc)[:500])
+            ctx.say(f"#{number}: recovering the interrupted build failed — {exc}")
+    _enroll_pending(ctx)
+
+
+def _enroll_pending(ctx: Ctx) -> None:
     """Finish the enrollment of PRs whose label step failed after `pr_opened` was recorded.
 
     The watcher finds PRs only through the review label, so such a PR would otherwise never be seen.
@@ -146,18 +177,18 @@ def build(ctx: Ctx, issue: dict) -> int | None:
     name = tickets.slug(issue["title"])
     branch = f"vigia/{n}-{name}" + (f"-r{attempt}" if attempt > 1 else "")
 
-    ctx.gh.remove_label(n, labels.ready)
-    ctx.gh.add_labels(n, labels.building)
+    # The ledger first: if anything below fails, `recover` finds a build that never ended and parks it.
     ctx.ledger.append(
         "build_started", issue=n, tier=tier, engine=seat.engine, model=seat.model, branch=branch
     )
     ctx.say(f"#{n}: building with {seat.label()} on {branch}")
-
     try:
+        ctx.gh.add_labels(n, labels.building)
+        ctx.gh.remove_label(n, labels.ready)
         base_sha = ctx.git.remote_branch_sha(cfg.base)
         wt = ctx.git.worktree_detached(ctx.root / f"build-{n}-a{attempt}", base_sha)
     except CommandError as exc:
-        _fail_issue(ctx, issue, f"vigia could not prepare a worktree ({exc})", None)
+        _fail_issue(ctx, issue, f"vigia could not start the build ({exc})", None)
         return None
     pr: int | None = None
     try:
@@ -285,17 +316,14 @@ def fix(ctx: Ctx, pr: dict, stage: str) -> bool:
             ctx.say(f"PR #{n}: push failed — {exc}")
             return False
         ctx.ledger.append("pushed", pr=n, from_sha=sha, sha=head, stage=stage)
-        # The new head is recorded only once the old approval is gone; otherwise `_track` (which
-        # retries the removal on the next tick) would see the head as already handled.
-        cleared = True
+        # Recording the new head is what invalidates an earlier human approval (watch.human_approved);
+        # removing the stale label is only a courtesy to the people reading the PR.
+        ctx.ledger.append("head_seen", pr=n, sha=head)
         if labels.human_ok in pr["labels"]:
             try:
                 ctx.gh.remove_label(n, labels.human_ok)
             except CommandError as exc:
-                cleared = False
                 ctx.ledger.append("error", pr=n, action="clear_human_ok", detail=str(exc)[:500])
-        if cleared:
-            ctx.ledger.append("head_seen", pr=n, sha=head)
         ctx.gh.comment(
             n,
             comments.handoff(

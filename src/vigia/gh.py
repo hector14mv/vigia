@@ -159,14 +159,14 @@ class GitHub:
             for r in rows
         ]
 
-    def label_actor(self, number: int, label: str) -> str | None:
-        """Who added `label` most recently (from the issue's event history)."""
+    def label_event(self, number: int, label: str) -> dict | None:
+        """{'actor', 'ts'} of the latest time `label` was added (from the issue's event history), or None."""
         rows = self._api("GET", f"repos/{self.repo}/issues/{number}/events?per_page=100", paginate=True) or []
-        actor = None
+        found = None
         for r in rows:
             if r.get("event") == "labeled" and (r.get("label") or {}).get("name") == label:
-                actor = (r.get("actor") or {}).get("login")
-        return actor
+                found = {"actor": (r.get("actor") or {}).get("login"), "ts": r.get("created_at") or ""}
+        return found
 
     def ensure_label(self, name: str, color: str, description: str) -> None:
         self._gh(

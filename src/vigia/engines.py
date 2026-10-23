@@ -196,7 +196,20 @@ def handoff_commit(text: str, fallback: str) -> str:
     m = _HANDOFF_COMMIT.search(text or "")
     subject = m.group(1).strip().strip("`\"'") if m else ""
     if len(subject) > 72:  # keep git's one-line convention without cutting a word in half
-        subject = subject[:72].rsplit(" ", 1)[0].rstrip(",;:")
+        words = subject[:72].rsplit(" ", 1)[0].rstrip(",;:").split(" ")
+        while len(words) > 3 and words[-1].lower() in {
+            "and",
+            "or",
+            "the",
+            "a",
+            "an",
+            "of",
+            "to",
+            "with",
+            "for",
+        }:
+            words.pop()
+        subject = " ".join(words).rstrip(",;:")
     return subject or fallback
 
 
