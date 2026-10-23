@@ -100,6 +100,12 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     ctx = Ctx.load(Path.cwd())
+    if args.html:
+        try:
+            print(status.write_html(ctx, Path(args.html)))
+        except OSError as exc:
+            raise SystemExit(f"vigia: cannot write {args.html}: {exc}") from exc
+        return 0
     print(status.show(ctx, as_json=args.json))
     return 0
 
@@ -143,7 +149,11 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("status", help="queue, open PRs and their next step, parked reasons, recent events")
-    s.add_argument("--json", action="store_true")
+    out = s.add_mutually_exclusive_group()
+    out.add_argument("--json", action="store_true")
+    out.add_argument(
+        "--html", metavar="PATH", help="write a self-contained HTML page here and print its path"
+    )
     s.set_defaults(func=cmd_status)
     return p
 
