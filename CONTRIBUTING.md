@@ -4,6 +4,7 @@
 
 ```bash
 uv venv && uv pip install -e . pytest ruff
+source .venv/bin/activate
 ruff check . && ruff format --check . && pytest
 ```
 
@@ -37,7 +38,9 @@ Hand-written pull requests are welcome and join the same flow. A handoff comment
 `## Handoff <full 40-character head sha>` and has an `Engine:` line naming who wrote the change, for
 example `Engine: claude · claude-opus-5-5`. vigia reads it only from the GitHub account it runs as,
 so ask a maintainer to post it. It picks the other lab as reviewer. Without it the pull request is
-parked as having an unknown builder. The full
+parked as having an unknown builder. A manual pull request also needs two labels, or vigia never
+picks it up: `vigia:review` and exactly one `tier:T0`, `tier:T1` or `tier:T2` (with none or several
+tier labels it is parked). The full
 operating model is in [docs/operating-model.md](docs/operating-model.md).
 
 ## Commits
