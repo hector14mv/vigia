@@ -168,14 +168,17 @@ def init(
 
     login = _login(runner)
     humans = [login] if login else []
+    typed_answer = False
     if not assume_yes:
         answer = ask(
             "Who may add vigia:human-ok on T2 changes? (comma-separated GitHub logins)", login or ""
         ).strip()
         if answer:
+            typed_answer = True
             humans = [h for h in (part.strip() for part in answer.split(",")) if h]
     if not humans:
-        say("Could not read your GitHub login: humans = [], so anyone with write access can approve T2.")
+        reason = "Your answer had no logins" if typed_answer else "Could not read your GitHub login"
+        say(f"{reason}: humans = [], so anyone with write access can approve T2.")
 
     cfg = Config(
         repo=repo,

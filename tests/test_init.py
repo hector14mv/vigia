@@ -179,6 +179,19 @@ def test_init_login_unreadable_writes_empty_humans_and_warns(tmp_path):
     assert "humans = []" in path.read_text(encoding="utf-8")
     warnings = [m for m in messages if "anyone with write access" in m]
     assert len(warnings) == 1 and "T2" in warnings[0]
+    assert "Could not read your GitHub login" in warnings[0]
+
+
+def test_init_typed_answer_without_logins_warns_about_the_answer(tmp_path):
+    ask = scripted_ask(" , ,")
+    messages: list[str] = []
+    path = init(tmp_path, ask, messages.append, runner=make_runner(tmp_path), create_labels=False)
+    assert config_mod.load(path).humans == ()
+    warnings = [m for m in messages if "anyone with write access" in m]
+    assert len(warnings) == 1
+    assert "Your answer had no logins" in warnings[0]
+    assert "Could not read" not in warnings[0]
+    assert warnings[0].endswith("anyone with write access can approve T2.")
 
 
 def test_init_login_unreadable_interactive_empty_answer_stays_empty(tmp_path):
