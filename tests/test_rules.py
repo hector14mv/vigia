@@ -197,3 +197,8 @@ def test_every_merge_names_the_exact_head():
     for state in [pr(verdicts=(gate(),)), pr(tier="T1", verdicts=(gate(), review()))]:
         d = decide(state, CFG)
         assert d.action == "merge" and d.sha == state.head
+
+
+def test_a_pr_aimed_at_another_base_parks_even_with_every_verdict_in():
+    action, reason = act(pr(on_base=False, verdicts=(gate(),)))
+    assert action == "park" and "base branch" in reason

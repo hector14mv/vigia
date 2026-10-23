@@ -1,0 +1,160 @@
+"""The `vigia` command."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from . import __version__, builder, gate, status, watch
+from . import init as init_mod
+from .config import ConfigError
+from .context import Busy, Ctx
+from .proc import CommandError
+from .safety import UnsafePath
+
+
+def _ask(question: str, default: str) -> str:
+    shown = f" [{default}]" if default else ""
+    try:
+        answer = input(f"{question}{shown}: ").strip()
+    except EOFError:
+        answer = ""
+    return answer or default
+
+
+def _pr(ctx: Ctx, number: int) -> dict:
+    pr = ctx.gh.pr(number)
+    if ctx.cfg.labels.review not in pr["labels"]:
+        raise SystemExit(f"PR #{number} is not managed by vigia (no `{ctx.cfg.labels.review}` label)")
+    return pr
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    init_mod.init(
+        Path.cwd(),
+        _ask,
+        print,
+        repo=args.repo,
+        builder=args.builder,
+        assume_yes=args.yes,
+        force=args.force,
+        create_labels=not args.no_labels,
+    )
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    ctx = Ctx.load(Path.cwd())
+    with ctx.lock():
+        if args.issue:
+            issue = ctx.gh.issue(args.issue)
+            if issue["state"] != "OPEN":
+                raise SystemExit(f"#{args.issue} is closed")
+            problems = builder.gaps(ctx, issue)
+            if problems:
+                raise SystemExit(f"#{args.issue} is not launchable: " + "; ".join(problems))
+        else:
+            issue = builder.next_issue(ctx)
+            if issue is None:
+                print(f"No ready issues (label `{ctx.cfg.labels.ready}`).")
+                return 0
+        pr = builder.build(ctx, issue)
+    return 0 if pr else 1
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    ctx = Ctx.load(Path.cwd())
+    with ctx.lock():
+        pr = _pr(ctx, args.pr)
+        rounds = {
+            e["sha"]
+            for e in ctx.ledger.events("verdict", pr=args.pr, kind=args.kind)
+            if e["verdict"] != "UNAVAILABLE"
+        }
+        round_no = len(rounds | {pr["head"]})
+        verdict = gate.review(ctx, pr, args.kind, round_no)
+    return 0 if verdict in ("APPROVE", "CHANGES") else 1
+
+
+def cmd_fix(args: argparse.Namespace) -> int:
+    ctx = Ctx.load(Path.cwd())
+    with ctx.lock():
+        ok = builder.fix(ctx, _pr(ctx, args.pr), args.stage)
+    return 0 if ok else 1
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    ctx = Ctx.load(Path.cwd())
+    build = False if args.no_build else None
+    if args.once:
+        for s in watch.tick(ctx, build):
+            print(f"PR #{s.pr['number']}: {s.decision}")
+        return 0
+    try:
+        watch.loop(ctx, args.interval or ctx.cfg.interval_seconds, build)
+    except KeyboardInterrupt:
+        print("\nstopped")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    ctx = Ctx.load(Path.cwd())
+    print(status.show(ctx, as_json=args.json))
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="vigia",
+        description="AI agents write the code. A different lab reviews it. A script with no AI merges it.",
+    )
+    p.add_argument("--version", action="version", version=f"vigia {__version__}")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    s = sub.add_parser("init", help="check tools, choose engines per tier, write vigia.toml, create labels")
+    s.add_argument("--repo", help="owner/name (default: the clone's GitHub repo)")
+    s.add_argument("--builder", choices=["claude", "codex"], help="which lab builds; the other one reviews")
+    s.add_argument("--yes", "-y", action="store_true", help="accept the defaults without asking")
+    s.add_argument("--force", action="store_true", help="overwrite an existing vigia.toml")
+    s.add_argument("--no-labels", action="store_true", help="do not create labels on GitHub")
+    s.set_defaults(func=cmd_init)
+
+    s = sub.add_parser("run", help="build one ready issue into a pull request")
+    s.add_argument("--issue", type=int, help="build this issue (default: the oldest ready one)")
+    s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser(
+        "review", help="run the cross-lab gate (or the tier reviewer) on a PR's exact head now"
+    )
+    s.add_argument("--pr", type=int, required=True)
+    s.add_argument("--kind", choices=["gate", "review"], default="gate")
+    s.set_defaults(func=cmd_review)
+
+    s = sub.add_parser("fix", help="run one fix round on a PR now")
+    s.add_argument("--pr", type=int, required=True)
+    s.add_argument("--stage", choices=["gate", "review", "ci"], default="gate")
+    s.set_defaults(func=cmd_fix)
+
+    s = sub.add_parser("watch", help="the loop: decide with the rules, review, fix, merge, park, build")
+    s.add_argument("--once", action="store_true", help="one tick, then exit")
+    s.add_argument("--interval", type=int, help="seconds between ticks (default: watch.interval_seconds)")
+    s.add_argument("--no-build", action="store_true", help="do not build new issues, only move open PRs")
+    s.set_defaults(func=cmd_watch)
+
+    s = sub.add_parser("status", help="queue, open PRs and their next step, parked reasons, recent events")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_status)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except (ConfigError, Busy, UnsafePath) as exc:
+        print(f"vigia: {exc}", file=sys.stderr)
+        return 2
+    except CommandError as exc:
+        print(f"vigia: {exc}", file=sys.stderr)
+        return 3
