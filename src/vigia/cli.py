@@ -88,8 +88,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     ctx = Ctx.load(Path.cwd())
     build = False if args.no_build else None
     if args.once:
-        for s in watch.tick(ctx, build):
-            print(f"PR #{s.pr['number']}: {s.decision}")
+        watch.tick(ctx, build)  # tick reports each decision itself, before acting on it
         return 0
     try:
         watch.loop(ctx, args.interval or ctx.cfg.interval_seconds, build)

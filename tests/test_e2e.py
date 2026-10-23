@@ -98,6 +98,22 @@ def test_t0_issue_to_merged_pr_with_one_fix_round(world):
     assert not any(ctx.root.iterdir())  # every worktree was removed
 
 
+def test_a_tick_reports_the_decision_before_acting_on_it(world):
+    gh, build = world
+    ctx, _ = build([APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    said = []
+    ctx.say = said.append
+    seen = tick(ctx)
+    assert decisions(seen) == [(pr, "gate")]
+    decision = next(i for i, line in enumerate(said) if line == f"PR #{pr}: {seen[0].decision}")
+    action = next(i for i, line in enumerate(said) if line.startswith(f"PR #{pr}: gate round"))
+    assert decision < action
+    assert said.count(f"PR #{pr}: {seen[0].decision}") == 1
+
+
 def test_ci_pending_holds_the_gate(world):
     gh, build = world
     ctx, run = build([APPROVE])

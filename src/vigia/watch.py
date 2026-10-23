@@ -173,6 +173,8 @@ def tick(ctx: Ctx, build: bool | None = None) -> list[Seen]:
         builder.recover(ctx)
         gate.recover(ctx)
         seen = sense(ctx)
+        for s in seen:  # report every decision first, so the output reads in the order things happen
+            ctx.say(f"PR #{s.pr['number']}: {s.decision}")
         for s in seen:
             try:
                 if s.decision.action == "merge":
