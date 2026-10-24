@@ -170,3 +170,34 @@ def test_a_failed_planner_session_files_nothing_even_with_a_plan_in_its_output(w
     assert len(gh.issues_) == before
     (failed,) = ctx.ledger.events("plan_failed")
     assert failed["timed_out"] is True and failed["code"] == -15
+
+
+def test_a_ticket_after_a_dropped_one_still_waits_for_it(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    planned = [
+        {"title": "feat: add the helper", "tier": "T1", "depends_on_earlier": False, "body": " "},  # dropped
+        {
+            "title": "refactor: callers use the helper",
+            "tier": "T1",
+            "depends_on_earlier": True,
+            "body": TICKET,
+        },
+    ]
+    parsed = plan.parse(json.dumps({"tickets": planned, "human_tasks": []}))
+    assert [t["title"] for t in parsed["tickets"]] == ["refactor: callers use the helper"]
+    assert parsed["tickets"][0]["after"] is True  # its prerequisite was never filed
+    filed = plan.file_plan(ctx, parsed, "g")
+    assert "vigia:ready" not in filed[0]["labels"]
+    assert "returned malformed" in gh.issues_[filed[0]["number"]]["body"]
+
+
+def test_a_planned_ticket_already_open_is_not_filed_again(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("test: cover shout() on empty input", TICKET, ["tier:T0"])
+    before = len(gh.issues_)
+    plan.file_plan(ctx, plan.parse(json.dumps(_plan())), "g")
+    titles = [i["title"] for i in gh.issues_.values()]
+    assert titles.count("test: cover shout() on empty input") == 1 and len(gh.issues_) == before + 3
+    assert ctx.ledger.events("plan_skipped")[0]["reason"] == "an open issue has this title"

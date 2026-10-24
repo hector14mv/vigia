@@ -75,7 +75,7 @@ def prompt(
     goal: str, repo: str, base: str, skill: str, open_titles: list[str], files: list[str], limit: int
 ) -> str:
     listing = "\n".join(files[:400]) + (f"\n… and {len(files) - 400} more files" if len(files) > 400 else "")
-    already = "\n".join(f"- {t}" for t in open_titles[:80]) or "- none"
+    already = "\n".join(f"- {t}" for t in open_titles[:300]) or "- none"
     return f"""\
 You are the planner in vigia, an AI software factory. Turn the goal below into at most {limit} tickets that AI
 builders will implement one by one, each reviewed by a model from another lab and merged by a script. The
@@ -117,7 +117,8 @@ Reply with only one JSON object: {{"tickets": [{{"title": "<conventional-commit 
 
 def parse(text: str) -> dict | None:
     """The planner's JSON, or None when it returned none. Malformed entries are dropped, never guessed. A ticket
-    after the first that does not say `depends_on_earlier: false` is taken to depend on the ones before it."""
+    after the first that does not say `depends_on_earlier: false` is taken to depend on the ones before it, counted
+    in the planner's own order: a dropped earlier ticket is still a prerequisite that was never filed."""
     body = (text or "").strip()
     start, end = body.find("{"), body.rfind("}")
     if start < 0 or end <= start:
@@ -129,7 +130,7 @@ def parse(text: str) -> dict | None:
     if not isinstance(data, dict):
         return None
     out = {"tickets": [], "human_tasks": []}
-    for t in data.get("tickets") or []:
+    for position, t in enumerate(data.get("tickets") or []):
         if (
             isinstance(t, dict)
             and t.get("tier") in TIERS
@@ -137,7 +138,7 @@ def parse(text: str) -> dict | None:
             and str(t.get("body") or "").strip()
         ):
             body = strip_front_matter(str(t["body"]).strip())
-            after = bool(out["tickets"]) and t.get("depends_on_earlier") is not False
+            after = position > 0 and t.get("depends_on_earlier") is not False
             out["tickets"].append(
                 {"title": str(t["title"]).strip()[:120], "tier": t["tier"], "after": after, "body": body}
             )
@@ -149,9 +150,22 @@ def parse(text: str) -> dict | None:
     return out
 
 
-def file_plan(ctx: Ctx, plan: dict, goal: str, auto_ready: bool = True) -> list[dict]:
-    """Create the issues. Returns [{'number', 'title', 'labels'}] for what was filed."""
+def file_plan(
+    ctx: Ctx, plan: dict, goal: str, auto_ready: bool = True, open_titles: list[str] | None = None
+) -> list[dict]:
+    """Create the issues. Returns [{'number', 'title', 'labels'}] for what was filed. A ticket whose title is
+    already an open issue's is not filed again (ledger `plan_skipped`), whatever the planner saw."""
     labels = ctx.cfg.labels
+    if open_titles is None:
+        open_titles = [i["title"] for i in ctx.gh.issues_all()]
+    taken = {t.strip().lower() for t in open_titles}
+    kept = []
+    for t in plan["tickets"]:
+        if t["title"].strip().lower() in taken:
+            ctx.ledger.append("plan_skipped", title=t["title"][:120], reason="an open issue has this title")
+        else:
+            kept.append(t)
+    plan = {**plan, "tickets": kept}
     if labels.collisions():  # vigia.toml refuses these; a Config built another way must not either
         raise SystemExit(
             f"labels {labels.collisions()} are reserved for the planner and the tiers: nothing filed"
@@ -174,9 +188,15 @@ def file_plan(ctx: Ctx, plan: dict, goal: str, auto_ready: bool = True) -> list[
         body = t["body"] + f"\n\n<!-- vigia:planned goal={json.dumps(goal[:200])} -->\n"
         if gaps:
             body += "\n> Planned by vigia, but the template check found gaps: " + "; ".join(gaps) + "\n"
-        if t.get("after") and filed:
-            earlier = ", ".join(f"#{f['number']}" for f in filed)
-            body += f"\n> Planned to follow {earlier}: add `{labels.ready}` once they are merged.\n"
+        if t.get("after"):
+            if filed:
+                earlier = ", ".join(f"#{f['number']}" for f in filed)
+                body += f"\n> Planned to follow {earlier}: add `{labels.ready}` once they are merged.\n"
+            else:
+                body += (
+                    "\n> Planned to follow a ticket the planner returned malformed, so it was not filed: check the"
+                    f" plan before adding `{labels.ready}`.\n"
+                )
         number = ctx.gh.create_issue(t["title"], body, names)
         ctx.ledger.append(
             "planned", issue=number, tier=t["tier"], ready=ready, gaps=gaps, after=bool(t.get("after"))
@@ -219,4 +239,4 @@ def plan(
     result["tickets"] = result["tickets"][:limit]
     if dry_run:
         return result, []
-    return result, file_plan(ctx, result, goal, auto_ready)
+    return result, file_plan(ctx, result, goal, auto_ready, open_titles)
