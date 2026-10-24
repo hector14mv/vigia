@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
+import os
 import shlex
 import tempfile
 from collections.abc import Callable
@@ -13,6 +15,7 @@ from pathlib import Path
 from . import config as config_mod
 from . import proc, safety
 from .config import Config, ConfigError
+from .context import work_root
 from .init import label_specs, preflight
 from .proc import CommandError
 
@@ -102,17 +105,31 @@ def _test_command(cfg: Config) -> Check:
     )
 
 
-def _work_root() -> Check:
+def _work_root(clone: Path | None, cfg: Config | None) -> Check:
+    """The directory `Ctx.load` will create for this clone (the shared one when there is no valid config)."""
     try:
-        root = safety.check_root(safety.default_root())
+        root = work_root(clone, cfg) if clone and cfg else safety.check_root(safety.default_root())
     except safety.UnsafePath as exc:
         return Check("work root", FAIL, str(exc), "point TMPDIR at a directory outside your home")
+    if os.path.lexists(root) and not root.is_dir():
+        return Check(
+            "work root",
+            FAIL,
+            f"{root} exists and is not a directory",
+            f"remove it: rm {shlex.quote(str(root))}",
+        )
     probe = root
     while not probe.exists():
         probe = probe.parent
+    # Doctor writes nothing outside the system temp directory: a work root that resolves out of it (a
+    # symlinked `vigia`) is only checked with access(), never probed with a file.
+    system_temp = Path(os.path.realpath(safety.default_root().parent))
     try:
-        with tempfile.TemporaryFile(dir=probe):
-            pass
+        if Path(os.path.realpath(probe)).is_relative_to(system_temp):
+            with tempfile.TemporaryFile(dir=probe):
+                pass
+        elif not os.access(probe, os.W_OK | os.X_OK):
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES))
     except OSError as exc:
         fix = f"make {shlex.quote(str(probe))} writable, or point TMPDIR at a directory you can write to"
         return Check("work root", FAIL, f"{probe} is not writable: {exc.strerror or exc}", fix)
@@ -159,7 +176,7 @@ def collect(start: Path, runner: Runner = proc.run) -> list[Check]:
     if cfg and clone:
         repo = _repo(runner, cfg.repo)
         checks += [repo, _labels(runner, cfg, repo.status == OK), _workflows(clone, cfg), _test_command(cfg)]
-    checks.append(_work_root())
+    checks.append(_work_root(clone, cfg))
     if clone:
         checks.append(_lock(clone))
     return checks

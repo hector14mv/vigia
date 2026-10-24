@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from vigia import cli, doctor, safety
+from vigia import cli, context, doctor, safety
 from vigia import config as config_mod
 from vigia.config import Config, default_tiers
 from vigia.init import label_specs
@@ -141,6 +141,66 @@ def test_unwritable_work_root_fails(clone, monkeypatch, tmp_path):
         parent.chmod(0o700)
     assert check.status == "fail"
     assert "writable" in check.fix
+
+
+def clone_work_root(clone):
+    return context.work_root(clone, config_mod.load(clone / "vigia.toml"))
+
+
+def test_work_root_is_this_clones_directory_and_is_not_created(clone):
+    root = clone_work_root(clone)
+    check = by_name(doctor.collect(clone, make_runner()))["work root"]
+    assert check.status == "ok" and check.detail == str(root)
+    assert not root.exists()
+
+
+def test_a_file_where_the_clones_work_root_belongs_fails(clone):
+    root = clone_work_root(clone)
+    root.parent.mkdir(parents=True)
+    root.write_text("in the way", encoding="utf-8")
+    check = by_name(doctor.collect(clone, make_runner()))["work root"]
+    assert check.status == "fail"
+    assert str(root) in check.detail and f"rm {root}" in check.fix
+    assert root.read_text(encoding="utf-8") == "in the way"
+
+
+def test_a_symlinked_shared_root_is_never_probed_outside_system_temp(clone, tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    shared = tmp_path / "tmp" / "vigia"
+    shared.parent.mkdir()
+    shared.symlink_to(outside)
+    probed = []
+    real = doctor.tempfile.TemporaryFile
+    monkeypatch.setattr(doctor.tempfile, "TemporaryFile", lambda **kw: probed.append(kw["dir"]) or real(**kw))
+    check = by_name(doctor.collect(clone, make_runner()))["work root"]
+    assert check.status == "ok"
+    assert probed == []
+    assert list(outside.iterdir()) == []
+
+
+def test_a_probe_inside_system_temp_is_still_made(clone, tmp_path, monkeypatch):
+    (tmp_path / "tmp").mkdir()
+    probed = []
+    real = doctor.tempfile.TemporaryFile
+    monkeypatch.setattr(doctor.tempfile, "TemporaryFile", lambda **kw: probed.append(kw["dir"]) or real(**kw))
+    assert by_name(doctor.collect(clone, make_runner()))["work root"].status == "ok"
+    assert len(probed) == 1
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_an_unwritable_symlink_target_outside_system_temp_fails(clone, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    shared = tmp_path / "tmp" / "vigia"
+    shared.parent.mkdir()
+    shared.symlink_to(outside)
+    outside.chmod(0o500)
+    try:
+        check = by_name(doctor.collect(clone, make_runner()))["work root"]
+    finally:
+        outside.chmod(0o700)
+    assert check.status == "fail" and "writable" in check.fix
 
 
 def test_held_lock_fails_and_a_free_lock_file_is_ok(clone):
