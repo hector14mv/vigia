@@ -84,3 +84,13 @@ def test_dry_run_files_nothing(world):  # noqa: F811
     before = len(gh.issues_)
     result, filed = plan.plan(ctx, "anything", dry_run=True)
     assert filed == [] and len(gh.issues_) == before and result["tickets"]
+
+
+def test_the_template_header_never_lands_in_a_ticket():
+    from pathlib import Path
+
+    header = '---\nname: vigia ticket\nabout: x\nlabels: ["vigia:ready"]\n---\n\n'
+    tickets = [{"title": "t", "tier": "T0", "body": header + TICKET}]
+    parsed = plan.parse(json.dumps({"tickets": tickets, "human_tasks": []}))
+    assert parsed["tickets"][0]["body"].startswith("## Outcome")
+    assert "name: vigia ticket" not in plan._skill(Path("/nonexistent"))

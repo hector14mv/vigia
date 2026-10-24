@@ -10,6 +10,7 @@ data is a person's call to start. Work only a person can do (an account, a secre
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from . import tickets
@@ -131,9 +132,8 @@ def parse(text: str) -> dict | None:
             and str(t.get("title") or "").strip()
             and str(t.get("body") or "").strip()
         ):
-            out["tickets"].append(
-                {"title": str(t["title"]).strip()[:120], "tier": t["tier"], "body": str(t["body"]).strip()}
-            )
+            body = strip_front_matter(str(t["body"]).strip())
+            out["tickets"].append({"title": str(t["title"]).strip()[:120], "tier": t["tier"], "body": body})
     for h in data.get("human_tasks") or []:
         if isinstance(h, dict) and str(h.get("title") or "").strip():
             out["human_tasks"].append(
