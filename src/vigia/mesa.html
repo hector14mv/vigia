@@ -250,10 +250,11 @@ footer { color: var(--muted); font-size: 12.5px; }
   function renderFactory(state, now) {
     var html = ["<h2>Factory</h2>"];
     state.repos.forEach(function (r) {
-      var busy = r.jobs.length, slots = "";
-      for (var i = 0; i < r.slots; i++) slots += '<i class="slot' + (i < busy ? " busy" : "") + '"></i>';
+      // `vigia watch --slots N` can run more sessions than vigia.toml says: never show more busy than total
+      var busy = r.jobs.length, total = Math.max(r.slots, busy), slots = "";
+      for (var i = 0; i < total; i++) slots += '<i class="slot' + (i < busy ? " busy" : "") + '"></i>';
       html.push('<div class="repo"><div class="repo-head"><h3>' + esc(r.repo) + '</h3><span class="slots" title="engine sessions">' +
-        slots + "&nbsp;" + busy + "/" + r.slots + " sessions</span></div>");
+        slots + "&nbsp;" + busy + "/" + total + " sessions</span></div>");
       if (!r.prs.length) html.push('<div class="empty">No open pull requests.</div>');
       r.prs.forEach(function (p) {
         var steps = STEPS.map(function (s) { return '<span class="step ' + stepClass(p, s) + '">' + STEP_LABEL[s] + "</span>"; }).join("");
@@ -311,7 +312,7 @@ footer { color: var(--muted); font-size: 12.5px; }
     var h = state.health || {}, age = h.last_tick ? (now - Date.parse(h.last_tick)) / 1000 : Infinity;
     var dot = age < 600 ? "" : age < 3600 ? " late" : " dead";
     var busy = state.repos.reduce(function (n, r) { return n + r.jobs.length; }, 0);
-    var slots = state.repos.reduce(function (n, r) { return n + r.slots; }, 0);
+    var slots = state.repos.reduce(function (n, r) { return n + Math.max(r.slots, r.jobs.length); }, 0);
     document.getElementById("pulse").innerHTML =
       '<span class="pill"><i class="dot' + dot + '"></i>watcher <b>' + esc(ago(h.last_tick, now)) + "</b></span>" +
       '<span class="pill">sessions <b>' + busy + "/" + slots + "</b></span>" +
