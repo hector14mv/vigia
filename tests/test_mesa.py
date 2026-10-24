@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import threading
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import pytest
 from fakes import APPROVE, CHANGES, engine
 from test_e2e import TICKET, world  # noqa: F401  (world is a fixture)
 from vigia import jobs, mesa
+from vigia.config import Labels
 from vigia.proc import CommandError
 from vigia.watch import tick
 
@@ -223,3 +225,59 @@ def test_refused_tickets_past_the_check_limit_are_counted_not_dropped(world, tmp
     repo = mesa.state([ctx])["repos"][0]
     assert len(repo["refused"]) == mesa.REFUSED_CHECKS and repo["refused_unchecked"] == 2
     assert "2 older refused tickets not checked" in _render(tmp_path, mesa.state([ctx]))["turn"]
+
+
+def test_an_old_refusal_is_checked_in_turn_not_hidden_behind_newer_resolved_ones(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    first = gh.add_issue("Still vague", "x", ["tier:T1"])
+    ctx.ledger.append("refused", issue=first, gaps=["no Outcome section"])
+    for k in range(mesa.REFUSED_CHECKS):
+        n = gh.add_issue(f"Gave up {k}", "x", ["tier:T1"])
+        ctx.ledger.append("refused", issue=n, gaps=["no Outcome section"])
+        gh.issues_[n]["state"] = "CLOSED"
+    checks: dict = {}  # what the server keeps between refreshes
+    repo = mesa.state([ctx], checks=checks)["repos"][0]
+    assert repo["refused"] == [] and repo["refused_unchecked"] == 1  # the newest ten first
+    repo = mesa.state([ctx], checks=checks)["repos"][0]
+    assert [i["number"] for i in repo["refused"]] == [first] and repo["refused_unchecked"] == 0
+    assert repo["refused"][0]["missing"] == ["no Outcome section"]
+    repo = mesa.state([ctx], checks=checks)["repos"][0]  # known from its last check while others are read
+    assert [i["number"] for i in repo["refused"]] == [first]
+
+
+def test_a_refused_ticket_that_is_being_built_is_no_longer_refused(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    n = gh.add_issue("Add a helper", "## Outcome\nmake it better\n", ["vigia:ready", "tier:T0"])
+    tick(ctx)  # refused: the ready label is removed
+    assert [i["number"] for i in mesa.state([ctx])["repos"][0]["refused"]] == [n]
+    gh.issues_[n]["body"] = TICKET
+    gh.add_labels(n, "vigia:ready")
+    tick(ctx)  # built: ready is removed again, and a PR is opened
+    assert gh.prs_ and "vigia:ready" not in gh.issues_[n]["labels"]
+    assert mesa.state([ctx])["repos"][0]["refused"] == []
+    ctx.ledger.append("refused", issue=n, gaps=["no Scope section"])  # refused again after that build
+    assert mesa.state([ctx])["repos"][0]["refused"][0]["missing"] == ["no Scope section"]
+
+
+def test_the_page_names_the_labels_the_repo_configured(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    labels = Labels(ready="todo:agent", parked="on-hold", human_ok="approved:head")
+    ctx, _ = build([APPROVE, APPROVE], cfg=replace(ctx.cfg, labels=labels))
+    gh.add_issue("Touch billing", TICKET, ["todo:agent", "tier:T2"])
+    for _ in range(4):
+        tick(ctx)
+    s = mesa.state([ctx])
+    pr = next(iter(gh.prs_))
+    assert _pr(s, pr)["waiting_for"] == "human"
+    repo = s["repos"][0]
+    parked = dict(_pr(s, pr), number=pr + 1, next="wait", waiting_for=None, parked=True)
+    issue = {"number": 99, "title": "Broke", "url": "", "reason": "the builder left no changes"}
+    shown = _render(tmp_path, dict(s, repos=[dict(repo, prs=repo["prs"] + [parked], parked_issues=[issue])]))
+    turn = shown["turn"]
+    assert "<code>approved:head</code> approves" in turn and "vigia:human-ok" not in turn
+    assert "remove <code>on-hold</code> and add <code>todo:agent</code>" in turn
+    assert "then remove <code>on-hold</code>" in turn
+    assert "vigia:parked" not in turn and "vigia:ready" not in turn

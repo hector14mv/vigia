@@ -190,6 +190,10 @@ footer { color: var(--muted); font-size: 12.5px; }
     return h > 36 ? "resets in " + Math.round(h / 24) + " days" : "resets in " + Math.max(h, 0) + " h";
   }
 
+  var LABELS = { ready: "vigia:ready", parked: "vigia:parked", human_ok: "vigia:human-ok" };
+  // The repo's own label names: vigia.toml can rename them, and a card must name the label that works
+  function label(c, name) { return (c.labels || {})[name] || LABELS[name]; }
+
   function turnCards(state) {
     var cards = [];
     state.repos.forEach(function (r) {
@@ -199,12 +203,12 @@ footer { color: var(--muted); font-size: 12.5px; }
       if ((r.unread && r.unread.length) || r.refused_unchecked) cards.push({ kind: "partial", repo: r.repo, unread: r.unread || [], unchecked: r.refused_unchecked || 0 });
       (r.prs || []).forEach(function (p) {
         if (p.next === "wait" && p.waiting_for === "human") {
-          cards.push({ kind: "t2", repo: r.repo, pr: p });
+          cards.push({ kind: "t2", repo: r.repo, labels: r.labels, pr: p });
         } else if (p.parked) {
-          cards.push({ kind: "parked", repo: r.repo, pr: p });
+          cards.push({ kind: "parked", repo: r.repo, labels: r.labels, pr: p });
         }
       });
-      (r.parked_issues || []).forEach(function (i) { cards.push({ kind: "parked-issue", repo: r.repo, issue: i }); });
+      (r.parked_issues || []).forEach(function (i) { cards.push({ kind: "parked-issue", repo: r.repo, labels: r.labels, issue: i }); });
       (r.refused || []).forEach(function (i) { cards.push({ kind: "refused", repo: r.repo, issue: i }); });
       (r.human_tasks || []).forEach(function (i) { cards.push({ kind: "task", repo: r.repo, issue: i }); });
     });
@@ -231,14 +235,14 @@ footer { color: var(--muted); font-size: 12.5px; }
           '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
           '<div class="why">' + esc(c.issue.reason) + "</div>" +
           '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Open the ticket</a></div>' +
-          '<p class="hint">To resume: deal with the cause, remove <code>vigia:parked</code> and add <code>vigia:ready</code>.</p></article>');
+          '<p class="hint">To resume: deal with the cause, remove <code>' + esc(label(c, "parked")) + '</code> and add <code>' + esc(label(c, "ready")) + '</code>.</p></article>');
       } else if (c.kind === "t2") {
         var p = c.pr, ev = (p.evidence || []).map(function (e) { return "<li>" + esc(e) + "</li>"; }).join("");
         html.push('<article class="card t2"><span class="kicker">Approve a T2 change · ' + esc(c.repo) + "</span>" +
           '<span class="title">#' + p.number + " " + esc(p.title) + "</span>" +
           '<span class="meta">head ' + esc(p.head.slice(0, 8)) + " · built by " + esc(p.built_by || "?") + "</span>" +
           '<ul class="evidence">' + ev + "</ul>" +
-          '<p class="hint">Adding <code>vigia:human-ok</code> approves this exact head. Any new push needs a new label.</p>' +
+          '<p class="hint">Adding <code>' + esc(label(c, "human_ok")) + '</code> approves this exact head. Any new push needs a new label.</p>' +
           '<div class="actions"><a class="btn primary" href="' + esc(p.url) + '/files" target="_blank" rel="noopener">Read the diff</a>' +
           '<a class="btn" href="' + esc(p.url) + '" target="_blank" rel="noopener">Add the label on GitHub</a></div></article>');
       } else if (c.kind === "parked") {
@@ -249,7 +253,7 @@ footer { color: var(--muted); font-size: 12.5px; }
           '<p class="hint">' + esc(q.tried || "") + "</p>" +
           '<div class="actions"><a class="btn primary" href="' + esc(q.url) + '" target="_blank" rel="noopener">Open the PR</a>' +
           (q.issue_url ? '<a class="btn" href="' + esc(q.issue_url) + '" target="_blank" rel="noopener">Edit the ticket</a>' : "") +
-          "</div><p class=\"hint\">To resume: deal with the cause, then remove <code>vigia:parked</code>. The counters start again.</p></article>");
+          "</div><p class=\"hint\">To resume: deal with the cause, then remove <code>" + esc(label(c, "parked")) + "</code>. The counters start again.</p></article>");
       } else if (c.kind === "refused") {
         html.push('<article class="card refused"><span class="kicker">Ticket not launchable · ' + esc(c.repo) + "</span>" +
           '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +

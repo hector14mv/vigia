@@ -107,7 +107,49 @@ def _running(ctx: Ctx, rows: list[dict]) -> list[dict]:
     return running
 
 
-def repo_state(ctx: Ctx, now: datetime) -> dict:
+def _refused(ctx: Ctx, rows: list[dict], checks: dict, unread: list[str]) -> tuple[list[dict], int]:
+    """Refused tickets still waiting for a person, and how many have never been checked.
+
+    A refusal stays, whatever its age, until its issue is closed or ready again, or a build of it starts
+    (`build_started`: a later refusal brings it back). Each check costs one GitHub call, so a refresh checks
+    at most REFUSED_CHECKS, the least recently checked first; `checks` keeps each issue's last answer between
+    refreshes, so every refusal is checked in turn and one is never hidden behind newer, resolved ones."""
+    pending: dict[int, dict] = {}  # issue -> its latest refusal, oldest first
+    for r in rows:
+        if r["event"] == "refused":
+            pending.pop(r["issue"], None)
+            pending[r["issue"]] = r
+        elif r["event"] == "build_started":
+            pending.pop(r.get("issue"), None)
+    newest = [(ctx.cfg.repo, n) for n in reversed(pending)]
+    failed = set()
+    for key in sorted(newest, key=lambda k: checks[k][0] if k in checks else -1)[:REFUSED_CHECKS]:
+        try:
+            checks[key] = (time.monotonic(), ctx.gh.issue(key[1]))
+        except CommandError:
+            failed.add(key)
+            unread.append(f"refused ticket #{key[1]}")
+    refused, unchecked = [], 0
+    for key in newest:
+        if key in failed:
+            continue
+        if key not in checks:
+            unchecked += 1
+            continue
+        issue, n = checks[key][1], key[1]
+        if issue["state"] == "OPEN" and ctx.cfg.labels.ready not in issue["labels"]:
+            refused.append(
+                {
+                    "number": issue["number"],
+                    "title": issue["title"],
+                    "url": issue["url"],
+                    "missing": pending[n].get("gaps") or [],
+                }
+            )
+    return refused, unchecked
+
+
+def repo_state(ctx: Ctx, now: datetime, checks: dict | None = None) -> dict:
     cfg, labels = ctx.cfg, ctx.cfg.labels
     rows = ctx.ledger.rows()
     running = _running(ctx, rows)
@@ -182,30 +224,7 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
     # What could not be read from GitHub: those lists are incomplete, and the page must say so rather than show
     # them as empty.
     unread: list[str] = []
-    # A refused ticket stays here, whatever its age, until its issue is closed or ready again. Each check costs one
-    # GitHub call, so only the newest REFUSED_CHECKS are checked; the rest are counted, never dropped silently.
-    refused, seen_issues, unchecked = [], set(), 0
-    for r in reversed(rows):
-        if r["event"] != "refused" or r.get("issue") in seen_issues:
-            continue
-        seen_issues.add(r["issue"])
-        if len(seen_issues) > REFUSED_CHECKS:
-            unchecked += 1
-            continue
-        try:
-            issue = ctx.gh.issue(r["issue"])
-        except CommandError:
-            unread.append(f"refused ticket #{r['issue']}")
-            continue
-        if issue["state"] == "OPEN" and labels.ready not in issue["labels"]:
-            refused.append(
-                {
-                    "number": issue["number"],
-                    "title": issue["title"],
-                    "url": issue["url"],
-                    "missing": r.get("gaps") or [],
-                }
-            )
+    refused, unchecked = _refused(ctx, rows, checks if checks is not None else {}, unread)
     try:
         human_tasks = [
             {"number": i["number"], "title": i["title"], "url": i["url"]}
@@ -225,7 +244,14 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
         "refused_unchecked": unchecked,
         "human_tasks": human_tasks,
         "unread": unread,
+        "labels": _labels(ctx),
     }
+
+
+def _labels(ctx: Ctx) -> dict:
+    """The labels the page tells a person to add or remove: the repo's own, which vigia.toml may rename."""
+    labels = ctx.cfg.labels
+    return {"ready": labels.ready, "parked": labels.parked, "human_ok": labels.human_ok}
 
 
 def _feed_line(repo: str, r: dict) -> dict | None:
@@ -264,18 +290,21 @@ def _feed_line(repo: str, r: dict) -> dict | None:
     return None
 
 
-def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = None) -> dict:
+def state(
+    contexts: list[Ctx], now: datetime | None = None, slots: int | None = None, checks: dict | None = None
+) -> dict:
     """Everything the page shows, for every repo. Anything that cannot be read is null, never zero.
 
     `slots` is the workspace's shared limit on engine sessions, when the repos run as one workspace: then
-    the total is that limit, not the sum of each repo's `watch.slots`."""
+    the total is that limit, not the sum of each repo's `watch.slots`. `checks` carries what refused
+    tickets' issues last said from one refresh to the next (`_refused`)."""
     now = now or datetime.now(UTC)
     repos, feed, merged_7d, p1_7d, minutes, sessions_today, errors, beats = [], [], 0, 0, [], 0, 0, []
     week, day = now - timedelta(days=7), now - timedelta(days=1)
     today = now.strftime("%Y-%m-%d")
     for ctx in contexts:
         try:
-            repos.append(repo_state(ctx, now))
+            repos.append(repo_state(ctx, now, checks))
         except CommandError as exc:  # unknown, not empty: the page must not say there is nothing to do
             repos.append(
                 {
@@ -287,6 +316,7 @@ def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = 
                     "parked_issues": None,
                     "refused": None,
                     "human_tasks": None,
+                    "labels": _labels(ctx),
                     "error": str(exc)[:300],
                 }
             )
@@ -338,11 +368,12 @@ class _Cache:
     def __init__(self, contexts: list[Ctx], seconds: float, slots: int | None = None):
         self.contexts, self.seconds, self.slots = contexts, seconds, slots
         self.lock, self.body, self.at = threading.Lock(), b"", 0.0
+        self.checks: dict = {}  # refused tickets' last checks, kept across refreshes
 
     def get(self) -> bytes:
         with self.lock:
             if time.monotonic() - self.at > self.seconds or not self.body:
-                body = state(self.contexts, slots=self.slots)
+                body = state(self.contexts, slots=self.slots, checks=self.checks)
                 self.body = json.dumps(body, ensure_ascii=False).encode("utf-8")
                 self.at = time.monotonic()
             return self.body
