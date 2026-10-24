@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
@@ -61,8 +62,20 @@ def cmd_run(args: argparse.Namespace) -> int:
             if issue is None:
                 print(f"No ready issues (label `{ctx.cfg.labels.ready}`).")
                 return 0
-        pr = builder.build(ctx, issue)
+        with _target(ctx, "build", issue["number"]):
+            pr = builder.build(ctx, issue)
     return 0 if pr else 1
+
+
+@contextmanager
+def _target(ctx: Ctx, action: str, number: int):
+    """Manual commands take the same per-target lock as `vigia watch`'s jobs, so they never run alongside one."""
+    with jobs.hold(ctx, jobs.target(action, number)) as got:
+        if not got:
+            raise SystemExit(
+                f"a vigia job is working on {jobs.target(action, number)}; try again when it ends"
+            )
+        yield
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -75,13 +88,14 @@ def cmd_review(args: argparse.Namespace) -> int:
             if e["verdict"] != "UNAVAILABLE"
         }
         round_no = len(rounds | {pr["head"]})
-        verdict = gate.review(ctx, pr, args.kind, round_no)
+        with _target(ctx, args.kind, args.pr):
+            verdict = gate.review(ctx, pr, args.kind, round_no)
     return 0 if verdict in ("APPROVE", "CHANGES") else 1
 
 
 def cmd_fix(args: argparse.Namespace) -> int:
     ctx = Ctx.load(Path.cwd())
-    with ctx.lock():
+    with ctx.lock(), _target(ctx, "fix", args.pr):
         ok = builder.fix(ctx, _pr(ctx, args.pr), args.stage)
     return 0 if ok else 1
 
@@ -132,7 +146,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 def cmd_job(args: argparse.Namespace) -> int:
     ctx = Ctx.load(Path.cwd())
-    return 0 if jobs.run(ctx, args.action, args.number, args.stage or "") else 1
+    return 0 if jobs.run(ctx, args.action, args.number, args.stage or "", lock_fd=args.lock_fd) else 1
 
 
 def cmd_workspace(args: argparse.Namespace) -> int:
@@ -226,6 +240,9 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("action", choices=jobs.ACTIONS)
     s.add_argument("number", type=int)
     s.add_argument("stage", nargs="?")
+    s.add_argument(
+        "--lock-fd", type=int, help=argparse.SUPPRESS
+    )  # the target lock the watcher took for this job
     s.set_defaults(func=cmd_job)
 
     s = sub.add_parser("status", help="queue, open PRs and their next step, parked reasons, recent events")

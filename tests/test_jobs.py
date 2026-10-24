@@ -29,7 +29,9 @@ def test_the_watcher_fills_free_slots_and_returns(world, monkeypatch):  # noqa: 
     for title in ("One", "Two", "Three"):
         gh.add_issue(title, TICKET, ["vigia:ready", "tier:T0"])
     spawned = []
-    monkeypatch.setattr(jobs, "spawn", lambda c, action, number, stage="": spawned.append((action, number)))
+    monkeypatch.setattr(
+        jobs, "spawn", lambda c, action, number, stage="": spawned.append((action, number)) or True
+    )
     ctx.cfg = replace(ctx.cfg, slots=2)
     tick(ctx)
     assert spawned == [("build", 1), ("build", 2)]  # two slots, two builds, nothing run inline
@@ -43,7 +45,9 @@ def test_a_target_with_a_live_job_gets_no_second_session(world, monkeypatch):  #
     tick(ctx)  # slots 1: builds inline
     pr = next(iter(gh.prs_))
     spawned = []
-    monkeypatch.setattr(jobs, "spawn", lambda c, action, number, stage="": spawned.append((action, number)))
+    monkeypatch.setattr(
+        jobs, "spawn", lambda c, action, number, stage="": spawned.append((action, number)) or True
+    )
     ctx.cfg = replace(ctx.cfg, slots=3)
     with jobs.hold(ctx, jobs.target("gate", pr)):
         seen = tick(ctx)
@@ -63,7 +67,11 @@ def test_a_job_decides_again_before_spending_a_session(world):  # noqa: F811
     assert len(reviews) == 1
     assert jobs.run(ctx, "gate", pr, "1") is False  # the verdict is in: a stale job does nothing
     assert len([c for c in run.calls if c["role"] == "reviewer"]) == 1
-    rows = [r["event"] for r in ctx.ledger.rows() if r["event"].startswith("job_")]
+    rows = [
+        r["event"]
+        for r in ctx.ledger.rows()
+        if r["event"].startswith("job_") and r.get("target") == f"pr-{pr}"
+    ]
     assert rows == ["job_started", "job_finished"]
 
 
@@ -163,20 +171,68 @@ def test_codex_weekly_quota_is_read_from_the_newest_rollout(tmp_path):
     assert fuel.codex_weekly(tmp_path / "missing") is None
 
 
-def test_spawn_starts_a_detached_vigia_job_in_the_clone(world, monkeypatch):  # noqa: F811
+def test_spawn_reserves_the_slot_before_the_child_runs(world, monkeypatch):  # noqa: F811
+    import os
     import subprocess
     import sys
 
     gh, build = world
     ctx, _ = build([])
-    seen = {}
+    seen, child_fds = {}, []
 
-    def fake_popen(cmd, **kw):
+    def fake_popen(cmd, **kw):  # the "child" keeps its own copy of the locked file, as a real one does
         seen.update(cmd=cmd, **kw)
+        child_fds.append(os.dup(kw["pass_fds"][0]))
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    jobs.spawn(ctx, "fix", 12, "gate")
-    assert seen["cmd"] == [sys.executable, "-m", "vigia", "job", "fix", "12", "gate"]
-    assert seen["cwd"] == ctx.clone and seen["start_new_session"] is True
-    assert seen["stdin"] == subprocess.DEVNULL
+    assert jobs.spawn(ctx, "fix", 12, "gate") is True
+    fd = seen["pass_fds"][0]
+    assert seen["cmd"] == [sys.executable, "-m", "vigia", "job", "fix", "12", "gate", "--lock-fd", str(fd)]
+    assert (
+        seen["cwd"] == ctx.clone and seen["start_new_session"] is True and seen["stdin"] == subprocess.DEVNULL
+    )
+    assert jobs.busy(ctx, "pr-12")  # counted as busy before the child even starts
+    assert jobs.spawn(ctx, "fix", 12, "gate") is False and len(child_fds) == 1  # never twice
+    os.close(child_fds[0])  # the child exits
+    assert not jobs.busy(ctx, "pr-12")
     assert ctx.ledger.last("job_spawned")["target"] == "pr-12"
+
+
+def test_a_job_skips_a_pr_taken_out_of_vigia_or_an_issue_parked_meanwhile(world):  # noqa: F811
+    gh, build = world
+    ctx, run = build([APPROVE])
+    gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    gh.remove_label(pr, "vigia:review")
+    assert jobs.run(ctx, "gate", pr, "1") is False and not [c for c in run.calls if c["role"] == "reviewer"]
+    n = gh.add_issue("Two", TICKET, ["vigia:ready", "tier:T0", "vigia:parked"])
+    assert jobs.run(ctx, "build", n) is False
+
+
+def test_a_one_slot_workspace_runs_inline_whatever_each_repo_says(world, monkeypatch):  # noqa: F811
+    gh, build = world
+    ctx, run = build([])
+    ctx.cfg = replace(ctx.cfg, slots=3)
+    gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    spawned = []
+    monkeypatch.setattr(jobs, "spawn", lambda *a, **k: spawned.append(a) or True)
+    from vigia.watch import workspace_tick
+
+    workspace_tick(workspace.Workspace(ctx.clone / "vigia.workspace.toml", (ctx.clone,), 1), [ctx])
+    assert spawned == [] and len(gh.prs_) == 1  # built inline, no detached job
+
+
+def test_manual_commands_wait_for_a_live_job(world):  # noqa: F811
+    import pytest
+
+    from vigia.cli import _target
+
+    gh, build = world
+    ctx, _ = build([])
+    with (
+        jobs.hold(ctx, "pr-5"),
+        pytest.raises(SystemExit, match="a vigia job is working on pr-5"),
+        _target(ctx, "gate", 5),
+    ):
+        pass

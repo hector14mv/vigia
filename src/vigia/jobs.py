@@ -79,57 +79,108 @@ def live(ctx: Ctx) -> list[str]:
     return sorted(p.stem for p in folder.glob("*.lock") if busy(ctx, p.stem))
 
 
-def spawn(ctx: Ctx, action: str, number: int, stage: str = "") -> None:
-    """Start `vigia job <action> <number> [stage]` in the background, detached from the watcher."""
+def spawn(ctx: Ctx, action: str, number: int, stage: str = "") -> bool:
+    """Start `vigia job <action> <number> [stage]` in the background, detached from the watcher.
+
+    The watcher takes the target's lock itself and hands the locked file to the child (an inherited file
+    descriptor), so the slot is counted as busy from this moment, not from whenever the child gets scheduled.
+    Returns False, starting nothing, when the target is already locked.
+    """
+    name = target(action, number)
+    path = _path(ctx, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return False
     logs = ctx.state / "logs"
     logs.mkdir(parents=True, exist_ok=True)
-    log = (logs / f"job-{action}-{number}.log").open("a", encoding="utf-8")
     cmd = [sys.executable, "-m", "vigia", "job", action, str(number)] + ([stage] if stage else [])
-    subprocess.Popen(  # noqa: S603 - a fixed argv, no shell
-        cmd,
-        cwd=ctx.clone,
-        stdin=subprocess.DEVNULL,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    ctx.ledger.append("job_spawned", action=action, target=target(action, number), stage=stage)
-    ctx.say(f"{target(action, number)}: started a {action} job")
+    cmd += ["--lock-fd", str(fd)]
+    try:
+        with (logs / f"job-{action}-{number}.log").open("a", encoding="utf-8") as log:
+            subprocess.Popen(  # noqa: S603 - a fixed argv, no shell
+                cmd,
+                cwd=ctx.clone,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                pass_fds=(fd,),
+            )
+    finally:
+        os.close(fd)  # the child holds its own copy of the locked file: the lock lives as long as the child
+    ctx.ledger.append("job_spawned", action=action, target=name, stage=stage)
+    ctx.say(f"{name}: started a {action} job")
+    return True
 
 
-def run(ctx: Ctx, action: str, number: int, stage: str = "") -> bool:
-    """The body of `vigia job`: take the target's lock, check the step is still due, do it. True if it ran."""
-    from . import (
-        builder,
-        gate,
-        watch,
-    )  # the job imports the rest of vigia lazily: this module is imported by them
+@contextmanager
+def owned(ctx: Ctx, name: str, lock_fd: int | None) -> Iterator[bool]:
+    """The lock of a job: the one the watcher handed over (`lock_fd`), or one taken here (manual and inline runs)."""
+    if lock_fd is None:
+        with hold(ctx, name) as got:
+            yield got
+        return
+    try:
+        yield True
+    finally:
+        os.close(lock_fd)
+
+
+def still_due(ctx: Ctx, action: str, number: int) -> tuple[bool, object, object]:
+    """Re-read GitHub just before spending a session: (due, item, decision). A PR must still be open, managed by
+    vigia and decided to need `action`; an issue must still be ready and not building or parked."""
+    from . import builder, watch  # lazily: those modules import this one
+
+    labels = ctx.cfg.labels
+    if action == "build":
+        issue = ctx.gh.issue(number)
+        stopped = {labels.building, labels.parked} & set(issue["labels"])
+        due = (
+            issue["state"] == "OPEN"
+            and labels.ready in issue["labels"]
+            and not stopped
+            and not builder.gaps(ctx, issue)
+        )
+        return due, issue, None
+    pr = ctx.gh.pr(number)
+    if pr["state"] != "OPEN" or labels.review not in pr["labels"]:
+        return False, pr, None
+    decision = watch.decide(watch.state(ctx, pr), ctx.cfg)
+    return decision.action == action, pr, decision
+
+
+def run(ctx: Ctx, action: str, number: int, stage: str = "", lock_fd: int | None = None) -> bool:
+    """The body of `vigia job` (and of the inline and manual runs): hold the target, check the step is still due,
+    do it. True if it ran."""
+    from . import builder, gate  # lazily: those modules import this one
 
     if action not in ACTIONS:
         raise ValueError(f"unknown job action {action!r}")
     name = target(action, number)
-    with hold(ctx, name) as got:
+    with owned(ctx, name, lock_fd) as got:
         if not got:
-            ctx.say(f"{name}: another job holds it; nothing to do")
+            ctx.say(f"{name}: a job is already working on it; nothing to do")
             return False
+        due, item, decision = still_due(ctx, action, number)
+        if not due:
+            ctx.say(
+                f"{name}: no longer due for {action}"
+                + (f" (now `{decision}`)" if decision else "")
+                + "; nothing to do"
+            )
+            return False
+        ctx.ledger.append(
+            "job_started", action=action, target=name, **({"sha": item["head"]} if decision else {})
+        )
         if action == "build":
-            issue = ctx.gh.issue(number)
-            labels = ctx.cfg.labels
-            if issue["state"] != "OPEN" or labels.ready not in issue["labels"] or builder.gaps(ctx, issue):
-                ctx.say(f"#{number}: no longer ready to build; nothing to do")
-                return False
-            ctx.ledger.append("job_started", action=action, target=name)
-            builder.build(ctx, issue)
+            builder.build(ctx, item)
+        elif action == "fix":
+            builder.fix(ctx, item, decision.stage)
         else:
-            pr = ctx.gh.pr(number)
-            decision = watch.decide(watch.state(ctx, pr), ctx.cfg)  # GitHub may have moved since the spawn
-            if decision.action != action:
-                ctx.say(f"{name}: the step is now `{decision}`, not {action}; nothing to do")
-                return False
-            ctx.ledger.append("job_started", action=action, target=name, sha=pr["head"])
-            if action == "fix":
-                builder.fix(ctx, pr, decision.stage)
-            else:
-                gate.review(ctx, pr, action, int(decision.stage or 1))
+            gate.review(ctx, item, action, int(decision.stage or 1))
         ctx.ledger.append("job_finished", action=action, target=name)
         return True

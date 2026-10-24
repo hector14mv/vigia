@@ -201,19 +201,20 @@ def tick(
         if parallel:
             _spawn_jobs(ctx, seen, build, slots - len(running), running)
             return seen
-        for s in seen:
+        for s in seen:  # inline, through jobs.run too: same target lock and same last check as a job
             d = s.decision
-            if d.action in ("gate", "review"):
-                gate.review(ctx, s.pr, d.action, int(d.stage or 1))
-                return seen
-            if d.action == "fix":
-                builder.fix(ctx, s.pr, d.stage)
+            if d.action in ("gate", "review", "fix"):
+                jobs.run(ctx, d.action, s.pr["number"], d.stage)
                 return seen
         if build:
-            issue = builder.next_issue(ctx)
+            issue = builder.next_issue(ctx, skip=_building(running))
             if issue is not None:
-                builder.build(ctx, issue)
+                jobs.run(ctx, "build", issue["number"])
         return seen
+
+
+def _building(running: set[str]) -> set[int]:
+    return {int(name.split("-", 1)[1]) for name in running if name.startswith("issue-")}
 
 
 def _spawn_jobs(ctx: Ctx, seen: list[Seen], build: bool, free: int, running: set[str]) -> None:
@@ -222,17 +223,16 @@ def _spawn_jobs(ctx: Ctx, seen: list[Seen], build: bool, free: int, running: set
         if free <= 0:
             return
         d = s.decision
-        if d.action in ("gate", "review", "fix"):
-            jobs.spawn(ctx, d.action, s.pr["number"], d.stage)
+        if d.action in ("gate", "review", "fix") and jobs.spawn(ctx, d.action, s.pr["number"], d.stage):
             free -= 1
-    skip = {int(name.split("-", 1)[1]) for name in running if name.startswith("issue-")}
+    skip = _building(running)
     while build and free > 0:
         issue = builder.next_issue(ctx, skip=skip)
         if issue is None:
             return
-        jobs.spawn(ctx, "build", issue["number"])
         skip.add(issue["number"])
-        free -= 1
+        if jobs.spawn(ctx, "build", issue["number"]):
+            free -= 1
 
 
 def loop(ctx: Ctx, interval: int, build: bool | None = None) -> None:
@@ -253,8 +253,8 @@ def workspace_tick(ws, contexts: list[Ctx], build: bool | None = None) -> None:
 
     for ctx in contexts:
         try:
-            if ws.slots <= 1:
-                tick(ctx, build)
+            if ws.slots <= 1:  # the workspace's one slot wins over any repo's own watch.slots
+                tick(ctx, build, slots=1, parallel=False)
                 continue
             live = workspace.live_by_repo(contexts)
             tick(ctx, build, slots=workspace.allowance(ws.slots, live, ctx.clone.resolve()), parallel=True)
