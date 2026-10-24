@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 from contextlib import contextmanager
 from dataclasses import replace
@@ -114,7 +115,27 @@ def _workspace() -> tuple[workspace.Workspace, list[Ctx]] | None:
     return ws, [Ctx.load(repo) for repo in ws.repos]
 
 
+def _stop_on_sigterm() -> None:
+    """Turn SIGTERM (systemctl stop, kill) into SystemExit, so a running engine session is stopped first."""
+
+    def stop(signum, frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, stop)
+
+
+def _slots(value: str) -> int:
+    try:
+        slots = int(value)
+    except ValueError:
+        slots = 0
+    if not 1 <= slots <= 32:
+        raise argparse.ArgumentTypeError(f"expected an integer from 1 to 32, got {value!r}")
+    return slots
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
+    _stop_on_sigterm()
     build = False if args.no_build else None
     found = _workspace()
     if found:
@@ -145,6 +166,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_job(args: argparse.Namespace) -> int:
+    _stop_on_sigterm()
     ctx = Ctx.load(Path.cwd())
     return 0 if jobs.run(ctx, args.action, args.number, args.stage or "", lock_fd=args.lock_fd) else 1
 
@@ -223,7 +245,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--interval", type=int, help="seconds between ticks (default: watch.interval_seconds)")
     s.add_argument("--no-build", action="store_true", help="do not build new issues, only move open PRs")
     s.add_argument(
-        "--slots", type=int, help="engine sessions at once (default: watch.slots, or the workspace's)"
+        "--slots", type=_slots, help="engine sessions at once (default: watch.slots, or the workspace's)"
     )
     s.set_defaults(func=cmd_watch)
 
@@ -231,7 +253,9 @@ def parser() -> argparse.ArgumentParser:
         "workspace", help="write vigia.workspace.toml here: one folder that drives every clone below it"
     )
     s.add_argument(
-        "--slots", type=int, help="engine sessions at once across all repos (default: what this machine fits)"
+        "--slots",
+        type=_slots,
+        help="engine sessions at once across all repos (default: what this machine fits)",
     )
     s.add_argument("--force", action="store_true", help="overwrite an existing vigia.workspace.toml")
     s.set_defaults(func=cmd_workspace)

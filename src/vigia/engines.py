@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import proc
+from . import jobs, proc
 from .config import DEFAULT_ENGINE_ARGS, Config, Seat
 
 SessionRunner = Callable[..., proc.Result]
@@ -106,12 +106,14 @@ class Engines:
             schema_file.write_text(json.dumps(VERDICT_SCHEMA), encoding="utf-8")
         cmd = self.command(seat, role, workdir, out_file, schema_file)
         started = time.monotonic()
+        held = jobs.held()
         result = self._run(
             cmd,
             cwd=workdir,
             input=prompt,
             timeout=self.cfg.caps.session_minutes * 60,
             log=self.logs / f"{name}.log",
+            **({"keep_fds": held} if held else {}),
         )
         seconds = round(time.monotonic() - started, 1)
         text = _final_text(seat.engine, result.stdout, out_file)

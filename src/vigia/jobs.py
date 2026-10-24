@@ -25,6 +25,13 @@ if TYPE_CHECKING:
     from .context import Ctx
 
 ACTIONS = ("gate", "review", "fix", "build")
+_HELD: set[int] = set()  # file descriptors of the target locks this process holds
+
+
+def held() -> tuple[int, ...]:
+    """The target locks this process holds. Engine sessions inherit them (proc.run_session's `keep_fds`), so a
+    target stays locked for as long as its engine lives, even when the job that started it is killed."""
+    return tuple(sorted(_HELD))
 
 
 def target(action: str, number: int) -> str:
@@ -47,6 +54,7 @@ def hold(ctx: Ctx, name: str) -> Iterator[bool]:
         except BlockingIOError:
             yield False
             return
+        _HELD.add(fh.fileno())
         try:
             fh.seek(0)
             fh.truncate()
@@ -54,7 +62,9 @@ def hold(ctx: Ctx, name: str) -> Iterator[bool]:
             fh.flush()
             yield True
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            # No explicit unlock: closing the file releases the lock, unless an engine started under it still
+            # holds an inherited copy, which is the point (see held()).
+            _HELD.discard(fh.fileno())
 
 
 def busy(ctx: Ctx, name: str) -> bool:
@@ -97,7 +107,8 @@ def spawn(ctx: Ctx, action: str, number: int, stage: str = "") -> bool:
         return False
     logs = ctx.state / "logs"
     logs.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, "-m", "vigia", "job", action, str(number)] + ([stage] if stage else [])
+    # -I: the job runs in the clone, and a `vigia.py` there must not be what `-m vigia` imports (nor PYTHONPATH)
+    cmd = [sys.executable, "-I", "-m", "vigia", "job", action, str(number)] + ([stage] if stage else [])
     cmd += ["--lock-fd", str(fd)]
     try:
         with (logs / f"job-{action}-{number}.log").open("a", encoding="utf-8") as log:
@@ -124,9 +135,11 @@ def owned(ctx: Ctx, name: str, lock_fd: int | None) -> Iterator[bool]:
         with hold(ctx, name) as got:
             yield got
         return
+    _HELD.add(lock_fd)
     try:
         yield True
     finally:
+        _HELD.discard(lock_fd)
         os.close(lock_fd)
 
 

@@ -65,8 +65,14 @@ def run_session(
     input: str,
     timeout: float,
     log: Path,
+    keep_fds: tuple[int, ...] = (),
 ) -> Result:
-    """Run an engine session: its own process group (so a timeout kills the whole tree), output to `log`."""
+    """Run an engine session: its own process group (so a timeout kills the whole tree), output to `log`.
+
+    `keep_fds` are inherited by the session: vigia passes the target locks it holds (vigia.jobs.held), so a
+    PR stays locked while its engine lives, even if the process that started the engine is killed outright.
+    If this call is interrupted (Ctrl-C, or SIGTERM turned into SystemExit), the session is stopped first.
+    """
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w", encoding="utf-8") as err:
         try:
@@ -78,6 +84,7 @@ def run_session(
                 stderr=err,
                 text=True,
                 start_new_session=True,
+                pass_fds=keep_fds,
             )
         except FileNotFoundError:
             return Result(127, "", f"{args[0]}: command not found")
@@ -85,14 +92,23 @@ def run_session(
             out, _ = proc.communicate(input=input, timeout=timeout)
             return Result(proc.returncode, out or "", "")
         except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGTERM)
-            try:
-                out, _ = proc.communicate(timeout=15)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
-                out, _ = proc.communicate()
+            out = _stop(proc, grace=15)
             return Result(
                 proc.returncode if proc.returncode is not None else -9, out or "", "", timed_out=True
             )
+        except BaseException:  # the runner is going away: the session must not outlive it
+            _stop(proc, grace=5)
+            raise
+
+
+def _stop(proc: subprocess.Popen, grace: float) -> str:
+    """SIGTERM the session's process group, SIGKILL it after `grace` seconds; return what it printed."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
+    try:
+        out, _ = proc.communicate(timeout=grace)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        out, _ = proc.communicate()
+    return out

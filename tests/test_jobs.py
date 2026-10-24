@@ -213,7 +213,18 @@ def test_spawn_reserves_the_slot_before_the_child_runs(world, monkeypatch):  # n
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     assert jobs.spawn(ctx, "fix", 12, "gate") is True
     fd = seen["pass_fds"][0]
-    assert seen["cmd"] == [sys.executable, "-m", "vigia", "job", "fix", "12", "gate", "--lock-fd", str(fd)]
+    assert seen["cmd"] == [
+        sys.executable,
+        "-I",
+        "-m",
+        "vigia",
+        "job",
+        "fix",
+        "12",
+        "gate",
+        "--lock-fd",
+        str(fd),
+    ]
     assert (
         seen["cwd"] == ctx.clone and seen["start_new_session"] is True and seen["stdin"] == subprocess.DEVNULL
     )
@@ -310,3 +321,16 @@ def test_a_stale_park_is_not_applied_to_a_pr_that_moved(world):  # noqa: F811
     with jobs.hold(ctx, f"pr-{pr}"):  # and never while a job works on it
         park(ctx, stale)
     assert "vigia:parked" not in gh.prs_[pr]["labels"]
+
+
+def test_slot_counts_outside_1_to_32_are_refused(capsys):
+    import pytest
+
+    from vigia import cli
+
+    for bad in ("-1", "0", "33", "two"):
+        with pytest.raises(SystemExit):
+            cli.parser().parse_args(["workspace", "--slots", bad])
+        with pytest.raises(SystemExit):
+            cli.parser().parse_args(["watch", "--slots", bad])
+    assert cli.parser().parse_args(["workspace", "--slots", "4"]).slots == 4
