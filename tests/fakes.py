@@ -180,7 +180,7 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
         with (cwd / "textkit.py").open("a") as fh:
             fh.write(f"\n\ndef change_{k}():\n    return {k}\n")
 
-    def run(cmd, cwd, input, timeout, log, keep_fds=()):
+    def run(cmd, cwd, input, timeout, log, env=None, keep_fds=()):
         reviewer = "--json-schema" in cmd or "--output-schema" in cmd
         calls.append(
             {

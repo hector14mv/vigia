@@ -66,10 +66,12 @@ def run_session(
     input: str,
     timeout: float,
     log: Path,
+    env: dict[str, str] | None = None,
     keep_fds: tuple[int, ...] = (),
 ) -> Result:
     """Run an engine session: its own process group (so a timeout kills the whole tree), output to `log`.
 
+    `env`, when given, is the session's whole environment (not merged into ours), so it can leave variables out.
     `keep_fds` are inherited by the session: vigia passes the target locks it holds (vigia.jobs.held), so a
     PR stays locked while its engine lives, even if the process that started the engine is killed outright.
     If this call is interrupted (Ctrl-C, or SIGTERM turned into SystemExit), the session is stopped first.
@@ -85,6 +87,7 @@ def run_session(
                 stderr=err,
                 text=True,
                 start_new_session=True,
+                env=env,
                 pass_fds=keep_fds,
             )
         except FileNotFoundError:

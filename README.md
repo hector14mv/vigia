@@ -234,11 +234,14 @@ vigia status               # every repo
 | `vigia watch [--once] [--interval SECONDS] [--no-build] [--slots N]` | the loop, until Ctrl-C; merges and parks for every PR, and runs or starts engine sessions up to `watch.slots`; `--once` runs one tick, `--interval` sets the seconds between ticks (default `watch.interval_seconds`), `--no-build` only moves open PRs, `--slots` overrides the slots; in a workspace folder, every repo |
 | `vigia workspace [--slots N] [--force]` | write `vigia.workspace.toml` for the clones below this folder |
 | `vigia status [--json \| --html PATH]` | queue, open PRs with their next step, parked reasons, recent ledger; `--json` prints JSON, `--html PATH` writes a self-contained HTML page and prints its path |
+| `vigia doctor [--json]` | check that vigia can work in this clone (tools, `vigia.toml`, repo, labels, CI workflow, test command, work root, lock); every problem comes with the command that fixes it; exit code 1 if any check fails |
 | `vigia review --pr N [--kind gate\|review]` | run the gate or the tier reviewer on a PR's head now |
 | `vigia fix --pr N [--stage gate\|review\|ci]` | run one fix round now |
 | `vigia --version` | print the installed version |
 
 ## Limitations of v0.1
+
+What comes next is in the [roadmap](docs/roadmap.md).
 
 - Tested on macOS and Linux, with GitHub, Claude Code 2.1.294 and Codex CLI 0.159–0.164. No Windows, no
   GitLab, no other engines yet.

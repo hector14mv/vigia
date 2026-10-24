@@ -22,6 +22,13 @@ class Busy(RuntimeError):
     """Another vigia process holds the lock for this clone."""
 
 
+def work_root(clone: Path, cfg: Config) -> Path:
+    """This clone's work root (not created). One per clone: the clone's lock is what makes recovery safe, so
+    two clones of the same repository must never share the directory one of them cleans."""
+    tag = hashlib.sha256(str(clone.resolve()).encode()).hexdigest()[:8]
+    return safety.check_root(safety.default_root()) / f"{cfg.repo.replace('/', '-')}-{tag}"
+
+
 @dataclass
 class Ctx:
     cfg: Config
@@ -42,10 +49,7 @@ class Ctx:
         path = config_mod.find(start)
         cfg = config_mod.load(path)
         clone = path.parent
-        # One work root per clone: the clone's lock is what makes recovery safe, so two clones of the same
-        # repository must never share the directory one of them cleans.
-        tag = hashlib.sha256(str(clone.resolve()).encode()).hexdigest()[:8]
-        root = safety.check_root(safety.default_root()) / f"{cfg.repo.replace('/', '-')}-{tag}"
+        root = work_root(clone, cfg)
         root.mkdir(parents=True, exist_ok=True)
         state = clone / ".vigia"
         return cls(
@@ -54,7 +58,7 @@ class Ctx:
             gh=GitHub(cfg.repo, cwd=root),
             git=Git(clone, root),
             ledger=Ledger(state / "ledger.jsonl"),
-            engines=Engines(cfg, state / "logs"),
+            engines=Engines(cfg, state / "logs", root=root),
             root=root,
             say=say,
         )
