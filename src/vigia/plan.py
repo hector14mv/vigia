@@ -130,6 +130,7 @@ def parse(text: str) -> dict | None:
     if not isinstance(data, dict):
         return None
     out = {"tickets": [], "human_tasks": []}
+    dropped = 0  # malformed tickets so far: a later dependent one must say its prerequisite was never filed
     for position, t in enumerate(data.get("tickets") or []):
         if (
             isinstance(t, dict)
@@ -140,8 +141,16 @@ def parse(text: str) -> dict | None:
             body = strip_front_matter(str(t["body"]).strip())
             after = position > 0 and t.get("depends_on_earlier") is not False
             out["tickets"].append(
-                {"title": str(t["title"]).strip()[:120], "tier": t["tier"], "after": after, "body": body}
+                {
+                    "title": str(t["title"]).strip()[:120],
+                    "tier": t["tier"],
+                    "after": after,
+                    "dropped_before": dropped,
+                    "body": body,
+                }
             )
+        else:
+            dropped += 1
     for h in data.get("human_tasks") or []:
         if isinstance(h, dict) and str(h.get("title") or "").strip():
             out["human_tasks"].append(
@@ -159,12 +168,23 @@ def file_plan(
     if open_titles is None:
         open_titles = [i["title"] for i in ctx.gh.issues_all()]
     taken = {t.strip().lower() for t in open_titles}
+    planned: set[str] = set()
+    open_before: list[
+        str
+    ] = []  # earlier tickets left to an open issue: a later dependent one waits for those too
     kept = []
     for t in plan["tickets"]:
-        if t["title"].strip().lower() in taken:
+        key = t["title"].strip().lower()
+        if key in planned:
+            ctx.ledger.append(
+                "plan_skipped", title=t["title"][:120], reason="the plan already has this title"
+            )
+        elif key in taken:
             ctx.ledger.append("plan_skipped", title=t["title"][:120], reason="an open issue has this title")
+            open_before.append(t["title"])
         else:
-            kept.append(t)
+            kept.append({**t, "open_before": list(open_before)})
+            planned.add(key)
     plan = {**plan, "tickets": kept}
     if labels.collisions():  # vigia.toml refuses these; a Config built another way must not either
         raise SystemExit(
@@ -189,14 +209,16 @@ def file_plan(
         if gaps:
             body += "\n> Planned by vigia, but the template check found gaps: " + "; ".join(gaps) + "\n"
         if t.get("after"):
-            if filed:
-                earlier = ", ".join(f"#{f['number']}" for f in filed)
-                body += f"\n> Planned to follow {earlier}: add `{labels.ready}` once they are merged.\n"
-            else:
-                body += (
-                    "\n> Planned to follow a ticket the planner returned malformed, so it was not filed: check the"
-                    f" plan before adding `{labels.ready}`.\n"
+            earlier = [f"#{f['number']}" for f in filed] + [
+                f"the open issue titled {json.dumps(title)}" for title in t.get("open_before") or []
+            ]
+            if t.get("dropped_before"):
+                follows = ", ".join(
+                    earlier + ["a ticket the planner returned malformed, so it was not filed"]
                 )
+                body += f"\n> Planned to follow {follows}: check the plan before adding `{labels.ready}`.\n"
+            else:
+                body += f"\n> Planned to follow {', '.join(earlier)}: add `{labels.ready}` once they are merged.\n"
         number = ctx.gh.create_issue(t["title"], body, names)
         ctx.ledger.append(
             "planned", issue=number, tier=t["tier"], ready=ready, gaps=gaps, after=bool(t.get("after"))

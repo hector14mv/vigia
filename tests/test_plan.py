@@ -201,3 +201,53 @@ def test_a_planned_ticket_already_open_is_not_filed_again(world):  # noqa: F811
     titles = [i["title"] for i in gh.issues_.values()]
     assert titles.count("test: cover shout() on empty input") == 1 and len(gh.issues_) == before + 3
     assert ctx.ledger.events("plan_skipped")[0]["reason"] == "an open issue has this title"
+
+
+def test_a_ticket_after_a_filed_and_a_dropped_one_still_names_the_dropped_one(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    planned = [
+        {"title": "docs: independent note", "tier": "T0", "depends_on_earlier": False, "body": TICKET},
+        {"title": "feat: add the helper", "tier": "T1", "depends_on_earlier": False, "body": " "},  # dropped
+        {
+            "title": "refactor: callers use the helper",
+            "tier": "T1",
+            "depends_on_earlier": True,
+            "body": TICKET,
+        },
+    ]
+    filed = plan.file_plan(ctx, plan.parse(json.dumps({"tickets": planned, "human_tasks": []})), "g")
+    callers = gh.issues_[filed[1]["number"]]["body"]
+    assert "vigia:ready" not in filed[1]["labels"]
+    assert f"#{filed[0]['number']}" in callers and "returned malformed" in callers
+    assert "once they are merged" not in callers
+
+
+def test_a_ticket_after_one_left_to_an_open_issue_waits_for_that_issue_too(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("feat: add the helper", TICKET, ["tier:T1"])
+    planned = [
+        {"title": "feat: add the helper", "tier": "T1", "depends_on_earlier": False, "body": TICKET},
+        {
+            "title": "refactor: callers use the helper",
+            "tier": "T1",
+            "depends_on_earlier": True,
+            "body": TICKET,
+        },
+    ]
+    filed = plan.file_plan(ctx, plan.parse(json.dumps({"tickets": planned, "human_tasks": []})), "g")
+    assert [f["title"] for f in filed] == ["refactor: callers use the helper"]
+    assert 'the open issue titled "feat: add the helper"' in gh.issues_[filed[0]["number"]]["body"]
+
+
+def test_a_title_the_plan_repeats_is_filed_once(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    planned = [
+        {"title": "feat: add the helper", "tier": "T1", "depends_on_earlier": False, "body": TICKET},
+        {"title": "Feat: add the helper ", "tier": "T1", "depends_on_earlier": False, "body": TICKET},
+    ]
+    filed = plan.file_plan(ctx, plan.parse(json.dumps({"tickets": planned, "human_tasks": []})), "g")
+    assert len(filed) == 1 and [i["title"] for i in gh.issues("vigia:ready")] == ["feat: add the helper"]
+    assert ctx.ledger.events("plan_skipped")[0]["reason"] == "the plan already has this title"
