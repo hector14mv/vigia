@@ -267,6 +267,7 @@ folder to see every repository.
 | `vigia init [--repo OWNER/NAME] [--builder claude\|codex] [--yes] [--force] [--no-labels]` | check tools, choose engines per tier, write `vigia.toml`, create labels; `--repo` defaults to the clone's GitHub repo, `--yes` accepts the defaults, `--force` overwrites an existing `vigia.toml`, `--no-labels` skips creating labels |
 | `vigia run [--issue N]` | build one ready issue into a pull request (default: the oldest ready one) |
 | `vigia watch [--once] [--interval SECONDS] [--no-build] [--slots N]` | the loop, until Ctrl-C; merges and parks for every PR, and runs or starts engine sessions up to `watch.slots`; `--once` runs one tick, `--interval` sets the seconds between ticks (default `watch.interval_seconds`), `--no-build` only moves open PRs, `--slots` overrides the slots; in a workspace folder, every repo |
+| `vigia report [--days N] [--json]` | the engine table: per builder and reviewer model, PRs, first-round P1s, gate rounds and minutes to merge |
 | `vigia plan "<goal>" [--max N] [--dry-run]` | turn a goal into proposed tickets for you to ratify |
 | `vigia mesa [--host H] [--port P] [--allow-host NAME]` | the read-only control desk in a browser (default http://127.0.0.1:8790) |
 | `vigia workspace [--slots N] [--force]` | write `vigia.workspace.toml` for the clones below this folder |

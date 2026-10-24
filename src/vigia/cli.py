@@ -219,6 +219,15 @@ def cmd_workspace(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    from . import report
+
+    found = _workspace()
+    contexts = found[1] if found else [Ctx.load(Path.cwd())]
+    print(report.show({c.cfg.repo: c.ledger for c in contexts}, days=args.days, as_json=args.json))
+    return 0
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     from . import plan
 
@@ -332,6 +341,13 @@ def parser() -> argparse.ArgumentParser:
     )
     s.add_argument("--force", action="store_true", help="overwrite an existing vigia.workspace.toml")
     s.set_defaults(func=cmd_workspace)
+
+    s = sub.add_parser(
+        "report", help="the engine table: per model, PRs, first-round P1s, rounds, time to merge"
+    )
+    s.add_argument("--days", type=int, default=7, help="how far back (default 7)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_report)
 
     s = sub.add_parser(
         "plan", help="turn a goal into proposed tickets in the template, for a person to ratify"
