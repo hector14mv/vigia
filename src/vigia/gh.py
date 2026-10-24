@@ -50,10 +50,20 @@ def _pr(data: dict) -> dict:
         "labels": sorted(label["name"] for label in data.get("labels") or []),
         "mergeable": data.get("mergeable") or "UNKNOWN",
         "ci": ci_state(data.get("statusCheckRollup")),
+        "diff": {
+            "additions": data.get("additions"),
+            "deletions": data.get("deletions"),
+            "files": data.get("changedFiles"),
+        }
+        if data.get("changedFiles") is not None
+        else None,
     }
 
 
-PR_FIELDS = "number,title,body,url,state,isDraft,headRefOid,headRefName,baseRefName,labels,mergeable,statusCheckRollup"
+PR_FIELDS = (
+    "number,title,body,url,state,isDraft,headRefOid,headRefName,baseRefName,labels,mergeable,statusCheckRollup,"
+    "additions,deletions,changedFiles"
+)
 
 
 class GitHub:
@@ -113,7 +123,7 @@ class GitHub:
             "--limit",
             "100",
             "--json",
-            "number,title,body,labels,url",
+            "number,title,body,labels,url,createdAt",
         )
         rows = json.loads(out or "[]")
         return sorted(
@@ -124,6 +134,7 @@ class GitHub:
                     "body": r.get("body") or "",
                     "url": r.get("url", ""),
                     "labels": sorted(label["name"] for label in r.get("labels") or []),
+                    "created": r.get("createdAt"),
                 }
                 for r in rows
             ),

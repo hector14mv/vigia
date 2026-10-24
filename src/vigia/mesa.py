@@ -12,17 +12,21 @@ The server is the standard library's, bound to 127.0.0.1. To reach it from a pho
 from __future__ import annotations
 
 import json
+import re
 import statistics
 import threading
 import time
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import fuel, jobs, tickets
+from . import decisions, fuel, jobs, tickets
 from .context import Ctx
 from .proc import CommandError
-from .watch import sense
+from .rules import decide
+from .watch import Seen, sense
+from .watch import state as pr_state
 
 PAGE = Path(__file__).with_name("mesa.html")
 DEFAULT_PORT = 8790
@@ -38,6 +42,64 @@ def _ts(value: str | None) -> datetime | None:
 
 def _iso(moment: datetime) -> str:
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _local_day(moment: datetime) -> str:
+    """The calendar day on this machine's clock: "today" means the person's day, not UTC's."""
+    return moment.astimezone().strftime("%Y-%m-%d")
+
+
+def _tried_total(rows: list[dict]) -> dict:
+    """What was spent on a PR over its whole life, every head and every park included."""
+    heads = {r.get("sha") for r in rows if r["event"] in ("pr_opened", "head_seen", "pushed", "updated")}
+    return {
+        "gate_rounds": sum(
+            1
+            for r in rows
+            if r["event"] == "verdict" and r.get("kind") == "gate" and r.get("verdict") != "UNAVAILABLE"
+        ),
+        "fix_rounds": sum(1 for r in rows if r["event"] == "fix_started"),
+        "heads": len(heads - {None}),
+        "p1": sum(r.get("p1", 0) for r in rows if r["event"] == "verdict"),
+        "parks": sum(1 for r in rows if r["event"] == "parked"),
+        "unparks": sum(1 for r in rows if r["event"] == "unparked"),
+    }
+
+
+def _seat(ctx: Ctx, action: str, tier: str | None) -> dict:
+    """The engine and model a job of `action` runs with, from the tier's seats."""
+    policy = ctx.cfg.tiers.get(tier) if tier else None
+    if policy is None:
+        return {"engine": None, "model": None}
+    seat = {"gate": policy.gate, "review": policy.reviewer}.get(action, policy.builder)
+    return {"engine": seat.engine, "model": seat.model} if seat else {"engine": None, "model": None}
+
+
+def _decisions(ctx: Ctx, rows: list[dict]) -> list[dict] | None:
+    """The open decision issues, each parsed or marked malformed. None when they cannot be read: unknown, not none."""
+    try:
+        issues = ctx.gh.issues(decisions.LABEL)
+    except CommandError:
+        return None
+    out = []
+    for i in issues:
+        parsed = decisions.parse(i["body"])
+        answered = next(
+            (r for r in reversed(rows) if r["event"] == "decided" and r.get("issue") == i["number"]), None
+        )
+        item = {
+            "number": i["number"],
+            "title": i["title"],
+            "url": i["url"],
+            "since": i.get("created") or None,
+        }
+        if parsed is None:  # shown so a person can fix it, never guessed at
+            item.update(malformed=True, question=i["title"], options=[], rec=None, blocks=[])
+        else:
+            item.update(parsed, malformed=False)
+        item["answered"] = {"key": answered.get("key"), "by": answered.get("by")} if answered else None
+        out.append(item)
+    return out
 
 
 def _verdict_line(row: dict, what: str) -> str:
@@ -88,21 +150,31 @@ def _pipeline(ctx: Ctx, seen, running: str | None) -> tuple[dict, str | None]:
 
 
 def _running(ctx: Ctx, rows: list[dict]) -> list[dict]:
-    """The engine sessions holding a lock on this machine: read locally, so known even when GitHub is not."""
+    """The engine sessions holding a lock on this machine: read locally, so known even when GitHub is not.
+
+    A build's seat, tier and branch come from its `build_started` row, so they are known locally too; a PR job's
+    seat depends on the PR's tier, which `repo_state` fills in once GitHub has been read."""
     started = {r.get("target"): r for r in rows if r["event"] in ("job_spawned", "job_started")}
+    builds = {r.get("issue"): r for r in rows if r["event"] == "build_started"}  # issue -> its latest build
     running = []
     for name in sorted(set(jobs.live(ctx))):
         kind, _, number = name.partition("-")
         row = started.get(name) or {}
-        running.append(
-            {
-                "target": name,
-                "number": int(number) if number.isdigit() else None,
-                "issue": kind == "issue",
-                "action": row.get("action") or "build",
-                "since": row.get("ts"),
-            }
-        )
+        job = {
+            "target": name,
+            "number": int(number) if number.isdigit() else None,
+            "issue": kind == "issue",
+            "action": row.get("action") or "build",
+            "since": row.get("ts"),
+            "engine": None,
+            "model": None,
+            "tier": None,
+            "branch": None,
+        }
+        build = builds.get(job["number"]) if job["issue"] else None
+        if build and build["ts"] >= (job["since"] or ""):  # this build's row, not an earlier one's
+            job.update({k: build.get(k) for k in ("engine", "model", "tier", "branch")})
+        running.append(job)
     return running
 
 
@@ -134,31 +206,66 @@ def _refused(ctx: Ctx, rows: list[dict], unread: list[str]) -> list[dict] | None
                     "title": issue["title"],
                     "url": issue["url"],
                     "missing": r.get("gaps") or [],
+                    "since": r["ts"],  # it has waited for a person since this refusal
                 }
             )
     return refused
 
 
+def _labels(ctx: Ctx) -> dict:
+    """The labels the page tells a person to add or remove: the repo's own, which vigia.toml may rename."""
+    labels = ctx.cfg.labels
+    return {"ready": labels.ready, "parked": labels.parked, "human_ok": labels.human_ok}
+
+
+def _merged_today(rows: list[dict], now: datetime) -> list[dict]:
+    """What merged on this machine's calendar day, newest first: from the ledger, so known even when GitHub is not."""
+    today = _local_day(now)
+    merged = [
+        {"pr": r["pr"], "title": r.get("title"), "tier": r.get("tier"), "sha": r.get("sha"), "ts": r["ts"]}
+        for r in rows
+        if r["event"] == "merged" and (_ts(r["ts"]) and _local_day(_ts(r["ts"])) == today)
+    ]
+    return merged[::-1]
+
+
 def repo_state(ctx: Ctx, now: datetime) -> dict:
     cfg, labels = ctx.cfg, ctx.cfg.labels
     rows = ctx.ledger.rows()
+    by_pr: dict[int, list[dict]] = defaultdict(list)
+    for r in rows:
+        if r.get("pr") is not None:
+            by_pr[r["pr"]].append(r)
     running = _running(ctx, rows)
+    # What could not be read from GitHub: those lists are incomplete, and the page must say so rather than show
+    # them as empty.
+    unread: list[str] = []
+    open_decisions = _decisions(ctx, rows)
+    if open_decisions is None:
+        unread.append("decisions")
+    waits_on = defaultdict(list)  # issue or PR number -> the open decisions that block it
+    for d in open_decisions or []:
+        if not d["answered"]:
+            for n in d.get("blocks") or []:
+                waits_on[n].append(d["number"])
     prs = []
     for s in sense(ctx, track=False):
-        n = s.pr["number"]
+        n, head = s.pr["number"], s.pr["head"]
+        mine = by_pr.get(n, [])
         job = next((j for j in running if j["number"] == n and not j["issue"]), None)
+        if job:
+            job.update(_seat(ctx, job["action"], s.state.tier), tier=s.state.tier)
         steps, waiting = _pipeline(ctx, s, job["action"] if job else None)
-        opened = ctx.ledger.last("pr_opened", pr=n) or {}
+        opened = next((r for r in reversed(mine) if r["event"] == "pr_opened"), {})
+        on_head = [r for r in mine if r["event"] == "verdict" and r.get("sha") == head]
         evidence = []
         if s.state.ci == "passing":
             evidence.append("CI green on this head")
         for kind, what in (("gate", "Gate"), ("review", f"{s.state.tier} review")):
-            v = ctx.ledger.last("verdict", pr=n, kind=kind, sha=s.pr["head"])
+            v = next((r for r in reversed(on_head) if r.get("kind") == kind), None)
             if v and v.get("verdict") != "UNAVAILABLE":
                 evidence.append(_verdict_line(v, what))
-        earlier = [
-            r for r in rows if r["event"] == "verdict" and r.get("pr") == n and r.get("sha") != s.pr["head"]
-        ]
+        earlier = [r for r in mine if r["event"] == "verdict" and r.get("sha") != head]
         if earlier:
             p1 = sum(r.get("p1", 0) for r in earlier)
             evidence.append(
@@ -166,7 +273,12 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                 + ("s" if p1 != 1 else "")
                 + ", all on older heads"
             )
-        parked = ctx.ledger.last("parked", pr=n) if s.state.parked else None
+        parked = next((r for r in reversed(mine) if r["event"] == "parked"), None) if s.state.parked else None
+        since = None
+        if parked:
+            since = parked["ts"]
+        elif waiting == "human" and on_head:
+            since = on_head[-1]["ts"]  # it has waited for a person since the verdict that made it wait
         issue = opened.get("issue") or tickets.linked_issue(s.pr["body"])
         prs.append(
             {
@@ -174,17 +286,22 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                 "title": s.pr["title"],
                 "url": s.pr["url"],
                 "tier": s.state.tier or "?",
-                "head": s.pr["head"],
+                "head": head,
                 "ci": s.state.ci,
+                "diff": s.pr.get("diff"),
                 "next": s.decision.action,
                 "reason": parked["reason"] if parked else s.decision.reason,
                 "parked": s.state.parked,
                 "waiting_for": waiting,
+                "since": since,
                 "pipeline": steps,
                 "evidence": evidence,
                 "built_by": f"{opened['engine']} · {opened['model']}" if opened.get("engine") else None,
                 "tried": f"{s.state.fix_rounds} fix round(s) and "
                 f"{len({v.sha for v in s.state.verdicts if v.kind == 'gate' and v.content})} gate round(s) since it was last unparked",
+                "tried_total": _tried_total(mine),
+                # unknown when the decisions could not be read
+                "blocked_by": waits_on.get(n, []) if open_decisions is not None else None,
                 "issue_url": f"https://github.com/{cfg.repo}/issues/{issue}" if issue else None,
             }
         )
@@ -194,6 +311,7 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
             "title": i["title"],
             "url": i["url"],
             "tier": tickets.tier(i["labels"], labels.tier_prefix) or "?",
+            "blocked_by": sorted(set(decisions.blocked_by(i["body"])) | set(waits_on.get(i["number"], []))),
         }
         for i in ctx.gh.issues(labels.ready)
         if labels.building not in i["labels"]
@@ -209,15 +327,21 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                 "title": i["title"],
                 "url": i["url"],
                 "reason": failed.get("reason") or "parked; the ticket's last comment says why",
+                "since": failed.get("ts"),
             }
         )
-    # What could not be read from GitHub: those lists are incomplete, and the page must say so rather than show
-    # them as empty.
-    unread: list[str] = []
     refused = _refused(ctx, rows, unread)
     try:
         human_tasks = [
-            {"number": i["number"], "title": i["title"], "url": i["url"]}
+            {
+                "number": i["number"],
+                "title": i["title"],
+                "url": i["url"],
+                "since": i.get("created") or None,
+                "time": decisions.field(i["body"], "Time"),
+                "due": decisions.field(i["body"], "Due"),
+                "origin": decisions.field(i["body"], "Origin"),
+            }
             for i in ctx.gh.issues("vigia:human-task")
         ]
     except CommandError:
@@ -230,6 +354,7 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                 "title": i["title"],
                 "url": i["url"],
                 "tier": tickets.tier(i["labels"], labels.tier_prefix) or "?",
+                "since": i.get("created") or None,
             }
             for i in ctx.gh.issues("vigia:proposed")
         ]
@@ -239,6 +364,7 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
     return {
         "repo": cfg.repo,
         "slots": cfg.slots,
+        "session_minutes": cfg.caps.session_minutes,
         "jobs": running,
         "prs": prs,
         "queue": queue,
@@ -246,51 +372,107 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
         "refused": refused,
         "human_tasks": human_tasks,
         "proposed": proposed,
+        "decisions": open_decisions,
+        "merged_today": _merged_today(rows, now),
         "unread": unread,
         "labels": _labels(ctx),
     }
 
 
-def _labels(ctx: Ctx) -> dict:
-    """The labels the page tells a person to add or remove: the repo's own, which vigia.toml may rename."""
-    labels = ctx.cfg.labels
-    return {"ready": labels.ready, "parked": labels.parked, "human_ok": labels.human_ok}
+def _unreadable(ctx: Ctx, rows: list[dict], now: datetime, exc: CommandError) -> dict:
+    """A repo GitHub did not answer for: every list read from GitHub is unknown (null), never empty, so the page
+    cannot say there is nothing to do. What this machine knows on its own still shows: the running sessions, the
+    labels and today's merges from the ledger."""
+    return {
+        "repo": ctx.cfg.repo,
+        "slots": ctx.cfg.slots,
+        "session_minutes": ctx.cfg.caps.session_minutes,
+        "jobs": _running(ctx, rows),
+        "prs": None,
+        "queue": None,
+        "parked_issues": None,
+        "refused": None,
+        "human_tasks": None,
+        "proposed": None,
+        "decisions": None,
+        "merged_today": _merged_today(rows, now),
+        "labels": _labels(ctx),
+        "error": str(exc)[:300],
+    }
+
+
+FEED_EVENTS = {
+    "merged",
+    "parked",
+    "unparked",
+    "verdict",
+    "pr_opened",
+    "pushed",
+    "updated",
+    "engine_failed",
+    "build_started",
+    "build_failed",
+    "refused",
+    "decided",
+    "captured",
+    "error",
+}
+_FEED_FIELDS = (
+    "pr",
+    "issue",
+    "kind",
+    "verdict",
+    "round",
+    "p1",
+    "tier",
+    "engine",
+    "model",
+    "stage",
+    "title",
+    "key",
+)
+
+
+def _feed_text(short: str, r: dict) -> str:
+    e, sha = r["event"], str(r.get("sha") or "")[:8]
+    who = f"{r.get('engine')} · {r.get('model')}"
+    return {
+        "merged": lambda: f"{short} #{r.get('pr')} merged at {sha} · tier {r.get('tier')}",
+        "parked": lambda: f"{short} #{r.get('pr')} — {r.get('reason')}",
+        "unparked": lambda: f"{short} #{r.get('pr')} unparked by a person at {sha}",
+        "verdict": lambda: f"{short} #{r.get('pr')} {r.get('kind')} by {who} on {sha}",
+        "pr_opened": lambda: f"{short} #{r.get('pr')} opened from #{r.get('issue')} by {who}",
+        "pushed": lambda: f"{short} #{r.get('pr')} fix pushed {sha} ({r.get('stage')})",
+        "updated": lambda: f"{short} #{r.get('pr')} brought the moved base in, new head {sha}",
+        "engine_failed": lambda: f"{short} #{r.get('pr')} session failed — {r.get('reason')}",
+        "build_started": lambda: f"{short} #{r.get('issue')} build started with {who}",
+        "build_failed": lambda: f"{short} #{r.get('issue')} build failed — {r.get('reason')}",
+        "refused": lambda: f"{short} #{r.get('issue')} refused — {'; '.join(r.get('gaps') or [])}",
+        "decided": lambda: f"{short} #{r.get('issue')} decided {r.get('key')} by {r.get('by')}",
+        "captured": lambda: f"{short} #{r.get('pr')} screenshots captured at {sha}",
+        "error": lambda: f"{short} {r.get('action') or 'error'} — {str(r.get('detail') or '')[:160]}",
+    }[e]()
 
 
 def _feed_line(repo: str, r: dict) -> dict | None:
+    """One feed entry with its fields, so the page builds its own glyph, title and meta; `text` is a ready line."""
+    if r["event"] not in FEED_EVENTS:
+        return None
     short = repo.split("/")[-1]
-    e = r["event"]
-    if e == "merged":
-        return {
-            "ts": r["ts"],
-            "event": e,
-            "text": f"{short} #{r['pr']} merged at {str(r.get('sha'))[:8]} · tier {r.get('tier')}",
-        }
-    if e == "parked":
-        return {"ts": r["ts"], "event": e, "text": f"{short} #{r['pr']} — {r.get('reason')}"}
-    if e == "build_failed":
-        return {"ts": r["ts"], "event": e, "text": f"{short} #{r.get('issue')} — {r.get('reason')}"}
-    if e == "verdict" and r.get("verdict") != "UNAVAILABLE":
-        return {
-            "ts": r["ts"],
-            "event": e,
-            "verdict": r.get("verdict"),
-            "p1": r.get("p1", 0),
-            "text": f"{short} #{r['pr']} {r.get('kind')} by {r.get('engine')} · {r.get('model')} on {str(r.get('sha'))[:8]}",
-        }
-    if e == "pr_opened":
-        return {
-            "ts": r["ts"],
-            "event": e,
-            "text": f"{short} #{r['pr']} opened from #{r.get('issue')} by {r.get('engine')} · {r.get('model')}",
-        }
-    if e == "pushed":
-        return {
-            "ts": r["ts"],
-            "event": e,
-            "text": f"{short} #{r['pr']} fix pushed {str(r.get('sha'))[:8]} ({r.get('stage')})",
-        }
-    return None
+    line = {"ts": r["ts"], "repo": short, "event": r["event"]}
+    line.update({k: r[k] for k in _FEED_FIELDS if r.get(k) is not None})
+    if r.get("sha"):
+        line["sha"] = str(r["sha"])[:7]
+    reason = r.get("reason") or (str(r.get("detail"))[:200] if r.get("detail") else None)
+    if reason:
+        line["reason"] = reason
+    line["text"] = _feed_text(short, r)
+    return line
+
+
+def _sessions(rows: list[dict]) -> list[dict]:
+    """The rows that each mark one engine session: a build, a fix, or a review of either kind."""
+    return [r for r in rows if r["event"] in ("build_started", "fix_started", "verdict")]
 
 
 def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = None) -> dict:
@@ -299,30 +481,24 @@ def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = 
     `slots` is the workspace's shared limit on engine sessions, when the repos run as one workspace: then
     the total is that limit, not the sum of each repo's `watch.slots`."""
     now = now or datetime.now(UTC)
-    repos, feed, merged_7d, p1_7d, minutes, sessions_today, errors, beats = [], [], 0, 0, [], 0, 0, []
-    week, day = now - timedelta(days=7), now - timedelta(days=1)
-    today = now.strftime("%Y-%m-%d")
+    repos, feed, minutes, errors, beats = [], [], [], 0, []
+    week, day, today = now - timedelta(days=7), now - timedelta(days=1), _local_day(now)
+    merged_7d = p1_7d = parked_7d = 0
+    t = {"merged": 0, "p1": 0, "parks": 0, "sessions": 0}
+    gates_7d: dict[str, int] = defaultdict(int)
+    claude = {"sessions_7d": 0, "seconds_7d": 0.0}
+    per_tier: dict[str, list[int]] = defaultdict(list)
     for ctx in contexts:
         try:
             repos.append(repo_state(ctx, now))
         except CommandError as exc:  # unknown, not empty: the page must not say there is nothing to do
-            repos.append(
-                {
-                    "repo": ctx.cfg.repo,
-                    "slots": ctx.cfg.slots,
-                    "jobs": _running(ctx, ctx.ledger.rows()),
-                    "prs": None,
-                    "queue": None,
-                    "parked_issues": None,
-                    "refused": None,
-                    "human_tasks": None,
-                    "proposed": None,
-                    "labels": _labels(ctx),
-                    "error": str(exc)[:300],
-                }
-            )
+            repos.append(_unreadable(ctx, ctx.ledger.rows(), now, exc))
         rows = ctx.ledger.rows()
         opened = {r.get("pr"): _ts(r["ts"]) for r in rows if r["event"] == "pr_opened"}
+        sessions_by_pr: dict[int, int] = defaultdict(int)
+        for r in _sessions(rows):
+            if r.get("pr") is not None:
+                sessions_by_pr[r["pr"]] += 1
         for r in rows:
             moment = _ts(r["ts"])
             line = _feed_line(ctx.cfg.repo, r)
@@ -330,33 +506,157 @@ def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = 
                 feed.append(line)
             if moment is None:
                 continue
-            if r["event"] == "merged" and moment >= week:
-                merged_7d += 1
-                if opened.get(r.get("pr")):
-                    minutes.append((moment - opened[r["pr"]]).total_seconds() / 60)
-            if r["event"] == "verdict" and r.get("kind") == "gate" and moment >= week:
-                p1_7d += r.get("p1", 0)
-            if r["event"] in ("verdict", "build_started", "fix_started") and r["ts"].startswith(today):
-                sessions_today += 1
-            if r["event"] == "error" and moment >= day:
+            is_today = _local_day(moment) == today
+            e = r["event"]
+            if e == "merged":
+                if moment >= week:
+                    merged_7d += 1
+                    if opened.get(r.get("pr")):
+                        minutes.append((moment - opened[r["pr"]]).total_seconds() / 60)
+                    # the build that opened the PR is a session too, and has no verdict row of its own
+                    per_tier[r.get("tier") or "?"].append(sessions_by_pr.get(r.get("pr"), 0) + 1)
+                t["merged"] += is_today
+            elif e == "verdict":
+                if moment >= week:
+                    p1_7d += r.get("p1", 0) if r.get("kind") == "gate" else 0
+                    if r.get("kind") == "gate" and r.get("engine"):
+                        gates_7d[r["engine"]] += 1
+                t["p1"] += r.get("p1", 0) if is_today else 0
+            elif e == "parked":
+                parked_7d += moment >= week
+                t["parks"] += is_today
+            elif e == "error" and moment >= day:
                 errors += 1
+            if e in ("build_started", "fix_started", "verdict"):
+                t["sessions"] += is_today
+            if (
+                moment >= week
+                and r.get("engine") == "claude"
+                and e in ("pr_opened", "fix_started", "verdict")
+            ):
+                claude["sessions_7d"] += 1
+                claude["seconds_7d"] += r.get("seconds") or 0
         beat = ctx.state / "heartbeat"
         if beat.exists():
             beats.append(beat.read_text(encoding="utf-8").strip())
     feed.sort(key=lambda e: e["ts"], reverse=True)
+    claude["seconds_7d"] = round(claude["seconds_7d"])
     return {
         "generated": _iso(now),
         "slots": slots,
         "health": {"last_tick": max(beats) if beats else None, "errors_24h": errors},
-        "fuel": {"codex": fuel.codex_weekly(), "claude": None},
+        "fuel": {
+            "codex": fuel.codex_weekly(),
+            "claude": None,  # Claude Code keeps no quota file: `/usage` in a session is the only reading
+            "gates_7d": dict(gates_7d),
+            "claude_usage": claude,  # sessions and seconds vigia ran, not the account's quota
+        },
         "stats": {
             "merged_7d": merged_7d,
             "p1_7d": p1_7d,
-            "sessions_today": sessions_today,
+            "parked_7d": parked_7d,
+            "sessions_today": t["sessions"],
+            "merged_today": t["merged"],
+            "today": t,
             "median_minutes": round(statistics.median(minutes)) if minutes else None,
+            "sessions_per_merge": {k: round(sum(v) / len(v), 1) for k, v in sorted(per_tier.items())},
         },
         "repos": repos,
         "feed": feed[:40],
+    }
+
+
+TIMELINE = {
+    "pr_opened",
+    "verdict",
+    "fix_started",
+    "pushed",
+    "updated",
+    "engine_failed",
+    "parked",
+    "unparked",
+    "merged",
+}
+
+
+def pr_detail(ctx: Ctx, n: int) -> dict:
+    """One PR's whole story for the detail screen: kept out of /api/state so the poll stays small."""
+    pr = ctx.gh.pr(n)
+    st = pr_state(ctx, pr)
+    seen = Seen(pr, st, decide(st, ctx.cfg))
+    target = jobs.target("gate", n)
+    running = next(
+        (
+            r.get("action")
+            for r in reversed(ctx.ledger.rows())
+            if r["event"] in ("job_spawned", "job_started") and r.get("target") == target
+        ),
+        None,
+    )
+    if target not in set(jobs.live(ctx)):
+        running = None
+    steps, waiting = _pipeline(ctx, seen, running)
+    mine = [r for r in ctx.ledger.rows() if r.get("pr") == n]
+    explained = {r.get("sha") for r in mine if r["event"] in ("pr_opened", "pushed", "updated")}
+    on_head = [r for r in mine if r["event"] == "verdict" and r.get("sha") == pr["head"]]
+    latest = on_head[-1] if on_head else None
+    timeline = []
+    for r in mine:
+        if r["event"] == "head_seen" and r.get("sha") not in explained:
+            timeline.append({"ts": r["ts"], "event": "head_outside", "sha": r.get("sha")})
+            explained.add(r.get("sha"))  # once per head
+        elif r["event"] in TIMELINE:
+            item = {k: v for k, v in r.items() if k != "findings"}
+            if r["event"] == "verdict":
+                item["findings"] = [
+                    {
+                        "severity": f.get("severity"),
+                        "file": f.get("file"),
+                        "line": f.get("line"),
+                        "title": f.get("title"),
+                        "status": ("open" if r is latest else "fixed") if f.get("severity") == "P1" else None,
+                    }
+                    for f in r.get("findings") or []
+                ]
+            timeline.append(item)
+    opened = next((r for r in mine if r["event"] == "pr_opened"), {})
+    parked = next((r for r in reversed(mine) if r["event"] == "parked"), None) if st.parked else None
+    engine_line = None
+    try:
+        for c in reversed(ctx.gh.comments(n)):
+            line = next((x for x in c["body"].splitlines() if x.startswith("Engine:")), None)
+            if line:
+                engine_line = line
+                break
+    except CommandError:
+        pass
+    open_decisions = _decisions(ctx, ctx.ledger.rows())
+    blocking = (
+        None  # unknown, not none
+        if open_decisions is None
+        else [d["number"] for d in open_decisions if not d["answered"] and n in (d.get("blocks") or [])]
+    )
+    return {
+        "repo": ctx.cfg.repo,
+        "number": n,
+        "title": pr["title"],
+        "url": pr["url"],
+        "tier": st.tier or "?",
+        "head": pr["head"],
+        "ci": st.ci,
+        "diff": pr.get("diff"),
+        "parked": st.parked,
+        "reason": parked["reason"] if parked else seen.decision.reason,
+        "next": seen.decision.action,
+        "waiting_for": waiting,
+        "pipeline": steps,
+        "built_by": f"{opened['engine']} · {opened['model']}" if opened.get("engine") else None,
+        "issue": opened.get("issue") or tickets.linked_issue(pr["body"]),
+        "opened": opened.get("ts"),
+        "tried_total": _tried_total(mine),
+        "timeline": timeline[::-1],
+        "engine_line": engine_line,
+        "blocked_by": blocking,
     }
 
 
@@ -368,15 +668,28 @@ def page() -> bytes:
 class _Cache:
     def __init__(self, contexts: list[Ctx], seconds: float, slots: int | None = None):
         self.contexts, self.seconds, self.slots = contexts, seconds, slots
-        self.lock, self.body, self.at = threading.Lock(), b"", 0.0
+        self.lock, self.bodies = threading.Lock(), {}  # key -> (time, body)
+
+    def _get(self, key: str, build) -> bytes:
+        with self.lock:
+            at, body = self.bodies.get(key, (0.0, b""))
+            if time.monotonic() - at > self.seconds or not body:
+                body = json.dumps(build(), ensure_ascii=False).encode("utf-8")
+                self.bodies[key] = (time.monotonic(), body)
+            return body
 
     def get(self) -> bytes:
-        with self.lock:
-            if time.monotonic() - self.at > self.seconds or not self.body:
-                body = state(self.contexts, slots=self.slots)
-                self.body = json.dumps(body, ensure_ascii=False).encode("utf-8")
-                self.at = time.monotonic()
-            return self.body
+        return self._get("state", lambda: state(self.contexts, slots=self.slots))
+
+    def pr(self, repo: str, n: int) -> bytes | None:
+        """The detail of PR `n` in `repo`, or None when no context drives that repo."""
+        ctx = next((c for c in self.contexts if c.cfg.repo.lower() == repo.lower()), None)
+        if ctx is None:
+            return None
+        return self._get(f"pr:{ctx.cfg.repo}#{n}", lambda: pr_detail(ctx, n))
+
+
+_PR_PATH = re.compile(r"^/api/pr/([\w.-]+)/([\w.-]+)/(\d{1,9})$")
 
 
 HEADERS = {
@@ -418,14 +731,27 @@ def handler(cache: _Cache, allowed: set[str]) -> type[BaseHTTPRequestHandler]:
             elif self.path in ("/", "/index.html"):
                 self._send(200, page(), "text/html; charset=utf-8")
             elif self.path == "/api/state":
-                try:
-                    self._send(200, cache.get(), "application/json; charset=utf-8")
-                except Exception as exc:  # report, never crash the server
-                    self._send(
-                        500, json.dumps({"error": str(exc)[:300]}).encode(), "application/json; charset=utf-8"
-                    )
+                self._json(cache.get)
+            elif match := _PR_PATH.match(self.path):
+                self._json(lambda: cache.pr(f"{match.group(1)}/{match.group(2)}", int(match.group(3))))
             else:
                 self._send(404, b"not found\n", "text/plain; charset=utf-8")
+
+        def _json(self, build) -> None:
+            kind = "application/json; charset=utf-8"
+            try:
+                body = build()
+            except CommandError as exc:  # GitHub said no: a PR that does not exist, or GitHub is down
+                missing = "could not resolve" in str(exc).lower() or "not found" in str(exc).lower()
+                self._send(404 if missing else 502, json.dumps({"error": str(exc)[:300]}).encode(), kind)
+                return
+            except Exception as exc:  # report, never crash the server
+                self._send(500, json.dumps({"error": str(exc)[:300]}).encode(), kind)
+                return
+            if body is None:
+                self._send(404, b'{"error": "not found"}', "application/json; charset=utf-8")
+            else:
+                self._send(200, body, "application/json; charset=utf-8")
 
         def _read_only(self):
             self._send(405, b"the Mesa is read-only: act on GitHub\n", "text/plain; charset=utf-8")

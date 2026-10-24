@@ -146,7 +146,7 @@ def merge(ctx: Ctx, seen: Seen) -> bool:
         return False
     ctx.gh.merge(n, sha)
     opened = ctx.ledger.last("pr_opened", pr=n) or {}
-    ctx.ledger.append("merged", pr=n, sha=sha, tier=st.tier, issue=opened.get("issue"))
+    ctx.ledger.append("merged", pr=n, sha=sha, tier=st.tier, issue=opened.get("issue"), title=fresh["title"])
     ctx.gh.delete_branch(fresh["branch"])
     ctx.gh.comment(n, comments.merged(sha, st.tier or "?", _why(ctx, n, sha, st.tier or "T2")))
     ctx.say(f"PR #{n}: merged {sha[:8]}")

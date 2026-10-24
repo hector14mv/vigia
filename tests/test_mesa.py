@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from fakes import APPROVE, CHANGES, engine
+from fakes import APPROVE, CHANGES, engine, git
+from test_decisions import BODY
 from test_e2e import TICKET, world  # noqa: F401  (world is a fixture)
 from vigia import jobs, mesa
 from vigia.config import Labels
@@ -147,11 +148,21 @@ def test_a_repo_that_cannot_be_read_is_shown_as_unknown_not_as_empty(world, tmp_
         raise CommandError(["gh", "pr", "list"], 1, "", "HTTP 401: Bad credentials")
 
     gh.prs = expired
-    repo = mesa.state([ctx])["repos"][0]
+    n = gh.add_issue("Add a helper", TICKET, ["vigia:building", "tier:T1"])
+    ctx.ledger.append("job_started", action="build", target=f"issue-{n}")
+    ctx.ledger.append(
+        "build_started", issue=n, tier="T1", engine="claude", model="m", branch=f"vigia/{n}-add"
+    )
+    with jobs.hold(ctx, f"issue-{n}"):
+        repo = mesa.state([ctx])["repos"][0]
     assert "Bad credentials" in repo["error"]
-    assert (
-        repo["prs"] is None and repo["queue"] is None and repo["parked_issues"] is None
-    )  # unknown, not zero
+    for name in ("prs", "queue", "parked_issues", "refused", "human_tasks", "proposed", "decisions"):
+        assert repo[name] is None, name  # unknown, not zero
+    # what this machine knows on its own still shows: the running build with its seat, the labels, the ledger
+    assert [(j["number"], j["engine"], j["branch"]) for j in repo["jobs"]] == [
+        (n, "claude", f"vigia/{n}-add")
+    ]
+    assert repo["labels"]["ready"] == "vigia:ready" and repo["merged_today"] == []
     shown = _render(tmp_path, mesa.state([ctx]))
     assert "Nothing needs you" not in shown["turn"] and "Cannot read" in shown["turn"]
     assert "No open pull requests" not in shown["factory"] and "unknown" in shown["factory"]
@@ -164,8 +175,15 @@ def test_a_ticket_parked_before_it_had_a_pr_needs_you(world, tmp_path):  # noqa:
     n = gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
     tick(ctx)  # the builder leaves no changes: the issue is parked, no PR is opened
     s = mesa.state([ctx])
+    failed = ctx.ledger.last("build_failed", issue=n)
     assert s["repos"][0]["parked_issues"] == [
-        {"number": n, "title": "Add a helper", "url": "", "reason": "the builder left no changes"}
+        {
+            "number": n,
+            "title": "Add a helper",
+            "url": "",
+            "reason": "the builder left no changes",
+            "since": failed["ts"],
+        }
     ]
     assert s["feed"][0]["event"] == "build_failed" and "left no changes" in s["feed"][0]["text"]
     shown = _render(tmp_path, s)
@@ -204,6 +222,26 @@ def test_a_list_that_cannot_be_read_is_never_shown_as_nothing_to_do(world, tmp_p
     assert "Nothing needs you" not in shown["turn"] and "Could not read: human tasks" in shown["turn"]
 
 
+def test_decisions_that_cannot_be_read_are_unknown_not_none(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)  # opens a PR
+    real = gh.issues
+
+    def flaky(label):
+        if label == "vigia:decision":
+            raise CommandError(["gh", "issue", "list"], 1, "", "HTTP 502")
+        return real(label)
+
+    gh.issues = flaky
+    s = mesa.state([ctx])
+    repo = s["repos"][0]
+    assert repo["decisions"] is None and repo["unread"] == ["decisions"]
+    assert repo["prs"][0]["blocked_by"] is None  # whether a decision blocks it is unknown
+    assert mesa.pr_detail(ctx, repo["prs"][0]["number"])["blocked_by"] is None
+
+
 def test_a_refused_ticket_stays_until_its_issue_resolves_it_whatever_its_age(world, tmp_path):  # noqa: F811
     gh, build = world
     ctx, _ = build([])
@@ -212,6 +250,7 @@ def test_a_refused_ticket_stays_until_its_issue_resolves_it_whatever_its_age(wor
     later = datetime.fromisoformat(ctx.ledger.rows()[-1]["ts"].replace("Z", "+00:00")) + timedelta(days=30)
     repo = mesa.state([ctx], later)["repos"][0]
     assert [i["number"] for i in repo["refused"]] == [n]  # a month later, still there
+    assert repo["refused"][0]["since"] == ctx.ledger.last("refused", issue=n)["ts"]
     gh.issues_[n]["state"] = "CLOSED"
     assert mesa.state([ctx], later)["repos"][0]["refused"] == []  # gone once the issue resolves it
 
@@ -281,3 +320,162 @@ def test_the_page_names_the_labels_the_repo_configured(world, tmp_path):  # noqa
     assert "remove <code>on-hold</code> and add <code>todo:agent</code>" in turn
     assert "then remove <code>on-hold</code>" in turn
     assert "vigia:parked" not in turn and "vigia:ready" not in turn
+
+
+def _now(ctx):
+    """Just after the ledger's last row: the fake clock and "today" agree on the day."""
+    return datetime.fromisoformat(ctx.ledger.rows()[-1]["ts"].replace("Z", "+00:00")) + timedelta(seconds=5)
+
+
+def test_a_human_wait_says_since_when_and_what_it_cost(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([CHANGES, APPROVE, APPROVE])
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    for _ in range(6):  # build, gate P1, fix, gate, review, wait
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    p = _pr(mesa.state([ctx], _now(ctx)), pr)
+    review = ctx.ledger.last("verdict", pr=pr, kind="review")
+    assert p["waiting_for"] == "human" and p["since"] == review["ts"]
+    assert p["tried_total"] == {
+        "gate_rounds": 2,
+        "fix_rounds": 1,
+        "heads": 2,
+        "p1": 1,
+        "parks": 0,
+        "unparks": 0,
+    }
+
+
+def test_jobs_show_their_engine_and_merges_today_their_title(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    for _ in range(3):
+        tick(ctx)
+    gh.add_issue("Add another helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)  # opens the second PR
+    second = max(gh.prs_)
+    ctx.ledger.append("job_started", action="gate", target=f"pr-{second}")
+    with jobs.hold(ctx, f"pr-{second}"):
+        s = mesa.state([ctx], _now(ctx))
+    repo = s["repos"][0]
+    assert repo["jobs"][0]["engine"] == "codex" and repo["jobs"][0]["model"] == ctx.cfg.tiers["T0"].gate.model
+    assert repo["jobs"][0]["tier"] == "T0" and repo["jobs"][0]["branch"] is None
+    assert repo["merged_today"][0]["title"] == "Add a helper" and repo["session_minutes"] == 30
+    assert s["stats"]["merged_today"] == 1 and s["stats"]["today"]["merged"] == 1
+    assert s["stats"]["sessions_per_merge"] == {"T0": 2.0}  # one build, one gate
+    assert s["fuel"]["gates_7d"] == {"codex": 1}
+
+
+def test_a_build_shows_its_seat_tier_and_branch(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    n = gh.add_issue("Add a helper", TICKET, ["vigia:building", "tier:T1"])
+    ctx.ledger.append("job_started", action="build", target=f"issue-{n}")
+    ctx.ledger.append(
+        "build_started",
+        issue=n,
+        tier="T1",
+        engine="claude",
+        model="claude-sonnet-5-5",
+        branch=f"vigia/{n}-add",
+    )
+    with jobs.hold(ctx, f"issue-{n}"):
+        job = mesa.state([ctx])["repos"][0]["jobs"][0]
+    assert job["issue"] and job["number"] == n and job["action"] == "build"
+    assert (job["engine"], job["model"], job["tier"], job["branch"]) == (
+        "claude",
+        "claude-sonnet-5-5",
+        "T1",
+        f"vigia/{n}-add",
+    )
+
+
+def test_decisions_tasks_and_blocked_tickets_reach_the_page(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    blocked = gh.add_issue(
+        "Wait for it", TICKET + "\nBlocked by: #99\n", ["vigia:ready", "tier:T0", "vigia:building"]
+    )
+    gh.issues_[blocked]["labels"] = ["tier:T0", "vigia:ready"]
+    d = gh.add_issue("Pick a path", BODY.replace("#38, #39", f"#{blocked}"), ["vigia:decision"])
+    gh.add_issue("Buy the domain", "Time: 10 min\nDue: 2026-10-27\nOrigin: plan\n", ["vigia:human-task"])
+    gh.add_issue("Broken", "no shape at all", ["vigia:decision"])
+    repo = mesa.state([ctx])["repos"][0]
+    good, broken = repo["decisions"]
+    assert good["number"] == d and good["rec"] == "C" and not good["malformed"] and good["answered"] is None
+    assert broken["malformed"] and broken["question"] == "Broken"
+    assert repo["queue"][0]["blocked_by"] == [d, 99]
+    task = repo["human_tasks"][0]
+    assert (task["time"], task["due"], task["origin"]) == ("10 min", "2026-10-27", "plan")
+
+
+def test_the_feed_carries_fields_and_more_events(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([CHANGES, CHANGES, APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    for _ in range(5):
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    gh.prs_[pr]["labels"].remove("vigia:parked")
+    tick(ctx)  # records the unpark, and gates again
+    feed = mesa.state([ctx])["feed"]
+    events = [e["event"] for e in feed]
+    assert {"unparked", "parked", "pushed", "build_started", "verdict"} <= set(events)
+    v = next(e for e in feed if e["event"] == "verdict" and e["verdict"] == "CHANGES")
+    assert v["kind"] == "gate" and v["verdict"] == "CHANGES" and v["p1"] == 1 and len(v["sha"]) == 7
+    assert v["engine"] == "codex" and v["repo"] == gh.repo.split("/")[-1] and v["text"]
+
+
+def test_pr_detail_tells_the_whole_story(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([CHANGES, CHANGES])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    for _ in range(4):  # build, gate P1, fix, gate P1 again
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    branch = gh.prs_[pr]["branch"]
+    work = ctx.root / "outside"
+    git("clone", "-q", "-b", branch, str(gh.origin), str(work), cwd=ctx.root)
+    git(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "by hand",
+        cwd=work,
+    )
+    git("push", "-q", "origin", branch, cwd=work)
+    tick(ctx)  # the watcher sees the new head
+    d = mesa.pr_detail(ctx, pr)
+    kinds = [e["event"] for e in d["timeline"]]
+    assert kinds[-1] == "pr_opened" and "head_outside" in kinds and "pushed" in kinds
+    verdicts = [e for e in d["timeline"] if e["event"] == "verdict"]
+    assert [f["status"] for v in verdicts for f in v["findings"]] == [
+        "fixed",
+        "fixed",
+    ]  # neither is on this head
+    assert d["engine_line"].startswith("Engine: claude")
+    assert d["tried_total"]["gate_rounds"] == 2 and d["built_by"].startswith("claude")
+
+
+def test_the_server_serves_a_pr_detail_and_nothing_else(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    srv = _serve(ctx)
+    try:
+        status, kind, body = _get(srv, f"/api/pr/{gh.repo}/{pr}")
+        assert status == 200 and json.loads(body)["number"] == pr
+        assert _get(srv, f"/api/pr/someone/else/{pr}")[0] == 404
+        assert _get(srv, f"/api/pr/{gh.repo}/{pr}/../../etc")[0] == 404
+        assert _get(srv, f"/api/pr/{gh.repo}/{pr}", host="evil.example")[0] == 403
+    finally:
+        srv.shutdown()
