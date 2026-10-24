@@ -236,3 +236,51 @@ def test_manual_commands_wait_for_a_live_job(world):  # noqa: F811
         _target(ctx, "gate", 5),
     ):
         pass
+
+
+def test_one_slot_runs_nothing_inline_while_an_earlier_job_holds_it(world):  # noqa: F811
+    gh, build = world
+    ctx, run = build([])
+    gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    with jobs.hold(ctx, "issue-99"):  # a job left by an earlier run with more slots
+        tick(ctx)
+    assert run.calls == [] and gh.prs_ == {}
+    tick(ctx)
+    assert len(gh.prs_) == 1
+
+
+def test_two_watchers_cannot_spend_one_workspace(world):  # noqa: F811
+    import pytest
+
+    from vigia.context import Busy
+
+    gh, build = world
+    ctx, _ = build([])
+    ws = workspace.Workspace(ctx.clone / "vigia.workspace.toml", (ctx.clone,), 2)
+    with workspace.lock(ws), pytest.raises(Busy, match="another vigia watch"), workspace.lock(ws):
+        pass
+
+
+def test_a_stale_park_is_not_applied_to_a_pr_that_moved(world):  # noqa: F811
+    from fakes import git
+    from vigia.rules import Decision
+    from vigia.watch import Seen, park, sense
+
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    old = sense(ctx, track=False)[0]
+    stale = Seen(old.pr, old.state, Decision("park", "CI is red on head; fix rounds used up", old.pr["head"]))
+    wt = ctx.root / "moved"  # a job pushed a new head after the snapshot
+    git("worktree", "add", "--quiet", "--detach", str(wt), old.pr["head"], cwd=ctx.clone)
+    (wt / "fix.txt").write_text("fixed")
+    git("add", "-A", cwd=wt)
+    git("commit", "--quiet", "-m", "fix", cwd=wt)
+    git("push", "--quiet", "origin", f"HEAD:refs/heads/{gh.prs_[pr]['branch']}", cwd=wt)
+    park(ctx, stale)
+    assert "vigia:parked" not in gh.prs_[pr]["labels"]
+    with jobs.hold(ctx, f"pr-{pr}"):  # and never while a job works on it
+        park(ctx, stale)
+    assert "vigia:parked" not in gh.prs_[pr]["labels"]

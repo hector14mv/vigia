@@ -153,7 +153,23 @@ def merge(ctx: Ctx, seen: Seen) -> bool:
 
 
 def park(ctx: Ctx, seen: Seen) -> None:
-    n, d, labels = seen.pr["number"], seen.decision, ctx.cfg.labels
+    """Park, after deciding again on a fresh read under the PR's lock: a job that just finished may have pushed
+    a new head since the tick's snapshot, and a stale park would stop a PR that is fine."""
+    n = seen.pr["number"]
+    with jobs.hold(ctx, jobs.target("gate", n)) as got:
+        if not got:
+            ctx.say(f"PR #{n}: not parking — a job is working on it")
+            return
+        fresh = ctx.gh.pr(n)
+        d = decide(state(ctx, fresh), ctx.cfg)
+        if d.action != "park" or fresh["head"] != seen.decision.sha:
+            ctx.say(f"PR #{n}: not parking — {d}")
+            return
+        _park(ctx, n, d)
+
+
+def _park(ctx: Ctx, n: int, d: Decision) -> None:
+    labels = ctx.cfg.labels
     ctx.gh.add_labels(n, labels.parked)
     # The record comes before the comment: once the label is on, `_track` needs the `parked` row to
     # notice the unpark, so a failed comment must not lose it.
@@ -200,6 +216,8 @@ def tick(
                 ctx.say(f"PR #{s.pr['number']}: {s.decision.action} failed — {exc}")
         if parallel:
             _spawn_jobs(ctx, seen, build, slots - len(running), running)
+            return seen
+        if running:  # one slot, and a job from an earlier parallel run still holds it
             return seen
         for s in seen:  # inline, through jobs.run too: same target lock and same last check as a job
             d = s.decision
@@ -251,16 +269,19 @@ def workspace_tick(ws, contexts: list[Ctx], build: bool | None = None) -> None:
     """One pass over every repo of a workspace, sharing `ws.slots` engine sessions between them."""
     from . import workspace
 
-    for ctx in contexts:
-        try:
-            if ws.slots <= 1:  # the workspace's one slot wins over any repo's own watch.slots
-                tick(ctx, build, slots=1, parallel=False)
-                continue
-            live = workspace.live_by_repo(contexts)
-            tick(ctx, build, slots=workspace.allowance(ws.slots, live, ctx.clone.resolve()), parallel=True)
-        except Exception as exc:  # one repo's failure must not stop the others
-            ctx.ledger.append("error", detail=str(exc)[:500])
-            ctx.say(f"{ctx.cfg.repo}: tick failed — {exc}")
+    with workspace.lock(ws):  # one watcher per workspace: the shared budget is checked and spent in one place
+        for ctx in contexts:
+            try:
+                live = workspace.live_by_repo(contexts)
+                if ws.slots <= 1 and not sum(live.values()):  # the workspace's one slot wins over watch.slots
+                    tick(ctx, build, slots=1, parallel=False)
+                    continue
+                tick(
+                    ctx, build, slots=workspace.allowance(ws.slots, live, ctx.clone.resolve()), parallel=True
+                )
+            except Exception as exc:  # one repo's failure must not stop the others
+                ctx.ledger.append("error", detail=str(exc)[:500])
+                ctx.say(f"{ctx.cfg.repo}: tick failed — {exc}")
 
 
 def workspace_loop(ws, contexts: list[Ctx], interval: int, build: bool | None = None) -> None:

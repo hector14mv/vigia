@@ -5,11 +5,13 @@ may run at once across all of them; `vigia watch` and `vigia status` run from th
 
 from __future__ import annotations
 
+import fcntl
 import os
 import platform
 import subprocess
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -114,6 +116,23 @@ def recommend_slots(
     if quota_used is not None and quota_used > 70:
         slots = max(slots // 2, 1)
     return max(slots, 1)
+
+
+@contextmanager
+def lock(ws: Workspace) -> Iterator[None]:
+    """One watcher per workspace at a time: two would each think the shared slots were free."""
+    from .context import Busy
+
+    path = ws.path.parent / ".vigia-workspace.lock"
+    with path.open("a") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise Busy(f"another vigia watch is running the workspace in {ws.path.parent}") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def live_by_repo(contexts: list) -> dict[Path, int]:
