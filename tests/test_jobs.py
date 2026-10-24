@@ -312,6 +312,30 @@ def test_vigia_run_on_a_number_never_builds_what_a_job_just_built(world, monkeyp
     assert len(run.calls) == calls and len(gh.prs_) == 1
 
 
+def test_vigia_run_stops_when_the_existing_pr_cannot_be_read(world, monkeypatch):  # noqa: F811
+    import pytest
+
+    from vigia import cli
+    from vigia.proc import CommandError
+
+    gh, build = world
+    ctx, run = build([])
+    n = gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    monkeypatch.setattr(cli.Ctx, "load", classmethod(lambda cls, root: ctx))
+    assert jobs.run(ctx, "build", n)  # a detached job built it and opened its PR
+    gh.add_labels(n, "vigia:ready")
+    (pr,) = gh.prs_
+
+    def unreachable(number):
+        raise CommandError(["gh", "pr", "view", str(number)], 1, "", "HTTP 502: Bad Gateway")
+
+    monkeypatch.setattr(gh, "pr", unreachable)  # the issue reads fine, the PR lookup does not
+    calls = len(run.calls)
+    with pytest.raises(SystemExit, match=f"cannot tell whether its pull request #{pr} is still open"):
+        cli.main(["run", "--issue", str(n)])
+    assert len(run.calls) == calls and len(gh.prs_) == 1  # no second session, no duplicate PR
+
+
 def test_one_slot_runs_nothing_inline_while_an_earlier_job_holds_it(world):  # noqa: F811
     gh, build = world
     ctx, run = build([])

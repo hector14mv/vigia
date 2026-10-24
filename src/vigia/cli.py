@@ -84,13 +84,17 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def _open_pr_for(ctx: Ctx, issue: int) -> int | None:
-    """The open PR vigia built for `issue`, if any: a manual build must not open a second one."""
+    """The open PR vigia built for `issue`, if any: a manual build must not open a second one.
+
+    A PR whose state cannot be read stops the run: an unknown state is no permission to build again."""
     for row in reversed(ctx.ledger.events("pr_opened", issue=issue)):
         try:
             if ctx.gh.pr(row["pr"])["state"] == "OPEN":
                 return row["pr"]
-        except CommandError:
-            continue
+        except CommandError as e:
+            raise SystemExit(
+                f"#{issue}: cannot tell whether its pull request #{row['pr']} is still open ({e}); try again later"
+            ) from e
     return None
 
 
