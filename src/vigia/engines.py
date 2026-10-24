@@ -7,16 +7,64 @@ Both return their final message; reviewers must return the verdict JSON describe
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import proc
+from . import proc, safety
 from .config import DEFAULT_ENGINE_ARGS, Config, Seat
 
 SessionRunner = Callable[..., proc.Result]
+
+# An engine session inherits only these variables (an allowlist: a denylist is the list that comes up one short).
+# GitHub tokens, SSH agents and askpass programs, and every GIT_* setting but where git's own config files live,
+# never reach it. Everything an engine needs to run and log in to its own lab is here.
+SESSION_ENV = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        "COLORTERM",
+        "LANG",
+        "TZ",
+        "TMPDIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "all_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "NODE_EXTRA_CA_CERTS",
+        "VIRTUAL_ENV",
+        "PYENV_ROOT",
+        "NVM_DIR",
+        "GOPATH",
+        "GOROOT",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "JAVA_HOME",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+    }
+)
+SESSION_ENV_PREFIXES = ("LC_", "XDG_", "ANTHROPIC_", "CLAUDE_", "CODEX_", "OPENAI_", "UV_", "PIP_")
+# What `gh` sees as its token inside a session: not a credential, and GitHub answers it with "Bad credentials".
+SESSION_GH_TOKEN = "vigia-engine-session-has-no-github-access"
+# Command-scope git config outranks every config file: an empty helper clears the helpers set before it
+# (`gh auth git-credential`, the macOS keychain), so `git credential fill` hands out nothing.
+_NO_CREDENTIAL_HELPER = (("credential.helper", ""), ("credential.https://github.com.helper", ""))
 
 VERDICT_SCHEMA = {
     "type": "object",
@@ -55,13 +103,26 @@ class Outcome:
 
 
 class Engines:
-    def __init__(self, cfg: Config, logs: Path, runner: SessionRunner = proc.run_session):
+    def __init__(
+        self,
+        cfg: Config,
+        logs: Path,
+        runner: SessionRunner = proc.run_session,
+        root: Path | None = None,
+    ):
         self.cfg = cfg
         self.logs = logs
+        self.root = root or logs  # vigia's work root: each session's empty `gh` config lives under it
         self._run = runner
 
     def command(
-        self, seat: Seat, role: str, workdir: Path, out_file: Path, schema_file: Path | None
+        self,
+        seat: Seat,
+        role: str,
+        workdir: Path,
+        out_file: Path,
+        schema_file: Path | None,
+        guards: Mapping[str, str] | None = None,
     ) -> list[str]:
         extra = list(
             self.cfg.engine_args.get(seat.engine, {}).get(role, DEFAULT_ENGINE_ARGS[seat.engine][role])
@@ -90,6 +151,21 @@ class Engines:
             if seat.effort:
                 cmd += ["-c", f"model_reasoning_effort={seat.effort}"]
             cmd += extra + ["-C", str(workdir), "-o", str(out_file)]
+            if guards:
+                # Codex builds the environment of the commands it runs from its own policy (a user's config may
+                # keep only "core" variables), which would drop the session's guards: pass everything the session
+                # has, and set the guards on top so they reach every command whatever the config says.
+                table = ", ".join(f"{k} = {json.dumps(v)}" for k, v in guards.items())
+                cmd += [
+                    "-c",
+                    'shell_environment_policy.inherit="all"',
+                    "-c",
+                    "shell_environment_policy.include_only=[]",  # a user filter would drop the guards again
+                    "-c",
+                    "shell_environment_policy.exclude=[]",
+                    "-c",
+                    f"shell_environment_policy.set={{{table}}}",
+                ]
             if schema_file is not None:
                 cmd += ["--output-schema", str(schema_file)]
             return cmd + ["-"]  # the prompt comes on stdin
@@ -104,21 +180,67 @@ class Engines:
         if role == "reviewer":
             schema_file = self.logs / f"{name}.schema.json"
             schema_file.write_text(json.dumps(VERDICT_SCHEMA), encoding="utf-8")
-        cmd = self.command(seat, role, workdir, out_file, schema_file)
+        gh_config = self.root / f".gh-config-{name}"
+        cmd = self.command(seat, role, workdir, out_file, schema_file, guards=session_guards(gh_config))
+        safety.remove(gh_config, self.root)  # an interrupted run's: start logged out, never from its state
+        gh_config.mkdir(parents=True)
         started = time.monotonic()
-        result = self._run(
-            cmd,
-            cwd=workdir,
-            input=prompt,
-            timeout=self.cfg.caps.session_minutes * 60,
-            log=self.logs / f"{name}.log",
-        )
+        try:
+            result = self._run(
+                cmd,
+                cwd=workdir,
+                input=prompt,
+                timeout=self.cfg.caps.session_minutes * 60,
+                log=self.logs / f"{name}.log",
+                env=session_env(os.environ, gh_config),
+            )
+        finally:
+            safety.remove(gh_config, self.root)
         seconds = round(time.monotonic() - started, 1)
         text = _final_text(seat.engine, result.stdout, out_file)
         ok = result.code == 0 and not result.timed_out and bool(text.strip())
         if seat.engine == "claude":
             ok = ok and not _claude_error(result.stdout)
         return Outcome(ok, text, result.code, result.timed_out, seconds, self.logs / f"{name}.log")
+
+
+def session_guards(gh_config: Path) -> dict[str, str]:
+    """The variables that keep a session off the user's GitHub login. They go into the session's environment and,
+    for Codex, into the environment of every command it runs (`Engines.command`)."""
+    guards = {
+        "GH_CONFIG_DIR": str(gh_config),  # an empty config: no account, no settings
+        # gh falls back to the OS keyring for a host's token even with an empty config (`gh auth token` would print
+        # the user's). A token in the environment comes first, so a sentinel GitHub rejects closes that path, for
+        # github.com (GH_TOKEN) and for GitHub Enterprise hosts, which read their own variables.
+        "GH_TOKEN": SESSION_GH_TOKEN,
+        "GH_ENTERPRISE_TOKEN": SESSION_GH_TOKEN,
+        "GITHUB_ENTERPRISE_TOKEN": SESSION_GH_TOKEN,
+        "GIT_ALLOW_PROTOCOL": "file",  # git may reach no remote: no https, ssh or git transport at all
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "",  # set but empty: git runs no askpass program (it is asked before core.askPass)
+        "GIT_CONFIG_COUNT": str(len(_NO_CREDENTIAL_HELPER)),
+    }
+    for i, (key, value) in enumerate(_NO_CREDENTIAL_HELPER):
+        guards[f"GIT_CONFIG_KEY_{i}"] = key
+        guards[f"GIT_CONFIG_VALUE_{i}"] = value
+    return guards
+
+
+def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
+    """The environment of an engine session: what it needs to run, and no way to act as the user on GitHub.
+
+    Only vigia's own code labels, comments, pushes and merges. The session gets an allowlist of `base`
+    (`SESSION_ENV`), a logged-out `gh` (an empty config directory), no credential helper or askpass program for
+    git, and `GIT_ALLOW_PROTOCOL=file`, so git refuses every network transport (https, ssh, git) whatever
+    credentials or headers a config file holds.
+
+    This stops a session from using your GitHub login by accident or by following an instruction it read. It is
+    not a sandbox against a process determined to misbehave: the session runs as your user and could, for
+    example, read credential stores itself. For that, run vigia under a separate OS user or in a container.
+    """
+    env = {k: v for k, v in base.items() if k in SESSION_ENV or k.startswith(SESSION_ENV_PREFIXES)}
+    env.update(session_guards(gh_config))
+    return env
 
 
 def _claude_error(stdout: str) -> bool:

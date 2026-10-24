@@ -51,7 +51,7 @@ def world(tmp_path):
             gh=gh,
             git=Git(clone, tmp_path / "work"),
             ledger=Ledger(clone / ".vigia" / "ledger.jsonl", clock=clock),
-            engines=Engines(cfg, clone / ".vigia" / "logs", runner=run),
+            engines=Engines(cfg, clone / ".vigia" / "logs", runner=run, root=tmp_path / "work"),
             root=tmp_path / "work",
             say=lambda _: None,
         )
