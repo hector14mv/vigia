@@ -117,9 +117,11 @@ def _stop(proc: subprocess.Popen, grace: float) -> str:
     with contextlib.suppress(ProcessLookupError):
         os.killpg(proc.pid, signal.SIGTERM)
     out = None
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        out, _ = proc.communicate(timeout=grace)
-    _end_group(proc.pid, grace=max(0.0, deadline - time.monotonic()), proc=proc)
+    try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            out, _ = proc.communicate(timeout=grace)
+    finally:  # output that cannot be decoded raises here: the group still goes before the error leaves
+        _end_group(proc.pid, grace=max(0.0, deadline - time.monotonic()), proc=proc)
     if out is None:
         out, _ = proc.communicate()
     return out

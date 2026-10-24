@@ -64,6 +64,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print(f"No ready issues (label `{ctx.cfg.labels.ready}`).")
                 return 0
         with _target(ctx, "build", issue["number"]):
+            if not args.issue:
+                # Picked from a snapshot: a job may have built it and let go of it since. Read it again.
+                due, issue, _ = jobs.still_due(ctx, "build", issue["number"])
+                if not due:
+                    print(f"#{issue['number']} is no longer ready; nothing to do.")
+                    return 0
             pr = builder.build(ctx, issue)
     return 0 if pr else 1
 

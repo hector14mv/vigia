@@ -275,6 +275,26 @@ def test_manual_commands_wait_for_a_live_job(world):  # noqa: F811
         pass
 
 
+def test_vigia_run_rechecks_the_issue_it_picked_once_it_holds_it(world, monkeypatch, capsys):  # noqa: F811
+    from vigia import builder, cli
+
+    gh, build = world
+    ctx, run = build([])
+    n = gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    monkeypatch.setattr(cli.Ctx, "load", classmethod(lambda cls, root: ctx))
+    picked = builder.next_issue
+
+    def picked_then_built_by_a_job(c, skip=frozenset()):
+        issue = picked(c, skip)  # the snapshot still says ready...
+        gh.remove_label(n, "vigia:ready")  # ...but a detached job builds it and lets go before we lock it
+        return issue
+
+    monkeypatch.setattr(builder, "next_issue", picked_then_built_by_a_job)
+    assert cli.main(["run"]) == 0
+    assert run.calls == [] and gh.prs_ == {}  # no second session, no duplicate PR
+    assert "no longer ready" in capsys.readouterr().out
+
+
 def test_one_slot_runs_nothing_inline_while_an_earlier_job_holds_it(world):  # noqa: F811
     gh, build = world
     ctx, run = build([])

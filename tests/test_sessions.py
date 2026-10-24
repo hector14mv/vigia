@@ -175,3 +175,29 @@ def test_a_session_that_ends_well_leaves_nothing_behind(tmp_path):
     finally:
         if _alive(child):
             os.kill(child, signal.SIGKILL)
+
+
+def test_a_session_whose_output_cannot_be_read_still_leaves_nothing_behind(tmp_path):
+    from pathlib import Path
+
+    import pytest
+
+    from vigia import proc
+
+    pid, child_pid = tmp_path / "engine.pid", tmp_path / "child.pid"
+    engine = ENGINE_WITH_STUBBORN_CHILD.format(pid=str(pid), child=str(child_pid)).replace(
+        "time.sleep(60)\n", "sys.stdout.buffer.write(b'\\xff')\n", 1
+    )  # the engine prints a byte that is not UTF-8 and exits cleanly, leaving its child behind
+    try:
+        with pytest.raises(UnicodeDecodeError):
+            proc.run_session(
+                [sys.executable, "-c", engine],
+                cwd=Path(tmp_path),
+                input="",
+                timeout=60,
+                log=tmp_path / "s.log",
+            )
+        assert not _alive(int(child_pid.read_text()))  # stopped before the error reaches the runner
+    finally:
+        if child_pid.exists() and _alive(int(child_pid.read_text())):
+            os.kill(int(child_pid.read_text()), signal.SIGKILL)
