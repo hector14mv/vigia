@@ -158,6 +158,7 @@ def reviewer(
     diff: str,
     previous: list[dict],
     gate_findings: list[dict],
+    base_moved: str = "",
 ) -> str:
     ticket = issue["body"].strip() if issue else "(no linked ticket)"
     if kind == "gate":
@@ -178,6 +179,13 @@ fail if it broke, and that the tests can actually fail."""
         extra += f"\n## Previous round\nOn an earlier head these were reported. Check each one is fixed; an incomplete fix is a P1.\n{_findings_list(previous)}\n"
     if gate_findings:
         extra += f"\n## The gate's findings on this head (non-blocking)\n{_findings_list(gate_findings)}\n"
+    if base_moved:
+        extra += (
+            f"\n## The base moved\nThis head merges `{base_moved}` into the PR, because the base changed after the "
+            "head that was reviewed before. Check that the PR's change still holds against what came in from the "
+            "base: code it calls, documentation that describes code, tests that cover it. A claim the base made false "
+            "is a P1.\n"
+        )
     return f"""\
 {role}
 

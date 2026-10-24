@@ -24,7 +24,7 @@ from typing import Literal
 from .config import Config
 
 Kind = Literal["gate", "review"]
-Action = Literal["merge", "gate", "review", "fix", "park", "wait"]
+Action = Literal["merge", "gate", "review", "fix", "park", "wait", "update"]
 
 
 @dataclass(frozen=True)
@@ -60,10 +60,12 @@ class PRState:
     parked: bool = False
     human_ok: bool = False
     on_base: bool = True  # the PR targets the configured base branch
+    behind: bool = False  # the base moved since this head branched off it (read only when it matters)
     # Everything below counts only since the PR was last unparked: unparking is a human's fresh start.
     verdicts: tuple[Verdict, ...] = field(default_factory=tuple)
     fix_rounds: int = 0
     failures: int = 0  # failed builder/fixer runs on the current head
+    updated_heads: frozenset[str] = frozenset()  # heads vigia made only to bring the base in: no round spent
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,8 @@ def decide(pr: PRState, cfg: Config) -> Decision:
         return park(f"{pr.failures} failed engine runs on this head")
 
     gated = _gated_heads(pr.verdicts, "gate")
-    gate_rounds_left = len(gated) < caps.gate_rounds
+    # A head that only brought the moved base in is reviewed again, but it does not use up a round.
+    gate_rounds_left = len([h for h in gated if h not in pr.updated_heads]) < caps.gate_rounds
 
     def fix_or_park(stage: str, why: str) -> Decision:
         if pr.fix_rounds >= caps.fix_rounds:
@@ -143,7 +146,7 @@ def decide(pr: PRState, cfg: Config) -> Decision:
             return park(
                 f"GATE_UNAVAILABLE: no verdict from the other lab on head after {unavailable} attempts"
             )
-        if not gate_rounds_left:
+        if not gate_rounds_left and head not in pr.updated_heads:
             return park(f"gate rounds used up ({caps.gate_rounds}) and the head moved after the last one")
         return Decision("gate", f"gate round {len(gated) + 1} on head", head, str(len(gated) + 1))
     gate = with_content[-1]
@@ -158,7 +161,10 @@ def decide(pr: PRState, cfg: Config) -> Decision:
         if not with_content_r:
             if len(on_head_r) >= caps.attempts:
                 return park(f"reviewer returned no verdict on head after {len(on_head_r)} attempts")
-            if len(reviewed) >= caps.review_rounds:
+            if (
+                len([h for h in reviewed if h not in pr.updated_heads]) >= caps.review_rounds
+                and head not in pr.updated_heads
+            ):
                 return park(
                     f"review rounds used up ({caps.review_rounds}) and the head moved after the last one"
                 )
@@ -166,6 +172,11 @@ def decide(pr: PRState, cfg: Config) -> Decision:
         review = with_content_r[-1]
         if not review.passes:
             return fix_or_park("review", f"{pr.tier} reviewer: {review.p1} P1 finding(s) on head")
+
+    # The base moved since this head: bring it in before a human approves or anything merges, so what was
+    # reviewed is what the merge produces. The new head is reviewed again without using up a round.
+    if pr.behind:
+        return Decision("update", "the base moved since this head: bring it in and review again", head)
 
     # 6 — T2: a human on the exact head.
     if policy.human and not pr.human_ok:

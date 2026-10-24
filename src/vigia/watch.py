@@ -8,7 +8,7 @@ on the same repository at once in v0.1.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import builder, comments, gate, jobs, tickets
 from .context import Ctx
@@ -104,7 +104,23 @@ def state(ctx: Ctx, pr: dict) -> PRState:
         ),
         fix_rounds=sum(1 for r in window if r["event"] == "fix_started"),
         failures=sum(1 for r in window if r["event"] == "engine_failed" and r.get("sha") == pr["head"]),
+        updated_heads=frozenset(r["sha"] for r in window if r["event"] == "updated" and r.get("sha")),
     )
+
+
+def _with_base(ctx: Ctx, pr: dict, st: PRState) -> tuple[PRState, Decision]:
+    """Decide, and when the PR is about to be merged or approved by a person, also ask GitHub whether the base
+    moved since its head: only then, so a tick does not pay one API call per PR."""
+    d = decide(st, ctx.cfg)
+    if d.action == "merge" or (d.action == "wait" and "waiting for a human" in d.reason):
+        try:
+            if ctx.gh.behind(ctx.cfg.base, pr["head"]) > 0:
+                st = replace(st, behind=True)
+                d = decide(st, ctx.cfg)
+        except CommandError as exc:  # unknown is not "up to date": hold the merge this tick
+            ctx.ledger.append("error", pr=pr["number"], action="behind", detail=str(exc)[:300])
+            return st, Decision("wait", "could not check whether the base moved", pr["head"])
+    return st, d
 
 
 def sense(ctx: Ctx, track: bool = True) -> list[Seen]:
@@ -112,8 +128,8 @@ def sense(ctx: Ctx, track: bool = True) -> list[Seen]:
     for pr in ctx.gh.prs(ctx.cfg.labels.review):
         if track:
             _track(ctx, pr)
-        st = state(ctx, pr)
-        out.append(Seen(pr, st, decide(st, ctx.cfg)))
+        st, d = _with_base(ctx, pr, state(ctx, pr))
+        out.append(Seen(pr, st, d))
     return out
 
 
@@ -136,8 +152,7 @@ def _why(ctx: Ctx, n: int, sha: str, tier: str) -> list[str]:
 def merge(ctx: Ctx, seen: Seen) -> bool:
     n, sha = seen.pr["number"], seen.decision.sha
     fresh = ctx.gh.pr(n)  # re-read and re-decide right before the merge: the tick's snapshot may be old
-    st = state(ctx, fresh)
-    again = decide(st, ctx.cfg)
+    st, again = _with_base(ctx, fresh, state(ctx, fresh))
     if ctx.cfg.labels.review not in fresh["labels"]:  # an operator withdrew the PR from automation
         ctx.say(f"PR #{n}: not merging — `{ctx.cfg.labels.review}` was removed")
         return False
@@ -217,6 +232,15 @@ def tick(
                     merge(ctx, s)
                 elif s.decision.action == "park":
                     park(ctx, s)
+                elif s.decision.action == "update" and not builder.update(ctx, s.pr):
+                    park(
+                        ctx,
+                        Seen(
+                            s.pr,
+                            s.state,
+                            Decision("park", "merging the moved base into this PR conflicts", s.pr["head"]),
+                        ),
+                    )
             except CommandError as exc:  # one PR's failure must not stop the others; the next tick re-decides
                 ctx.ledger.append("error", pr=s.pr["number"], action=s.decision.action, detail=str(exc)[:500])
                 ctx.say(f"PR #{s.pr['number']}: {s.decision.action} failed — {exc}")

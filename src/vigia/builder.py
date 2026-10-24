@@ -6,6 +6,7 @@ writes the handoff, so the steps that touch GitHub are deterministic and the sam
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 
@@ -370,3 +371,37 @@ def fix(ctx: Ctx, pr: dict, stage: str) -> bool:
         return True
     finally:
         ctx.git.remove_worktree(wt)
+
+
+def update(ctx: Ctx, pr: dict) -> bool:
+    """Bring the moved base into `pr`'s branch with a merge commit and push it. False on a merge conflict.
+
+    The new head is recorded as an update: the gate and the tier reviewer look at it again (told that the base
+    moved), and it does not use up a gate or review round.
+    """
+    cfg, n, sha = ctx.cfg, pr["number"], pr["head"]
+    if ctx.git.remote_branch_sha(pr["branch"]) != sha:
+        ctx.say(f"PR #{n}: head moved; the update waits for the next tick")
+        return True
+    base_sha = ctx.git.remote_branch_sha(cfg.base)
+    wt = ctx.git.worktree_detached(ctx.root / f"update-{n}-{sha[:8]}", sha)
+    try:
+        if not ctx.git.merge_in(wt, base_sha, f"chore: merge {cfg.base} into #{n} (vigia)"):
+            ctx.ledger.append("update_conflict", pr=n, sha=sha, base_sha=base_sha)
+            return False
+        head = ctx.git.rev("HEAD", cwd=wt)
+        ctx.git.push(wt, pr["branch"])
+    finally:
+        ctx.git.remove_worktree(wt)
+    ctx.ledger.append("updated", pr=n, from_sha=sha, sha=head, base_sha=base_sha)
+    ctx.ledger.append("head_seen", pr=n, sha=head)
+    if cfg.labels.human_ok in pr["labels"]:
+        with contextlib.suppress(CommandError):
+            ctx.gh.remove_label(n, cfg.labels.human_ok)
+    ctx.gh.comment(
+        n,
+        f"Brought `{cfg.base}` ({base_sha[:8]}) into this PR: new head `{head}`. The base moved since the head "
+        "that was reviewed, so the gate and the tier reviewer look again; this does not use up a round.\n",
+    )
+    ctx.say(f"PR #{n}: brought {cfg.base} in, new head {head[:8]}")
+    return True

@@ -288,6 +288,13 @@ class GitHub:
                 return "\n".join(out.splitlines()[-lines:])
         return ""
 
+    def behind(self, base: str, sha: str) -> int:
+        """How many commits `base` has that `sha` does not (GitHub's compare): more than 0 means the base moved."""
+        out = self._gh(
+            "api", f"repos/{self.repo}/compare/{quote(base, safe='')}...{sha}", "--jq", ".behind_by"
+        )
+        return int(out.strip() or 0)
+
     def delete_branch(self, branch: str) -> None:
         # Already gone, or protected: not worth failing a merge over.
         with contextlib.suppress(CommandError):

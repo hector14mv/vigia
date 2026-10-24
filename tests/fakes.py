@@ -178,6 +178,9 @@ class FakeGitHub:
         p["state"], p["head"] = "MERGED", sha
         self.merged.append((n, sha))
 
+    def behind(self, base: str, sha: str) -> int:
+        return int(git("rev-list", "--count", f"{sha}..refs/heads/{base}", cwd=self.origin) or 0)
+
     def delete_branch(self, branch: str) -> None:
         pass
 

@@ -82,8 +82,20 @@ def review(ctx: Ctx, pr: dict, kind: str, round_no: int) -> str | None:
         ctx.git.remove_worktree(ctx.root / name)
     wt = ctx.git.worktree_detached(ctx.root / name, sha)
     try:
+        moved = cfg.base if ctx.ledger.last("updated", pr=n, sha=sha) else ""
         prompt = prompts.reviewer(
-            kind, cfg.repo, pr, tier, sha, merge_base, _issue(ctx, pr), handoff, diff, previous, gate_findings
+            kind,
+            cfg.repo,
+            pr,
+            tier,
+            sha,
+            merge_base,
+            _issue(ctx, pr),
+            handoff,
+            diff,
+            previous,
+            gate_findings,
+            base_moved=moved,
         )
         outcome = ctx.engines.run(seat, "reviewer", prompt, wt, name=name)
     finally:

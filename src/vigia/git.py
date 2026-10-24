@@ -111,5 +111,13 @@ class Git:
     def diff(self, base: str, head: str, cwd: Path | None = None) -> str:
         return self._git("diff", f"{base}...{head}", cwd=cwd).stdout
 
+    def merge_in(self, wt: Path, ref: str, message: str) -> bool:
+        """Merge `ref` into the worktree's HEAD with a merge commit. False, leaving HEAD as it was, on a conflict."""
+        result = self._git("merge", "--no-ff", "--no-edit", "-m", message, ref, cwd=wt, check=False)
+        if result.code != 0:
+            self._git("merge", "--abort", cwd=wt, check=False)
+            return False
+        return True
+
     def merge_base(self, a: str, b: str) -> str:
         return self._git("merge-base", a, b).stdout.strip()
