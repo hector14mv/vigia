@@ -687,12 +687,25 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     var t = ms(S.state && S.state.health && S.state.health.last_tick);
     if (t == null) return { kind: "quiet", never: true };
     var age = now() - t;
+    if (age >= 60000) {
+      // With one slot the watcher runs each session inside its tick: a stale tick with a live session means busy, not gone.
+      // In a workspace, its shared limit decides that for every repo.
+      var ws = S.state && isInt(S.state.slots) ? S.state.slots : null, list = repos(), i, r;
+      for (i = 0; i < list.length; i++) {
+        r = list[i];
+        if ((ws != null ? ws : r.slots || 1) <= 1 && r.jobs && r.jobs.length) return { kind: "busy", age: age, at: t, job: r.jobs[0] };
+      }
+    }
     return { kind: age < 60000 ? "fresh" : age < 300000 ? "slow" : "quiet", age: age, at: t };
   }
   function livePill(desk) {
     var w = watcher();
     if (w.kind === "down") return h("span", { "class": "pill quiet" }, "■ Mesa offline");
     if (w.kind === "quiet") return h("span", { "class": "pill quiet" }, "■ watcher quiet · " + (w.never ? "no tick yet" : dur(w.age)));
+    if (w.kind === "busy") {
+      var what = w.job.action + (w.job.number != null ? " #" + w.job.number : "");
+      return h("span", { "class": "pill" }, h("span", { "class": "dot live pulse" }), (desk ? "watcher busy · " : "busy · ") + what);
+    }
     var dot = h("span", { "class": "dot " + (w.kind === "fresh" ? "ok pulse" : "hollow") });
     if (desk) return h("span", { "class": "pill" }, dot, "watcher ", h("b", null, dur(w.age) + " ago"));
     return h("span", { "class": "pill" }, dot, (w.kind === "fresh" ? "live · " : "slow · ") + dur(w.age));
@@ -708,7 +721,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     return h("div", { "class": "empty watcher", role: "alert" }, h("span", { "class": "ic danger", "aria-hidden": "true" }, "■"),
       h("span", { "class": "tx" },
         h("b", null, w.never ? "The watcher has not written yet" : "The watcher has not written for " + dur(w.age)),
-        h("span", null, (w.never ? "" : "Last ledger line at " + dayTime(new Date(w.at).toISOString()) + ". ") + "What you see may be old. Is vigia watch still running?")));
+        h("span", null, (w.never ? "" : "Last tick at " + dayTime(new Date(w.at).toISOString()) + ". ") + "What you see may be old. Is vigia watch still running?")));
   }
   function sampleNote() { return S.state && typeof S.state.sample === "string" ? h("div", { "class": "sample" }, S.state.sample) : null; }
 

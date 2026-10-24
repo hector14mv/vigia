@@ -459,6 +459,23 @@ def test_the_page_puts_every_api_string_in_as_text_and_links_only_github(world, 
         assert evil in layout["turn"]["text"]  # shown, as text
 
 
+def test_a_watcher_running_a_session_in_its_tick_is_busy_not_quiet(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    s = mesa.state([ctx])
+    then = datetime.fromisoformat(s["generated"].replace("Z", "+00:00")) - timedelta(minutes=8)
+    job = {"target": "pr-4", "number": 4, "issue": False, "action": "gate", "since": mesa._iso(then)}
+    stale = dict(s, health=dict(s["health"], last_tick=mesa._iso(then)))
+    one = dict(stale, repos=[dict(s["repos"][0], slots=1, jobs=[job])])
+    shown = _render(tmp_path, one, routes=("turn",))
+    assert "busy · gate #4" in shown["phone"]["turn"]["text"]
+    assert "watcher busy · gate #4" in shown["desk"]["turn"]["text"]
+    # a workspace with two slots runs sessions as jobs, so its watcher is not inside one: a stale tick is quiet
+    shown = _render(tmp_path, dict(one, slots=2), routes=("turn",))
+    for turn in _views(shown, "turn"):
+        assert "busy" not in turn["text"] and "watcher quiet" in turn["text"]
+
+
 def _now(ctx):
     """Just after the ledger's last row: the fake clock and "today" agree on the day."""
     return datetime.fromisoformat(ctx.ledger.rows()[-1]["ts"].replace("Z", "+00:00")) + timedelta(seconds=5)
