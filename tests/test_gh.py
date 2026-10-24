@@ -233,18 +233,3 @@ def test_open_issues_reads_every_page_and_leaves_out_pull_requests():
     issues = GitHub("o/r", runner=run).open_issues()
     assert issues == [{"number": 1, "title": "a", "url": "u1", "labels": ["tier:T1"]}]
     assert "--paginate" in run.calls[0]["args"] and "--slurp" in run.calls[0]["args"]
-
-
-def test_issues_all_reads_every_page_and_leaves_out_pull_requests():
-    pages = [
-        [{"number": n, "title": f"t{n}", "html_url": "", "labels": []} for n in range(1, 101)],
-        [{"number": n, "title": f"t{n}", "html_url": "", "labels": []} for n in range(101, 201)],
-        [
-            {"number": 202, "title": "pr", "html_url": "", "labels": [], "pull_request": {}},
-            {"number": 201, "title": "the one past the old cap", "html_url": "", "labels": []},
-        ],
-    ]
-    run = Runner(json.dumps(pages))
-    issues = GitHub("o/r", runner=run).issues_all()
-    assert len(issues) == 201 and issues[-1] == {"number": 201, "title": "the one past the old cap"}
-    assert "--paginate" in run.calls[0]["args"]

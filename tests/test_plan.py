@@ -55,15 +55,16 @@ def test_parse_keeps_valid_entries_and_drops_the_rest():
     assert plan.parse("no plan today") is None
 
 
-def test_filing_sends_only_launchable_t0_t1_to_the_queue(world):  # noqa: F811
+def test_every_planned_ticket_waits_for_a_person(world):  # noqa: F811
     gh, build = world
     ctx, _ = build([])
     filed = plan.file_plan(ctx, plan.parse(json.dumps(_plan())), "add tests")
     labels = {f["title"]: set(f["labels"]) for f in filed}
-    assert labels["test: cover shout() on empty input"] == {"tier:T0", "vigia:ready"}
-    assert labels["feat: charge a card"] == {"tier:T2", "vigia:proposed"}  # T2 waits for a person
-    assert labels["feat: vague idea"] == {"tier:T1", "vigia:proposed"}  # the template check found gaps
+    assert labels["test: cover shout() on empty input"] == {"tier:T0", "vigia:proposed"}  # even launchable T0
+    assert labels["feat: charge a card"] == {"tier:T2", "vigia:proposed"}
+    assert labels["feat: vague idea"] == {"tier:T1", "vigia:proposed"}
     assert labels["Create the Stripe account"] == {"vigia:human-task"}
+    assert gh.issues("vigia:ready") == []  # nothing a model planned starts without a person
     vague = next(i for i in gh.issues_.values() if i["title"] == "feat: vague idea")
     assert "template check found gaps" in vague["body"]
     assert len(ctx.ledger.events("planned")) == 4
@@ -75,13 +76,6 @@ def test_a_repo_from_an_older_init_gets_the_planner_labels_before_anything_is_fi
     gh.known_labels = {"vigia:ready", "tier:T0", "tier:T1", "tier:T2"}  # what an older `vigia init` created
     filed = plan.file_plan(ctx, plan.parse(json.dumps(_plan())), "g")
     assert len(filed) == 4 and {"vigia:proposed", "vigia:human-task"} <= gh.known_labels
-
-
-def test_propose_only_files_nothing_as_ready(world):  # noqa: F811
-    gh, build = world
-    ctx, _ = build([])
-    filed = plan.file_plan(ctx, plan.parse(json.dumps(_plan())), "g", auto_ready=False)
-    assert not any("vigia:ready" in f["labels"] for f in filed)
 
 
 def test_a_planner_session_reads_the_base_branch_and_files_the_plan(world):  # noqa: F811
@@ -129,14 +123,11 @@ def test_a_ticket_that_needs_an_earlier_one_merged_waits_for_a_person(world):  #
     ]
     filed = plan.file_plan(ctx, plan.parse(json.dumps({"tickets": planned, "human_tasks": []})), "g")
     labels = {f["title"]: set(f["labels"]) for f in filed}
-    assert labels["feat: add a helper"] == {"tier:T1", "vigia:ready"}
-    assert labels["refactor: migrate callers"] == {"tier:T1", "vigia:proposed"}
-    assert labels["docs: unrelated note"] == {"tier:T0", "vigia:ready"}
-    assert labels["test: no word on order"] == {"tier:T0", "vigia:proposed"}
+    assert all("vigia:proposed" in names for names in labels.values())
     helper = filed[0]["number"]
     migrate = next(i for i in gh.issues_.values() if i["title"] == "refactor: migrate callers")
     assert f"Planned to follow #{helper}" in migrate["body"]
-    assert [i["title"] for i in gh.issues("vigia:ready")] == ["feat: add a helper", "docs: unrelated note"]
+    assert gh.issues("vigia:ready") == []
 
 
 def test_the_first_ticket_never_waits_on_an_earlier_one():
@@ -249,5 +240,36 @@ def test_a_title_the_plan_repeats_is_filed_once(world):  # noqa: F811
         {"title": "Feat: add the helper ", "tier": "T1", "depends_on_earlier": False, "body": TICKET},
     ]
     filed = plan.file_plan(ctx, plan.parse(json.dumps({"tickets": planned, "human_tasks": []})), "g")
-    assert len(filed) == 1 and [i["title"] for i in gh.issues("vigia:ready")] == ["feat: add the helper"]
+    assert len(filed) == 1 and [i["title"] for i in gh.issues("vigia:proposed")] == ["feat: add the helper"]
     assert ctx.ledger.events("plan_skipped")[0]["reason"] == "the plan already has this title"
+
+
+def test_open_issues_are_read_again_after_the_planner_session(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    scripted = engine([_plan()])
+
+    def run(
+        cmd, cwd, input, timeout, log, **kwargs
+    ):  # someone files the same ticket while the planner thinks
+        gh.add_issue("test: cover shout() on empty input", TICKET, ["tier:T0", "vigia:ready"])
+        return scripted(cmd, cwd, input, timeout, log, **kwargs)
+
+    ctx.engines._run = run
+    _, filed = plan.plan(ctx, "Cover the helpers with tests")
+    assert "test: cover shout() on empty input" not in [f["title"] for f in filed]
+    assert ctx.ledger.events("plan_skipped")[0]["reason"] == "an open issue has this title"
+
+
+def test_a_human_task_already_open_or_repeated_is_filed_once(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("Create the Stripe account", "x", ["vigia:human-task"])
+    tasks = [{"title": "Create the Stripe account", "body": "a"}, {"title": "Buy the domain", "body": "b"}]
+    tasks.append({"title": "buy the domain ", "body": "again"})
+    filed = plan.file_plan(ctx, plan.parse(json.dumps({"tickets": [], "human_tasks": tasks})), "g")
+    assert [f["title"] for f in filed] == ["Buy the domain"]
+    assert [r["reason"] for r in ctx.ledger.events("plan_skipped")] == [
+        "an open issue has this title",
+        "the plan already has this title",
+    ]

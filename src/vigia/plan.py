@@ -1,11 +1,10 @@
-"""`vigia plan "<goal>"`: a planner session turns a goal into tickets in the template, and fills the queue.
+"""`vigia plan "<goal>"`: a planner session turns a goal into tickets in the template, for a person to ratify.
 
-The planner reads the base branch (read-only, like a reviewer) and answers with JSON. vigia files each ticket as
-an issue: a launchable T0 or T1 ticket goes straight to the queue (`vigia:ready`); a T2 ticket, or one the
-template check refuses, waits as `vigia:proposed` for a person to ratify, because what touches money, auth or
-data is a person's call to start. So does a ticket that needs an earlier one of the plan merged first: the queue
-starts ready tickets side by side, in any order, so it waits until a person releases it. Work only a person can do (an account, a secret, a decision) becomes a
-`vigia:human-task` issue, which the Mesa shows under "Your turn".
+The planner reads the base branch (read-only, like a reviewer) and answers with JSON. vigia files every ticket it
+writes as `vigia:proposed`, never as ready: a person reads it and swaps the label for the ready one, because what
+the factory builds next is a person's call. A ticket that needs an earlier one of the plan merged first says
+which. Work only a person can do (an account, a secret, a decision) becomes a `vigia:human-task` issue. The Mesa
+shows both under "Your turn". A title that is already an open issue's, or repeats within the plan, is not filed.
 """
 
 from __future__ import annotations
@@ -159,15 +158,12 @@ def parse(text: str) -> dict | None:
     return out
 
 
-def file_plan(
-    ctx: Ctx, plan: dict, goal: str, auto_ready: bool = True, open_titles: list[str] | None = None
-) -> list[dict]:
-    """Create the issues. Returns [{'number', 'title', 'labels'}] for what was filed. A ticket whose title is
-    already an open issue's is not filed again (ledger `plan_skipped`), whatever the planner saw."""
+def file_plan(ctx: Ctx, plan: dict, goal: str) -> list[dict]:
+    """Create the issues, all proposed. Returns [{'number', 'title', 'labels'}] for what was filed. A ticket or
+    human task whose title is already an open issue's, read fresh here (the planner's session may have run for
+    minutes), or repeats within the plan, is not filed again (ledger `plan_skipped`)."""
     labels = ctx.cfg.labels
-    if open_titles is None:
-        open_titles = [i["title"] for i in ctx.gh.issues_all()]
-    taken = {t.strip().lower() for t in open_titles}
+    taken = {i["title"].strip().lower() for i in ctx.gh.open_issues()}
     planned: set[str] = set()
     open_before: list[
         str
@@ -193,18 +189,16 @@ def file_plan(
     checked = []
     for t in plan["tickets"]:
         gaps = tickets.missing(t["body"])
-        checked.append((t, gaps, auto_ready and not gaps and t["tier"] != "T2" and not t.get("after")))
+        checked.append((t, gaps))
     # A repo set up by an older `vigia init` has no planner labels yet: create them first, so a plan is never
     # left half filed by a label GitHub refuses.
-    needed = {PROPOSED for _, _, ready in checked if not ready} | (
-        {HUMAN_TASK} if plan["human_tasks"] else set()
-    )
+    needed = ({PROPOSED} if checked else set()) | ({HUMAN_TASK} if plan["human_tasks"] else set())
     for name, color, description in label_specs(labels):
         if name in needed:
             ctx.gh.ensure_label(name, color, description)
     filed = []
-    for t, gaps, ready in checked:
-        names = [labels.tier(t["tier"]), labels.ready if ready else PROPOSED]
+    for t, gaps in checked:
+        names = [labels.tier(t["tier"]), PROPOSED]
         body = t["body"] + f"\n\n<!-- vigia:planned goal={json.dumps(goal[:200])} -->\n"
         if gaps:
             body += "\n> Planned by vigia, but the template check found gaps: " + "; ".join(gaps) + "\n"
@@ -220,11 +214,15 @@ def file_plan(
             else:
                 body += f"\n> Planned to follow {', '.join(earlier)}: add `{labels.ready}` once they are merged.\n"
         number = ctx.gh.create_issue(t["title"], body, names)
-        ctx.ledger.append(
-            "planned", issue=number, tier=t["tier"], ready=ready, gaps=gaps, after=bool(t.get("after"))
-        )
+        ctx.ledger.append("planned", issue=number, tier=t["tier"], gaps=gaps, after=bool(t.get("after")))
         filed.append({"number": number, "title": t["title"], "labels": names})
     for h in plan["human_tasks"]:
+        key = h["title"].strip().lower()
+        if key in taken or key in planned:
+            reason = "an open issue has this title" if key in taken else "the plan already has this title"
+            ctx.ledger.append("plan_skipped", title=h["title"][:120], reason=reason)
+            continue
+        planned.add(key)
         number = ctx.gh.create_issue(
             h["title"], h["body"] + "\n\nOnly a person can do this; vigia will not build it.\n", [HUMAN_TASK]
         )
@@ -239,12 +237,11 @@ def plan(
     limit: int = 5,
     seat: Seat = DEFAULT_SEAT,
     dry_run: bool = False,
-    auto_ready: bool = True,
 ):
     """Run one planner session on the base branch and file what it proposes. Returns (plan, filed)."""
     cfg = ctx.cfg
     base_sha = ctx.git.remote_branch_sha(cfg.base)
-    open_titles = [i["title"] for i in ctx.gh.issues_all()]
+    open_titles = [i["title"] for i in ctx.gh.open_issues()]
     files = ctx.git.files(base_sha)
     wt = ctx.git.worktree_detached(ctx.root / f"plan-{base_sha[:8]}", base_sha)
     try:
@@ -261,4 +258,4 @@ def plan(
     result["tickets"] = result["tickets"][:limit]
     if dry_run:
         return result, []
-    return result, file_plan(ctx, result, goal, auto_ready, open_titles)
+    return result, file_plan(ctx, result, goal)

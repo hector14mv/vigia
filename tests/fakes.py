@@ -108,13 +108,6 @@ class FakeGitHub:
     def issue(self, n: int) -> dict:
         return dict(self.issues_[n])
 
-    def issues_all(self) -> list[dict]:
-        return [
-            {"number": i["number"], "title": i["title"]}
-            for i in self.issues_.values()
-            if i["state"] == "OPEN"
-        ]
-
     def create_issue(self, title: str, body: str, labels: list[str]) -> int:
         unknown = [name for name in labels if self.known_labels is not None and name not in self.known_labels]
         if unknown:  # what `gh issue create` does with a label the repo does not have

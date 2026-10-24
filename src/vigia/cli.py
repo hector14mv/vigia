@@ -224,9 +224,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
     ctx = Ctx.load(Path.cwd())
     with ctx.lock():
-        result, filed = plan.plan(
-            ctx, args.goal, limit=args.max, dry_run=args.dry_run, auto_ready=not args.propose_only
-        )
+        result, filed = plan.plan(ctx, args.goal, limit=args.max, dry_run=args.dry_run)
     if args.dry_run:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
@@ -335,13 +333,12 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true", help="overwrite an existing vigia.workspace.toml")
     s.set_defaults(func=cmd_workspace)
 
-    s = sub.add_parser("plan", help="turn a goal into tickets in the template and fill the queue")
+    s = sub.add_parser(
+        "plan", help="turn a goal into proposed tickets in the template, for a person to ratify"
+    )
     s.add_argument("goal", help="what you want, in a sentence or a paragraph")
     s.add_argument("--max", type=int, default=5, help="at most this many tickets (default 5)")
     s.add_argument("--dry-run", action="store_true", help="print the plan, file nothing")
-    s.add_argument(
-        "--propose-only", action="store_true", help="file every ticket as vigia:proposed, none as ready"
-    )
     s.set_defaults(func=cmd_plan)
 
     s = sub.add_parser(

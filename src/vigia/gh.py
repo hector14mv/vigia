@@ -130,11 +130,6 @@ class GitHub:
             key=lambda r: r["number"],
         )
 
-    def issues_all(self) -> list[dict]:
-        """Every open issue, whatever its labels (number and title), across all pages: a cap would hide a duplicate."""
-        rows = ({"number": r["number"], "title": r["title"]} for r in self.open_issues())
-        return sorted(rows, key=lambda r: r["number"])
-
     def create_issue(self, title: str, body: str, labels: list[str]) -> int:
         args = ["issue", "create", "-R", self.repo, "--title", title, "--body-file", "-"]
         for name in labels:
