@@ -100,6 +100,32 @@ def test_recovery_leaves_a_live_build_alone(world):  # noqa: F811
     assert "vigia:parked" in gh.issues_[n]["labels"]  # its job is gone: now it was interrupted
 
 
+def test_recovery_does_not_park_a_build_that_finished_meanwhile(world, monkeypatch):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    n = gh.add_issue("One", TICKET, ["tier:T0", "vigia:building"])
+    ctx.ledger.append("build_started", issue=n, tier="T0", engine="claude", model="m", branch="b")
+    lock = jobs.target("build", n)
+    real_busy, real_hold = jobs.busy, jobs.hold
+    finished = []
+
+    def job_finishes(name):
+        # the build job opens its PR, enrolls it and exits right before recovery looks at its lock
+        if name == lock and not finished:
+            finished.append(name)
+            ctx.ledger.append("pr_opened", pr=77, issue=n, sha="abc", branch="b", tier="T0")
+            gh.issues_[n]["labels"].remove("vigia:building")
+            ctx.ledger.append("enrolled", pr=77, issue=n)
+
+    monkeypatch.setattr(jobs, "busy", lambda c, name: job_finishes(name) or real_busy(c, name))
+    monkeypatch.setattr(jobs, "hold", lambda c, name: job_finishes(name) or real_hold(c, name))
+    tick(ctx, build=False)
+    assert finished  # the race happened
+    assert "vigia:parked" not in gh.issues_[n]["labels"]
+    assert ctx.ledger.events("build_failed", issue=n) == []
+    assert gh.bodies(n) == []  # no false interruption comment
+
+
 def test_recovery_keeps_the_worktree_of_a_live_review(world):  # noqa: F811
     gh, build = world
     ctx, _ = build([])

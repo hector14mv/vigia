@@ -149,17 +149,20 @@ def recover(ctx: Ctx) -> None:
     2. A PR whose label step failed after `pr_opened` was recorded is enrolled (next paragraph).
     """
     for number in _unfinished_builds(ctx):
-        if jobs.busy(ctx, jobs.target("build", number)):
-            continue  # a live build job: not interrupted, only unfinished
-        try:
-            issue = ctx.gh.issue(number)
-            if issue["state"] == "OPEN":
-                _fail_issue(ctx, issue, "the build was interrupted before it opened a pull request", None)
-            else:
-                ctx.ledger.append("build_failed", issue=number, reason="interrupted; the issue is closed")
-        except CommandError as exc:  # the next tick tries again
-            ctx.ledger.append("error", issue=number, action="recover_build", detail=str(exc)[:500])
-            ctx.say(f"#{number}: recovering the interrupted build failed — {exc}")
+        # Hold the issue's lock, then read the ledger again: a job that ended between the first read and
+        # here has recorded `pr_opened` or `build_failed`, and must not be parked from the stale list.
+        with jobs.hold(ctx, jobs.target("build", number)) as got:
+            if not got or number not in _unfinished_builds(ctx):
+                continue  # a live build job, or one that finished meanwhile: not interrupted
+            try:
+                issue = ctx.gh.issue(number)
+                if issue["state"] == "OPEN":
+                    _fail_issue(ctx, issue, "the build was interrupted before it opened a pull request", None)
+                else:
+                    ctx.ledger.append("build_failed", issue=number, reason="interrupted; the issue is closed")
+            except CommandError as exc:  # the next tick tries again
+                ctx.ledger.append("error", issue=number, action="recover_build", detail=str(exc)[:500])
+                ctx.say(f"#{number}: recovering the interrupted build failed — {exc}")
     _enroll_pending(ctx)
 
 
