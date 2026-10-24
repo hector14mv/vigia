@@ -52,26 +52,46 @@ def cmd_run(args: argparse.Namespace) -> int:
     ctx = Ctx.load(Path.cwd())
     with ctx.lock():
         if args.issue:
-            issue = ctx.gh.issue(args.issue)
-            if issue["state"] != "OPEN":
-                raise SystemExit(f"#{args.issue} is closed")
-            problems = builder.gaps(ctx, issue)
-            if problems:
-                raise SystemExit(f"#{args.issue} is not launchable: " + "; ".join(problems))
+            number = args.issue
         else:
-            issue = builder.next_issue(ctx)
-            if issue is None:
+            picked = builder.next_issue(ctx)
+            if picked is None:
                 print(f"No ready issues (label `{ctx.cfg.labels.ready}`).")
                 return 0
-        with _target(ctx, "build", issue["number"]):
-            if not args.issue:
-                # Picked from a snapshot: a job may have built it and let go of it since. Read it again.
-                due, issue, _ = jobs.still_due(ctx, "build", issue["number"])
+            number = picked["number"]
+        with _target(ctx, "build", number):
+            # Everything is read again under the issue's lock: a detached job may have built it and let go of it
+            # since it was picked (or since the person typed the number).
+            if args.issue:
+                issue = ctx.gh.issue(number)
+                if issue["state"] != "OPEN":
+                    raise SystemExit(f"#{number} is closed")
+                if ctx.cfg.labels.building in issue["labels"]:
+                    raise SystemExit(f"#{number} is being built; try again when that ends")
+                problems = builder.gaps(ctx, issue)
+                if problems:
+                    raise SystemExit(f"#{number} is not launchable: " + "; ".join(problems))
+            else:
+                due, issue, _ = jobs.still_due(ctx, "build", number)
                 if not due:
-                    print(f"#{issue['number']} is no longer ready; nothing to do.")
+                    print(f"#{number} is no longer ready; nothing to do.")
                     return 0
+            existing = _open_pr_for(ctx, number)
+            if existing:
+                raise SystemExit(f"#{number} already has an open pull request built by vigia: #{existing}")
             pr = builder.build(ctx, issue)
     return 0 if pr else 1
+
+
+def _open_pr_for(ctx: Ctx, issue: int) -> int | None:
+    """The open PR vigia built for `issue`, if any: a manual build must not open a second one."""
+    for row in reversed(ctx.ledger.events("pr_opened", issue=issue)):
+        try:
+            if ctx.gh.pr(row["pr"])["state"] == "OPEN":
+                return row["pr"]
+        except CommandError:
+            continue
+    return None
 
 
 @contextmanager

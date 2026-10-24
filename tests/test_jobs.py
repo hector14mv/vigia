@@ -295,6 +295,23 @@ def test_vigia_run_rechecks_the_issue_it_picked_once_it_holds_it(world, monkeypa
     assert "no longer ready" in capsys.readouterr().out
 
 
+def test_vigia_run_on_a_number_never_builds_what_a_job_just_built(world, monkeypatch):  # noqa: F811
+    import pytest
+
+    from vigia import cli
+
+    gh, build = world
+    ctx, run = build([])
+    n = gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    monkeypatch.setattr(cli.Ctx, "load", classmethod(lambda cls, root: ctx))
+    assert jobs.run(ctx, "build", n)  # a detached job built it, opened its PR and let go
+    gh.add_labels(n, "vigia:ready")  # even with the label back, the issue already has its PR
+    calls = len(run.calls)
+    with pytest.raises(SystemExit, match="already has an open pull request"):
+        cli.main(["run", "--issue", str(n)])
+    assert len(run.calls) == calls and len(gh.prs_) == 1
+
+
 def test_one_slot_runs_nothing_inline_while_an_earlier_job_holds_it(world):  # noqa: F811
     gh, build = world
     ctx, run = build([])
