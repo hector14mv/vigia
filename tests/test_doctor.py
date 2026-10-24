@@ -1,0 +1,180 @@
+import fcntl
+import json
+import os
+
+import pytest
+
+from vigia import cli, doctor, safety
+from vigia import config as config_mod
+from vigia.config import Config, default_tiers
+from vigia.init import label_specs
+from vigia.proc import CommandError, Result
+
+REPO = "acme/widgets"
+
+
+def make_runner(
+    labels: list[str] | None = None,
+    claude: str = json.dumps({"loggedIn": True}),
+    codex: str = "Logged in using ChatGPT",
+    repo_ok: bool = True,
+):
+    have = [spec[0] for spec in label_specs(config_mod.Labels())] if labels is None else labels
+    calls: list[list[str]] = []
+
+    def runner(args, **kwargs):
+        calls.append(list(args))
+        head = list(args[:2])
+        if head == ["git", "--version"]:
+            return Result(0, "git version 2.40.0\n", "")
+        if head == ["gh", "auth"]:
+            return Result(0, "", "Logged in")
+        if head == ["claude", "auth"]:
+            return Result(0, claude, "")
+        if head == ["codex", "login"]:
+            return Result(0, codex, "")
+        if head == ["gh", "repo"]:
+            if not repo_ok:
+                raise CommandError(args, 1, "", "Could not resolve to a Repository")
+            return Result(0, json.dumps({"nameWithOwner": REPO}), "")
+        if head == ["gh", "label"]:
+            return Result(0, json.dumps([{"name": n} for n in have]), "")
+        raise AssertionError(f"unexpected command: {args}")
+
+    runner.calls = calls
+    return runner
+
+
+@pytest.fixture
+def clone(tmp_path, monkeypatch):
+    """A clone with a valid vigia.toml and one workflow; the work root is under tmp_path."""
+    root = tmp_path / "clone"
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / ".github" / "workflows" / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+    cfg = Config(repo=REPO, base="main", tiers=default_tiers("claude"), test_command="pytest -q")
+    (root / "vigia.toml").write_text(config_mod.render(cfg), encoding="utf-8")
+    monkeypatch.setattr(safety, "default_root", lambda: tmp_path / "tmp" / "vigia")
+    return root
+
+
+def by_name(checks):
+    return {c.name: c for c in checks}
+
+
+def test_all_ok(clone):
+    checks = doctor.collect(clone, make_runner())
+    assert [c.status for c in checks] == ["ok"] * len(checks)
+    assert doctor.problems(checks) == 0
+    assert doctor.render(checks).splitlines()[-1] == "ready"
+
+
+def test_engine_logged_out_fails_with_its_fix(clone):
+    checks = by_name(doctor.collect(clone, make_runner(codex="Not logged in")))
+    assert checks["codex logged in"].status == "fail"
+    assert "codex login" in checks["codex logged in"].fix
+    assert checks["claude logged in"].status == "ok"
+    out = doctor.render(list(checks.values()))
+    assert "fix: install Codex CLI and run `codex login`" in out
+    assert out.splitlines()[-1] == "1 problem"
+
+
+def test_missing_label_fails_naming_it_with_the_create_command(clone):
+    have = [spec[0] for spec in label_specs(config_mod.Labels()) if spec[0] != "vigia:parked"]
+    check = by_name(doctor.collect(clone, make_runner(labels=have)))["labels"]
+    assert check.status == "fail"
+    assert "vigia:parked" in check.detail
+    assert check.fix.startswith("gh label create vigia:parked -R acme/widgets --color ")
+
+
+def test_missing_workflow_warns_and_does_not_fail(clone):
+    (clone / ".github" / "workflows" / "ci.yml").unlink()
+    checks = doctor.collect(clone, make_runner())
+    assert by_name(checks)["ci workflow"].status == "warn"
+    assert doctor.problems(checks) == 0
+    assert doctor.render(checks).splitlines()[-1] == "ready"
+
+
+def test_workflow_not_needed_when_ci_is_not_required(clone):
+    (clone / ".github" / "workflows" / "ci.yml").unlink()
+    toml = clone / "vigia.toml"
+    toml.write_text(toml.read_text(encoding="utf-8").replace("require_ci = true", "require_ci = false"))
+    assert by_name(doctor.collect(clone, make_runner()))["ci workflow"].status == "ok"
+
+
+def test_unset_test_command_warns(clone):
+    toml = clone / "vigia.toml"
+    toml.write_text(toml.read_text(encoding="utf-8").replace('test_command = "pytest -q"\n', ""))
+    assert by_name(doctor.collect(clone, make_runner()))["test command"].status == "warn"
+
+
+def test_unreachable_repo_fails_and_labels_are_not_checked(clone):
+    runner = make_runner(repo_ok=False)
+    checks = by_name(doctor.collect(clone, runner))
+    assert checks["github repo"].status == "fail"
+    assert checks["labels"].status == "fail"
+    assert not any(c[:2] == ["gh", "label"] for c in runner.calls)
+
+
+def test_no_config_fails_and_skips_the_repo_checks(tmp_path, monkeypatch):
+    monkeypatch.setattr(safety, "default_root", lambda: tmp_path / "tmp" / "vigia")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    checks = by_name(doctor.collect(empty, make_runner()))
+    assert checks["vigia.toml"].status == "fail"
+    assert "vigia init" in checks["vigia.toml"].fix
+    assert "labels" not in checks and "lock" not in checks
+
+
+def test_invalid_config_fails(clone):
+    (clone / "vigia.toml").write_text("[repo]\n", encoding="utf-8")
+    assert by_name(doctor.collect(clone, make_runner()))["vigia.toml"].status == "fail"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_unwritable_work_root_fails(clone, monkeypatch, tmp_path):
+    parent = tmp_path / "tmp"
+    parent.mkdir()
+    parent.chmod(0o500)
+    try:
+        check = by_name(doctor.collect(clone, make_runner()))["work root"]
+    finally:
+        parent.chmod(0o700)
+    assert check.status == "fail"
+    assert "writable" in check.fix
+
+
+def test_held_lock_fails_and_a_free_lock_file_is_ok(clone):
+    state = clone / ".vigia"
+    state.mkdir()
+    with (state / "lock").open("w") as fh:
+        assert by_name(doctor.collect(clone, make_runner()))["lock"].status == "ok"
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        check = by_name(doctor.collect(clone, make_runner()))["lock"]
+    assert check.status == "fail"
+    assert "another vigia process" in check.detail
+
+
+def test_doctor_writes_nothing_in_the_clone(clone):
+    before = sorted(p.relative_to(clone) for p in clone.rglob("*"))
+    doctor.collect(clone, make_runner())
+    assert sorted(p.relative_to(clone) for p in clone.rglob("*")) == before
+    assert not (clone / ".vigia").exists()
+
+
+def test_json_has_the_same_rows_as_the_table(clone):
+    checks = doctor.collect(clone, make_runner(codex="Not logged in"))
+    data = json.loads(doctor.to_json(checks))
+    assert data["verdict"] == "1 problem" and data["problems"] == 1
+    assert [row["name"] for row in data["checks"]] == [c.name for c in checks]
+    assert set(data["checks"][0]) == {"name", "status", "detail", "fix"}
+
+
+@pytest.mark.parametrize(
+    "codex, code, last", [("Logged in using ChatGPT", 0, "ready"), ("Not logged in", 1, "1 problem")]
+)
+def test_command_exit_code(clone, monkeypatch, capsys, codex, code, last):
+    real_collect = doctor.collect
+    monkeypatch.chdir(clone)
+    monkeypatch.setattr(doctor, "collect", lambda start: real_collect(start, make_runner(codex=codex)))
+    assert cli.main(["doctor"]) == code
+    assert capsys.readouterr().out.strip().splitlines()[-1] == last

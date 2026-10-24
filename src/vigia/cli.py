@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__, builder, gate, status, watch
+from . import __version__, builder, doctor, gate, status, watch
 from . import init as init_mod
 from .config import ConfigError
 from .context import Busy, Ctx
@@ -109,6 +109,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    checks = doctor.collect(Path.cwd())
+    print(doctor.to_json(checks) if args.json else doctor.render(checks))
+    return 1 if doctor.problems(checks) else 0
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="vigia",
@@ -154,6 +160,12 @@ def parser() -> argparse.ArgumentParser:
         "--html", metavar="PATH", help="write a self-contained HTML page here and print its path"
     )
     s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser(
+        "doctor", help="check that vigia can work in this clone, with the fix for each problem"
+    )
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_doctor)
     return p
 
 

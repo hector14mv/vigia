@@ -215,6 +215,7 @@ model given by alias.
 | `vigia run [--issue N]` | build one ready issue into a pull request (default: the oldest ready one) |
 | `vigia watch [--once] [--interval SECONDS] [--no-build]` | the loop, until Ctrl-C; one engine session per tick, merges and parks for every PR; `--once` runs one tick, `--interval` sets the seconds between ticks (default `watch.interval_seconds`), `--no-build` only moves open PRs |
 | `vigia status [--json \| --html PATH]` | queue, open PRs with their next step, parked reasons, recent ledger; `--json` prints JSON, `--html PATH` writes a self-contained HTML page and prints its path |
+| `vigia doctor [--json]` | check that vigia can work in this clone (tools, `vigia.toml`, repo, labels, CI workflow, test command, work root, lock); every problem comes with the command that fixes it; exit code 1 if any check fails |
 | `vigia review --pr N [--kind gate\|review]` | run the gate or the tier reviewer on a PR's head now |
 | `vigia fix --pr N [--stage gate\|review\|ci]` | run one fix round now |
 | `vigia --version` | print the installed version |
