@@ -171,7 +171,9 @@ class Engines:
             return cmd + ["-"]  # the prompt comes on stdin
         raise ValueError(f"unknown engine {seat.engine!r}")
 
-    def run(self, seat: Seat, role: str, prompt: str, workdir: Path, name: str) -> Outcome:
+    def run(
+        self, seat: Seat, role: str, prompt: str, workdir: Path, name: str, schema: dict | None = None
+    ) -> Outcome:
         """Run one session to completion (or to the session time cap) and return its final message."""
         self.logs.mkdir(parents=True, exist_ok=True)
         out_file = self.logs / f"{name}.last.txt"
@@ -179,7 +181,7 @@ class Engines:
         schema_file = None
         if role == "reviewer":
             schema_file = self.logs / f"{name}.schema.json"
-            schema_file.write_text(json.dumps(VERDICT_SCHEMA), encoding="utf-8")
+            schema_file.write_text(json.dumps(schema or VERDICT_SCHEMA), encoding="utf-8")
         gh_config = self.root / f".gh-config-{name}"
         cmd = self.command(seat, role, workdir, out_file, schema_file, guards=session_guards(gh_config))
         safety.remove(gh_config, self.root)  # an interrupted run's: start logged out, never from its state

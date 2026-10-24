@@ -26,6 +26,8 @@ def label_specs(labels: Labels) -> list[tuple[str, str, str]]:
         (labels.review, "1D76DB", "Managed by vigia: CI, cross-lab gate, tier rules, merge"),
         (labels.parked, "B60205", "vigia stopped here; the comment says why. Remove to resume"),
         (labels.human_ok, "5319E7", "A human checked this exact head (T2)"),
+        ("vigia:proposed", "BFD4F2", "Planned by vigia: a person ratifies it by adding vigia:ready"),
+        ("vigia:human-task", "D4C5F9", "Only a person can do this; vigia will not build it"),
         (labels.tier("T0"), "C2E0C6", "Cosmetic, docs, tests, internal tooling"),
         (labels.tier("T1"), "FEF2C0", "Product logic with no money and no other people's data"),
         (labels.tier("T2"), "F9D0C4", "Money, auth, data, migrations, customer messages, credentials"),

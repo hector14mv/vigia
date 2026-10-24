@@ -223,6 +223,19 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
     except CommandError:
         human_tasks = None  # unknown, not none
         unread.append("human tasks")
+    try:
+        proposed = [
+            {
+                "number": i["number"],
+                "title": i["title"],
+                "url": i["url"],
+                "tier": tickets.tier(i["labels"], labels.tier_prefix) or "?",
+            }
+            for i in ctx.gh.issues("vigia:proposed")
+        ]
+    except CommandError:
+        proposed = None  # unknown, not none
+        unread.append("proposed tickets")
     return {
         "repo": cfg.repo,
         "slots": cfg.slots,
@@ -232,6 +245,7 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
         "parked_issues": parked_issues,
         "refused": refused,
         "human_tasks": human_tasks,
+        "proposed": proposed,
         "unread": unread,
         "labels": _labels(ctx),
     }
@@ -302,6 +316,7 @@ def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = 
                     "parked_issues": None,
                     "refused": None,
                     "human_tasks": None,
+                    "proposed": None,
                     "labels": _labels(ctx),
                     "error": str(exc)[:300],
                 }

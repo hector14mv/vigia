@@ -107,6 +107,16 @@ class FakeGitHub:
     def issue(self, n: int) -> dict:
         return dict(self.issues_[n])
 
+    def issues_all(self) -> list[dict]:
+        return [
+            {"number": i["number"], "title": i["title"]}
+            for i in self.issues_.values()
+            if i["state"] == "OPEN"
+        ]
+
+    def create_issue(self, title: str, body: str, labels: list[str]) -> int:
+        return self.add_issue(title, body, labels)
+
     def add_labels(self, n: int, *labels: str) -> None:
         item = self._item(n)
         item["labels"] = sorted(set(item["labels"]) | set(labels))
