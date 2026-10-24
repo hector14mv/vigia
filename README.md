@@ -237,8 +237,8 @@ vigia plan "Article titles become short, readable URL slugs: a maximum length th
 
 A planner session (Claude Opus by default) reads the base branch, read-only, and writes tickets in the
 template, with what it verified in the code under `## Facts`. vigia files them as issues: a launchable T0 or T1
-ticket goes straight to the queue with `vigia:ready`; a T2 ticket, or one the template check refuses, waits as
-`vigia:proposed` until a person reads it and swaps the label; work only a person can do (an account, a secret,
+ticket goes straight to the queue with `vigia:ready`; a T2 ticket, one the template check refuses, or one that
+needs an earlier ticket of the plan merged first, waits as `vigia:proposed` until a person reads it and swaps the label; work only a person can do (an account, a secret,
 a product decision) becomes a `vigia:human-task` issue. The Mesa shows the last two under "Your turn".
 `--dry-run` prints the plan without filing it, and `--propose-only` files everything as proposed.
 

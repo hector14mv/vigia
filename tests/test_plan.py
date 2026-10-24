@@ -2,17 +2,31 @@
 
 import json
 
+import pytest
+
 from fakes import engine
 from test_e2e import TICKET, world  # noqa: F401  (world is a fixture)
 from vigia import plan
+from vigia.config import Config, Labels, default_tiers
+from vigia.proc import Result
 
 
 def _plan(**extra):
     body = {
         "tickets": [
-            {"title": "test: cover shout() on empty input", "tier": "T0", "body": TICKET},
-            {"title": "feat: charge a card", "tier": "T2", "body": TICKET},
-            {"title": "feat: vague idea", "tier": "T1", "body": "## Outcome\nmake it better\n"},
+            {
+                "title": "test: cover shout() on empty input",
+                "tier": "T0",
+                "depends_on_earlier": False,
+                "body": TICKET,
+            },
+            {"title": "feat: charge a card", "tier": "T2", "depends_on_earlier": False, "body": TICKET},
+            {
+                "title": "feat: vague idea",
+                "tier": "T1",
+                "depends_on_earlier": False,
+                "body": "## Outcome\nmake it better\n",
+            },
         ],
         "human_tasks": [{"title": "Create the Stripe account", "body": "Sign up at stripe.com."}],
     }
@@ -102,3 +116,57 @@ def test_the_template_header_never_lands_in_a_ticket():
     parsed = plan.parse(json.dumps({"tickets": tickets, "human_tasks": []}))
     assert parsed["tickets"][0]["body"].startswith("## Outcome")
     assert "name: vigia ticket" not in plan._skill(Path("/nonexistent"))
+
+
+def test_a_ticket_that_needs_an_earlier_one_merged_waits_for_a_person(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    planned = [
+        {"title": "feat: add a helper", "tier": "T1", "depends_on_earlier": False, "body": TICKET},
+        {"title": "refactor: migrate callers", "tier": "T1", "depends_on_earlier": True, "body": TICKET},
+        {"title": "docs: unrelated note", "tier": "T0", "depends_on_earlier": False, "body": TICKET},
+        {"title": "test: no word on order", "tier": "T0", "body": TICKET},  # silence counts as dependent
+    ]
+    filed = plan.file_plan(ctx, plan.parse(json.dumps({"tickets": planned, "human_tasks": []})), "g")
+    labels = {f["title"]: set(f["labels"]) for f in filed}
+    assert labels["feat: add a helper"] == {"tier:T1", "vigia:ready"}
+    assert labels["refactor: migrate callers"] == {"tier:T1", "vigia:proposed"}
+    assert labels["docs: unrelated note"] == {"tier:T0", "vigia:ready"}
+    assert labels["test: no word on order"] == {"tier:T0", "vigia:proposed"}
+    helper = filed[0]["number"]
+    migrate = next(i for i in gh.issues_.values() if i["title"] == "refactor: migrate callers")
+    assert f"Planned to follow #{helper}" in migrate["body"]
+    assert [i["title"] for i in gh.issues("vigia:ready")] == ["feat: add a helper", "docs: unrelated note"]
+
+
+def test_the_first_ticket_never_waits_on_an_earlier_one():
+    planned = [{"title": "a", "tier": "T0", "depends_on_earlier": True, "body": TICKET}]
+    assert plan.parse(json.dumps({"tickets": planned, "human_tasks": []}))["tickets"][0]["after"] is False
+
+
+@pytest.mark.parametrize("ready", ["vigia:proposed", "Vigia:Proposed", "vigia:human-task", "tier:T2"])
+def test_a_ready_label_that_is_a_planner_or_tier_label_files_nothing(world, ready):  # noqa: F811
+    gh, build = world
+    cfg = Config(repo=gh.repo, base="main", tiers=default_tiers("claude"), labels=Labels(ready=ready))
+    ctx, _ = build([], cfg=cfg)
+    before = len(gh.issues_)
+    with pytest.raises(SystemExit, match="reserved"):
+        plan.file_plan(ctx, plan.parse(json.dumps(_plan())), "g")
+    assert len(gh.issues_) == before
+
+
+def test_a_failed_planner_session_files_nothing_even_with_a_plan_in_its_output(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+
+    def hung(cmd, cwd, input, timeout, log, env=None, keep_fds=()):
+        out = json.dumps({"is_error": False, "result": json.dumps(_plan())})
+        return Result(-15, out, "", timed_out=True)
+
+    ctx.engines._run = hung
+    before = len(gh.issues_)
+    with pytest.raises(SystemExit, match="no plan"):
+        plan.plan(ctx, "anything")
+    assert len(gh.issues_) == before
+    (failed,) = ctx.ledger.events("plan_failed")
+    assert failed["timed_out"] is True and failed["code"] == -15

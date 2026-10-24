@@ -3,7 +3,8 @@
 The planner reads the base branch (read-only, like a reviewer) and answers with JSON. vigia files each ticket as
 an issue: a launchable T0 or T1 ticket goes straight to the queue (`vigia:ready`); a T2 ticket, or one the
 template check refuses, waits as `vigia:proposed` for a person to ratify, because what touches money, auth or
-data is a person's call to start. Work only a person can do (an account, a secret, a decision) becomes a
+data is a person's call to start. So does a ticket that needs an earlier one of the plan merged first: the queue
+starts ready tickets side by side, in any order, so it waits until a person releases it. Work only a person can do (an account, a secret, a decision) becomes a
 `vigia:human-task` issue, which the Mesa shows under "Your turn".
 """
 
@@ -14,12 +15,10 @@ import re
 from pathlib import Path
 
 from . import tickets
-from .config import TIERS, Seat
+from .config import HUMAN_TASK, PROPOSED, TIERS, Seat
 from .context import Ctx
 from .init import label_specs
 
-PROPOSED = "vigia:proposed"
-HUMAN_TASK = "vigia:human-task"
 DEFAULT_SEAT = Seat("claude", "claude-opus-5-5", "high")
 
 PLAN_SCHEMA = {
@@ -32,10 +31,11 @@ PLAN_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["title", "tier", "body"],
+                "required": ["title", "tier", "depends_on_earlier", "body"],
                 "properties": {
                     "title": {"type": "string"},
                     "tier": {"type": "string", "enum": list(TIERS)},
+                    "depends_on_earlier": {"type": "boolean"},
                     "body": {"type": "string"},
                 },
             },
@@ -86,6 +86,8 @@ current directory is a read-only checkout of `{base}` of {repo}: read the code b
 
 ## Rules
 - One concern per ticket, small enough for one pull request. Order them so each builds on merged work.
+- Set `depends_on_earlier` to true when a ticket needs an earlier ticket of this plan merged first. Tickets without
+  it may be built at the same time, from the same base, so it waits for a person to release it.
 - Say what changes and what must keep working; leave how to the builder unless you verified it in the code.
 - Every claim about the code (a file, a function, current behaviour) goes in `## Facts`, marked verified (what you
   read, with file:line) or hypothesis.
@@ -99,7 +101,7 @@ current directory is a read-only checkout of `{base}` of {repo}: read the code b
 
 ## Output
 Reply with only one JSON object: {{"tickets": [{{"title": "<conventional-commit style, under 70 chars>",
-"tier": "T0" | "T1" | "T2", "body": "<the full ticket in the template>"}}], "human_tasks": [{{"title": "...",
+"tier": "T0" | "T1" | "T2", "depends_on_earlier": true | false, "body": "<the full ticket in the template>"}}], "human_tasks": [{{"title": "...",
 "body": "..."}}]}}
 
 ## Open issues
@@ -114,7 +116,8 @@ Reply with only one JSON object: {{"tickets": [{{"title": "<conventional-commit 
 
 
 def parse(text: str) -> dict | None:
-    """The planner's JSON, or None when it returned none. Malformed entries are dropped, never guessed."""
+    """The planner's JSON, or None when it returned none. Malformed entries are dropped, never guessed. A ticket
+    after the first that does not say `depends_on_earlier: false` is taken to depend on the ones before it."""
     body = (text or "").strip()
     start, end = body.find("{"), body.rfind("}")
     if start < 0 or end <= start:
@@ -134,7 +137,10 @@ def parse(text: str) -> dict | None:
             and str(t.get("body") or "").strip()
         ):
             body = strip_front_matter(str(t["body"]).strip())
-            out["tickets"].append({"title": str(t["title"]).strip()[:120], "tier": t["tier"], "body": body})
+            after = bool(out["tickets"]) and t.get("depends_on_earlier") is not False
+            out["tickets"].append(
+                {"title": str(t["title"]).strip()[:120], "tier": t["tier"], "after": after, "body": body}
+            )
     for h in data.get("human_tasks") or []:
         if isinstance(h, dict) and str(h.get("title") or "").strip():
             out["human_tasks"].append(
@@ -146,10 +152,14 @@ def parse(text: str) -> dict | None:
 def file_plan(ctx: Ctx, plan: dict, goal: str, auto_ready: bool = True) -> list[dict]:
     """Create the issues. Returns [{'number', 'title', 'labels'}] for what was filed."""
     labels = ctx.cfg.labels
+    if labels.collisions():  # vigia.toml refuses these; a Config built another way must not either
+        raise SystemExit(
+            f"labels {labels.collisions()} are reserved for the planner and the tiers: nothing filed"
+        )
     checked = []
     for t in plan["tickets"]:
         gaps = tickets.missing(t["body"])
-        checked.append((t, gaps, auto_ready and not gaps and t["tier"] != "T2"))
+        checked.append((t, gaps, auto_ready and not gaps and t["tier"] != "T2" and not t.get("after")))
     # A repo set up by an older `vigia init` has no planner labels yet: create them first, so a plan is never
     # left half filed by a label GitHub refuses.
     needed = {PROPOSED for _, _, ready in checked if not ready} | (
@@ -164,8 +174,13 @@ def file_plan(ctx: Ctx, plan: dict, goal: str, auto_ready: bool = True) -> list[
         body = t["body"] + f"\n\n<!-- vigia:planned goal={json.dumps(goal[:200])} -->\n"
         if gaps:
             body += "\n> Planned by vigia, but the template check found gaps: " + "; ".join(gaps) + "\n"
+        if t.get("after") and filed:
+            earlier = ", ".join(f"#{f['number']}" for f in filed)
+            body += f"\n> Planned to follow {earlier}: add `{labels.ready}` once they are merged.\n"
         number = ctx.gh.create_issue(t["title"], body, names)
-        ctx.ledger.append("planned", issue=number, tier=t["tier"], ready=ready, gaps=gaps)
+        ctx.ledger.append(
+            "planned", issue=number, tier=t["tier"], ready=ready, gaps=gaps, after=bool(t.get("after"))
+        )
         filed.append({"number": number, "title": t["title"], "labels": names})
     for h in plan["human_tasks"]:
         number = ctx.gh.create_issue(
@@ -196,7 +211,8 @@ def plan(
         outcome = ctx.engines.run(seat, "reviewer", text, wt, name=f"plan-{base_sha[:8]}", schema=PLAN_SCHEMA)
     finally:
         ctx.git.remove_worktree(wt)
-    result = parse(outcome.text)
+    # a session that failed or hit its time cap is not trusted, even when it left parseable JSON behind
+    result = parse(outcome.text) if outcome.ok else None
     if result is None:
         ctx.ledger.append("plan_failed", goal=goal[:200], code=outcome.code, timed_out=outcome.timed_out)
         raise SystemExit(f"the planner returned no plan (exit {outcome.code}; log {outcome.log})")
