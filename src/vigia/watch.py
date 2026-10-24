@@ -168,16 +168,17 @@ def merge(ctx: Ctx, seen: Seen) -> bool:
     return True
 
 
-def park(ctx: Ctx, seen: Seen) -> None:
+def park(ctx: Ctx, seen: Seen, recheck: bool = True) -> None:
     """Park, after deciding again on a fresh read under the PR's lock: a job that just finished may have pushed
-    a new head since the tick's snapshot, and a stale park would stop a PR that is fine."""
+    a new head since the tick's snapshot, and a stale park would stop a PR that is fine. `recheck=False` is for a
+    fact the rules cannot see (a base that conflicts): the head must still not have moved."""
     n = seen.pr["number"]
     with jobs.hold(ctx, jobs.target("gate", n)) as got:
         if not got:
             ctx.say(f"PR #{n}: not parking — a job is working on it")
             return
         fresh = ctx.gh.pr(n)
-        d = decide(state(ctx, fresh), ctx.cfg)
+        d = decide(state(ctx, fresh), ctx.cfg) if recheck else seen.decision
         if d.action != "park" or fresh["head"] != seen.decision.sha:
             ctx.say(f"PR #{n}: not parking — {d}")
             return
@@ -240,6 +241,7 @@ def tick(
                             s.state,
                             Decision("park", "merging the moved base into this PR conflicts", s.pr["head"]),
                         ),
+                        recheck=False,
                     )
             except CommandError as exc:  # one PR's failure must not stop the others; the next tick re-decides
                 ctx.ledger.append("error", pr=s.pr["number"], action=s.decision.action, detail=str(exc)[:500])
