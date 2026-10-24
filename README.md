@@ -222,6 +222,8 @@ model given by alias.
 
 ## Limitations of v0.1
 
+What comes next is in the [roadmap](docs/roadmap.md).
+
 - Tested on macOS and Linux, with GitHub, Claude Code 2.1.294 and Codex CLI 0.159–0.164. No Windows, no
   GitLab, no other engines yet.
 - One engine session at a time per clone. The factory this comes from ran six in parallel.
