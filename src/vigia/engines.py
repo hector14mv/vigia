@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import proc, safety
+from . import jobs, proc, safety
 from .config import DEFAULT_ENGINE_ARGS, Config, Seat
 
 SessionRunner = Callable[..., proc.Result]
@@ -185,6 +185,7 @@ class Engines:
         safety.remove(gh_config, self.root)  # an interrupted run's: start logged out, never from its state
         gh_config.mkdir(parents=True)
         started = time.monotonic()
+        held = jobs.held()
         try:
             result = self._run(
                 cmd,
@@ -193,6 +194,7 @@ class Engines:
                 timeout=self.cfg.caps.session_minutes * 60,
                 log=self.logs / f"{name}.log",
                 env=session_env(os.environ, gh_config),
+                **({"keep_fds": held} if held else {}),
             )
         finally:
             safety.remove(gh_config, self.root)

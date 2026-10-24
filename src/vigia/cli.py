@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
+from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
-from . import __version__, builder, doctor, gate, status, watch
+from . import __version__, builder, doctor, gate, jobs, status, watch, workspace
+from . import config as config_mod
 from . import init as init_mod
 from .config import ConfigError
 from .context import Busy, Ctx
@@ -48,19 +52,61 @@ def cmd_run(args: argparse.Namespace) -> int:
     ctx = Ctx.load(Path.cwd())
     with ctx.lock():
         if args.issue:
-            issue = ctx.gh.issue(args.issue)
-            if issue["state"] != "OPEN":
-                raise SystemExit(f"#{args.issue} is closed")
-            problems = builder.gaps(ctx, issue)
-            if problems:
-                raise SystemExit(f"#{args.issue} is not launchable: " + "; ".join(problems))
+            number = args.issue
         else:
-            issue = builder.next_issue(ctx)
-            if issue is None:
+            picked = builder.next_issue(ctx)
+            if picked is None:
                 print(f"No ready issues (label `{ctx.cfg.labels.ready}`).")
                 return 0
-        pr = builder.build(ctx, issue)
+            number = picked["number"]
+        with _target(ctx, "build", number):
+            # Everything is read again under the issue's lock: a detached job may have built it and let go of it
+            # since it was picked (or since the person typed the number).
+            if args.issue:
+                issue = ctx.gh.issue(number)
+                if issue["state"] != "OPEN":
+                    raise SystemExit(f"#{number} is closed")
+                if ctx.cfg.labels.building in issue["labels"]:
+                    raise SystemExit(f"#{number} is being built; try again when that ends")
+                problems = builder.gaps(ctx, issue)
+                if problems:
+                    raise SystemExit(f"#{number} is not launchable: " + "; ".join(problems))
+            else:
+                due, issue, _ = jobs.still_due(ctx, "build", number)
+                if not due:
+                    print(f"#{number} is no longer ready; nothing to do.")
+                    return 0
+            existing = _open_pr_for(ctx, number)
+            if existing:
+                raise SystemExit(f"#{number} already has an open pull request built by vigia: #{existing}")
+            pr = builder.build(ctx, issue)
     return 0 if pr else 1
+
+
+def _open_pr_for(ctx: Ctx, issue: int) -> int | None:
+    """The open PR vigia built for `issue`, if any: a manual build must not open a second one.
+
+    A PR whose state cannot be read stops the run: an unknown state is no permission to build again."""
+    for row in reversed(ctx.ledger.events("pr_opened", issue=issue)):
+        try:
+            if ctx.gh.pr(row["pr"])["state"] == "OPEN":
+                return row["pr"]
+        except CommandError as e:
+            raise SystemExit(
+                f"#{issue}: cannot tell whether its pull request #{row['pr']} is still open ({e}); try again later"
+            ) from e
+    return None
+
+
+@contextmanager
+def _target(ctx: Ctx, action: str, number: int):
+    """Manual commands take the same per-target lock as `vigia watch`'s jobs, so they never run alongside one."""
+    with jobs.hold(ctx, jobs.target(action, number)) as got:
+        if not got:
+            raise SystemExit(
+                f"a vigia job is working on {jobs.target(action, number)}; try again when it ends"
+            )
+        yield
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -73,20 +119,72 @@ def cmd_review(args: argparse.Namespace) -> int:
             if e["verdict"] != "UNAVAILABLE"
         }
         round_no = len(rounds | {pr["head"]})
-        verdict = gate.review(ctx, pr, args.kind, round_no)
+        with _target(ctx, args.kind, args.pr):
+            verdict = gate.review(ctx, pr, args.kind, round_no)
     return 0 if verdict in ("APPROVE", "CHANGES") else 1
 
 
 def cmd_fix(args: argparse.Namespace) -> int:
     ctx = Ctx.load(Path.cwd())
-    with ctx.lock():
+    with ctx.lock(), _target(ctx, "fix", args.pr):
         ok = builder.fix(ctx, _pr(ctx, args.pr), args.stage)
     return 0 if ok else 1
 
 
+def _workspace() -> tuple[workspace.Workspace, list[Ctx]] | None:
+    """The workspace to work on when the command runs outside any repo but inside a workspace folder."""
+    try:
+        config_mod.find(Path.cwd())
+        return None  # inside a repo: that repo only
+    except ConfigError:
+        pass
+    path = workspace.find(Path.cwd())
+    if path is None:
+        return None
+    ws = workspace.load(path)
+    return ws, [Ctx.load(repo) for repo in ws.repos]
+
+
+def _stop_on_sigterm() -> None:
+    """Turn SIGTERM (systemctl stop, kill) into SystemExit, so a running engine session is stopped first."""
+
+    def stop(signum, frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, stop)
+
+
+def _slots(value: str) -> int:
+    try:
+        slots = int(value)
+    except ValueError:
+        slots = 0
+    if not 1 <= slots <= 32:
+        raise argparse.ArgumentTypeError(f"expected an integer from 1 to 32, got {value!r}")
+    return slots
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
-    ctx = Ctx.load(Path.cwd())
+    _stop_on_sigterm()
     build = False if args.no_build else None
+    found = _workspace()
+    if found:
+        ws, contexts = found
+        if args.slots:
+            ws = workspace.Workspace(ws.path, ws.repos, args.slots)
+        if args.once:
+            watch.workspace_tick(ws, contexts, build)
+            return 0
+        try:
+            watch.workspace_loop(
+                ws, contexts, args.interval or min(c.cfg.interval_seconds for c in contexts), build
+            )
+        except KeyboardInterrupt:
+            print("\nstopped")
+        return 0
+    ctx = Ctx.load(Path.cwd())
+    if args.slots:
+        ctx.cfg = replace(ctx.cfg, slots=args.slots)
     if args.once:
         watch.tick(ctx, build)  # tick reports each decision itself, before acting on it
         return 0
@@ -97,7 +195,38 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_job(args: argparse.Namespace) -> int:
+    _stop_on_sigterm()
+    ctx = Ctx.load(Path.cwd())
+    return 0 if jobs.run(ctx, args.action, args.number, args.stage or "", lock_fd=args.lock_fd) else 1
+
+
+def cmd_workspace(args: argparse.Namespace) -> int:
+    folder = Path.cwd()
+    target = folder / workspace.WORKSPACE_NAME
+    if target.exists() and not args.force:
+        raise SystemExit(f"{target} already exists (use --force to overwrite)")
+    repos = workspace.discover(folder)
+    if not repos:
+        raise SystemExit(
+            f"no sub-folder of {folder} has a vigia.toml: clone your repos here and run `vigia init` in each"
+        )
+    slots = args.slots or workspace.recommend_slots()
+    target.write_text(workspace.render(slots, repos), encoding="utf-8")
+    print(f"Wrote {target}: {len(repos)} repo(s) ({', '.join(repos)}), {slots} slot(s).")
+    print("Run `vigia watch` and `vigia status` from this folder.")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
+    found = _workspace()
+    if found and not args.html:
+        _, contexts = found
+        if args.json:
+            print("[" + ",\n".join(status.show(c, as_json=True) for c in contexts) + "]")
+        else:
+            print("\n\n".join(status.show(c) for c in contexts))
+        return 0
     ctx = Ctx.load(Path.cwd())
     if args.html:
         try:
@@ -151,7 +280,30 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--once", action="store_true", help="one tick, then exit")
     s.add_argument("--interval", type=int, help="seconds between ticks (default: watch.interval_seconds)")
     s.add_argument("--no-build", action="store_true", help="do not build new issues, only move open PRs")
+    s.add_argument(
+        "--slots", type=_slots, help="engine sessions at once (default: watch.slots, or the workspace's)"
+    )
     s.set_defaults(func=cmd_watch)
+
+    s = sub.add_parser(
+        "workspace", help="write vigia.workspace.toml here: one folder that drives every clone below it"
+    )
+    s.add_argument(
+        "--slots",
+        type=_slots,
+        help="engine sessions at once across all repos (default: what this machine fits)",
+    )
+    s.add_argument("--force", action="store_true", help="overwrite an existing vigia.workspace.toml")
+    s.set_defaults(func=cmd_workspace)
+
+    s = sub.add_parser("job", help=argparse.SUPPRESS)  # what `vigia watch` starts for each parallel session
+    s.add_argument("action", choices=jobs.ACTIONS)
+    s.add_argument("number", type=int)
+    s.add_argument("stage", nargs="?")
+    s.add_argument(
+        "--lock-fd", type=int, help=argparse.SUPPRESS
+    )  # the target lock the watcher took for this job
+    s.set_defaults(func=cmd_job)
 
     s = sub.add_parser("status", help="queue, open PRs and their next step, parked reasons, recent events")
     out = s.add_mutually_exclusive_group()

@@ -99,7 +99,7 @@ None: a pure function with no I/O.
 gh issue create --title "feat: truncate() shortens text on a word boundary" \
   --body-file ticket.md --label tier:T1 --label vigia:ready
 vigia run       # build the oldest ready issue into a pull request, then stop
-vigia watch     # the loop: CI → gate → fix → review → merge or park, one session at a time
+vigia watch     # the loop: CI → gate → fix → review → merge or park, until Ctrl-C
 vigia status    # the queue, every open PR with its next step, parked reasons, recent events
 ```
 
@@ -207,13 +207,32 @@ To make Codex build and Claude review, run `vigia init --builder codex`. vigia r
 which a tier's gate comes from the same lab as its builder, a T2 without the human label, or a
 model given by alias.
 
+## Parallel sessions and several repositories
+
+`watch.slots` in `vigia.toml` is how many engine sessions run at once. `vigia init` proposes a number from the
+machine (about two cores and two GB of RAM per session, at most six) and from Codex's weekly quota when its CLI
+has recorded one. With one slot, each tick runs at most one session inline. With more, the watcher starts each
+gate, review, fix or build as its own `vigia job` process and moves on; a job holds a lock on its PR or issue
+for its whole life, so no two sessions ever work on the same PR, and it re-reads GitHub and decides again before
+it spends a session. Every PR still spends one gate from the other lab, so slots are also a quota decision.
+
+To drive several repositories from one place, clone them side by side in one folder, run `vigia init` in each,
+then in the folder itself:
+
+```bash
+vigia workspace            # writes vigia.workspace.toml: the clones below it and the slots they share
+vigia watch                # every repo, sharing the slots
+vigia status               # every repo
+```
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `vigia init [--repo OWNER/NAME] [--builder claude\|codex] [--yes] [--force] [--no-labels]` | check tools, choose engines per tier, write `vigia.toml`, create labels; `--repo` defaults to the clone's GitHub repo, `--yes` accepts the defaults, `--force` overwrites an existing `vigia.toml`, `--no-labels` skips creating labels |
 | `vigia run [--issue N]` | build one ready issue into a pull request (default: the oldest ready one) |
-| `vigia watch [--once] [--interval SECONDS] [--no-build]` | the loop, until Ctrl-C; one engine session per tick, merges and parks for every PR; `--once` runs one tick, `--interval` sets the seconds between ticks (default `watch.interval_seconds`), `--no-build` only moves open PRs |
+| `vigia watch [--once] [--interval SECONDS] [--no-build] [--slots N]` | the loop, until Ctrl-C; merges and parks for every PR, and runs or starts engine sessions up to `watch.slots`; `--once` runs one tick, `--interval` sets the seconds between ticks (default `watch.interval_seconds`), `--no-build` only moves open PRs, `--slots` overrides the slots; in a workspace folder, every repo |
+| `vigia workspace [--slots N] [--force]` | write `vigia.workspace.toml` for the clones below this folder |
 | `vigia status [--json \| --html PATH]` | queue, open PRs with their next step, parked reasons, recent ledger; `--json` prints JSON, `--html PATH` writes a self-contained HTML page and prints its path |
 | `vigia doctor [--json]` | check that vigia can work in this clone (tools, `vigia.toml`, repo, labels, CI workflow, test command, work root, lock); every problem comes with the command that fixes it; exit code 1 if any check fails |
 | `vigia review --pr N [--kind gate\|review]` | run the gate or the tier reviewer on a PR's head now |
@@ -226,7 +245,7 @@ What comes next is in the [roadmap](docs/roadmap.md).
 
 - Tested on macOS and Linux, with GitHub, Claude Code 2.1.294 and Codex CLI 0.159–0.164. No Windows, no
   GitLab, no other engines yet.
-- One engine session at a time per clone. The factory this comes from ran six in parallel.
+- Parallel sessions share one machine: there are no memory, disk or load gates yet beyond the slot count.
 - A PR that conflicts with its base is parked, not rebased.
 - Fix rounds use the tier's builder engine, so they stay in the builder's lab.
 - The ledger lives in the clone you run vigia from; run it from one place.

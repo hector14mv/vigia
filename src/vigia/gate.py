@@ -6,7 +6,7 @@ longer covers the PR, and the decision table asks for a new one.
 
 from __future__ import annotations
 
-from . import comments, prompts, tickets
+from . import comments, jobs, prompts, tickets
 from .context import Ctx
 from .engines import parse_verdict
 from .proc import CommandError
@@ -24,8 +24,12 @@ def _issue(ctx: Ctx, pr: dict) -> dict | None:
 
 
 def recover(ctx: Ctx) -> None:
-    """Remove review worktrees an interrupted session left behind. Runs under the tick lock, so no review is live."""
+    """Remove review worktrees an interrupted session left behind. Runs under the tick lock; a worktree whose PR
+    has a live job (vigia.jobs) belongs to a review in progress and is kept."""
     for path in sorted(ctx.root.glob("gate-*")) + sorted(ctx.root.glob("review-*")):
+        number = path.name.split("-")[1]
+        if number.isdigit() and jobs.busy(ctx, jobs.target("gate", int(number))):
+            continue
         ctx.git.remove_worktree(path)
 
 

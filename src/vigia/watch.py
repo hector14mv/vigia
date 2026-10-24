@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from . import builder, comments, gate, tickets
+from . import builder, comments, gate, jobs, tickets
 from .context import Ctx
 from .proc import CommandError
 from .rules import Decision, PRState, Verdict, decide
@@ -153,7 +153,23 @@ def merge(ctx: Ctx, seen: Seen) -> bool:
 
 
 def park(ctx: Ctx, seen: Seen) -> None:
-    n, d, labels = seen.pr["number"], seen.decision, ctx.cfg.labels
+    """Park, after deciding again on a fresh read under the PR's lock: a job that just finished may have pushed
+    a new head since the tick's snapshot, and a stale park would stop a PR that is fine."""
+    n = seen.pr["number"]
+    with jobs.hold(ctx, jobs.target("gate", n)) as got:
+        if not got:
+            ctx.say(f"PR #{n}: not parking — a job is working on it")
+            return
+        fresh = ctx.gh.pr(n)
+        d = decide(state(ctx, fresh), ctx.cfg)
+        if d.action != "park" or fresh["head"] != seen.decision.sha:
+            ctx.say(f"PR #{n}: not parking — {d}")
+            return
+        _park(ctx, n, d)
+
+
+def _park(ctx: Ctx, n: int, d: Decision) -> None:
+    labels = ctx.cfg.labels
     ctx.gh.add_labels(n, labels.parked)
     # The record comes before the comment: once the label is on, `_track` needs the `parked` row to
     # notice the unpark, so a failed comment must not lose it.
@@ -166,13 +182,27 @@ def park(ctx: Ctx, seen: Seen) -> None:
         ctx.say(f"PR #{n}: parked, but the explaining comment failed — {exc}")
 
 
-def tick(ctx: Ctx, build: bool | None = None) -> list[Seen]:
-    """One pass. Returns what was seen and decided."""
+def tick(
+    ctx: Ctx, build: bool | None = None, slots: int | None = None, parallel: bool | None = None
+) -> list[Seen]:
+    """One pass. Returns what was seen and decided.
+
+    `slots` (default `watch.slots`) is how many engine sessions may run at once. With one, the tick runs at
+    most one session itself, inline. With more, it starts `vigia job` processes for the free slots and
+    returns without waiting (vigia.jobs); a PR or issue that already has a live job is left alone. A workspace
+    passes `parallel=True` with this repo's share of the workspace's slots, which can be zero.
+    """
     build = ctx.cfg.build_in_watch if build is None else build
+    slots = ctx.cfg.slots if slots is None else slots
+    parallel = slots > 1 if parallel is None else parallel
     with ctx.lock():
         builder.recover(ctx)
         gate.recover(ctx)
         seen = sense(ctx)
+        running = set(jobs.live(ctx))
+        for s in seen:  # a live job owns its PR: no merge, park or second session until it ends
+            if jobs.target("gate", s.pr["number"]) in running:
+                s.decision = Decision("wait", "a job is working on it", s.pr["head"])
         for s in seen:  # report every decision first, so the output reads in the order things happen
             ctx.say(f"PR #{s.pr['number']}: {s.decision}")
         for s in seen:
@@ -184,19 +214,43 @@ def tick(ctx: Ctx, build: bool | None = None) -> list[Seen]:
             except CommandError as exc:  # one PR's failure must not stop the others; the next tick re-decides
                 ctx.ledger.append("error", pr=s.pr["number"], action=s.decision.action, detail=str(exc)[:500])
                 ctx.say(f"PR #{s.pr['number']}: {s.decision.action} failed — {exc}")
-        for s in seen:
+        if parallel:
+            _spawn_jobs(ctx, seen, build, slots - len(running), running)
+            return seen
+        if running:  # one slot, and a job from an earlier parallel run still holds it
+            return seen
+        for s in seen:  # inline, through jobs.run too: same target lock and same last check as a job
             d = s.decision
-            if d.action in ("gate", "review"):
-                gate.review(ctx, s.pr, d.action, int(d.stage or 1))
-                return seen
-            if d.action == "fix":
-                builder.fix(ctx, s.pr, d.stage)
+            if d.action in ("gate", "review", "fix"):
+                jobs.run(ctx, d.action, s.pr["number"], d.stage)
                 return seen
         if build:
-            issue = builder.next_issue(ctx)
+            issue = builder.next_issue(ctx, skip=_building(running))
             if issue is not None:
-                builder.build(ctx, issue)
+                jobs.run(ctx, "build", issue["number"])
         return seen
+
+
+def _building(running: set[str]) -> set[int]:
+    return {int(name.split("-", 1)[1]) for name in running if name.startswith("issue-")}
+
+
+def _spawn_jobs(ctx: Ctx, seen: list[Seen], build: bool, free: int, running: set[str]) -> None:
+    """Fill the free slots: open PRs first, oldest first (they are closest to a merge), then new builds."""
+    for s in seen:
+        if free <= 0:
+            return
+        d = s.decision
+        if d.action in ("gate", "review", "fix") and jobs.spawn(ctx, d.action, s.pr["number"], d.stage):
+            free -= 1
+    skip = _building(running)
+    while build and free > 0:
+        issue = builder.next_issue(ctx, skip=skip)
+        if issue is None:
+            return
+        skip.add(issue["number"])
+        if jobs.spawn(ctx, "build", issue["number"]):
+            free -= 1
 
 
 def loop(ctx: Ctx, interval: int, build: bool | None = None) -> None:
@@ -208,4 +262,32 @@ def loop(ctx: Ctx, interval: int, build: bool | None = None) -> None:
         except Exception as exc:  # one bad tick must not stop the watcher; the next one starts clean
             ctx.ledger.append("error", detail=str(exc)[:500])
             ctx.say(f"tick failed: {exc}")
+        time.sleep(max(5, interval - (time.monotonic() - started)))
+
+
+def workspace_tick(ws, contexts: list[Ctx], build: bool | None = None) -> None:
+    """One pass over every repo of a workspace, sharing `ws.slots` engine sessions between them."""
+    from . import workspace
+
+    with workspace.lock(ws):  # one watcher per workspace: the shared budget is checked and spent in one place
+        for ctx in contexts:
+            try:
+                live = workspace.live_by_repo(contexts)
+                if ws.slots <= 1 and not sum(live.values()):  # the workspace's one slot wins over watch.slots
+                    tick(ctx, build, slots=1, parallel=False)
+                    continue
+                tick(
+                    ctx, build, slots=workspace.allowance(ws.slots, live, ctx.clone.resolve()), parallel=True
+                )
+            except Exception as exc:  # one repo's failure must not stop the others
+                ctx.ledger.append("error", detail=str(exc)[:500])
+                ctx.say(f"{ctx.cfg.repo}: tick failed — {exc}")
+
+
+def workspace_loop(ws, contexts: list[Ctx], interval: int, build: bool | None = None) -> None:
+    names = ", ".join(c.cfg.repo for c in contexts)
+    print(f"vigia watching {names} with {ws.slots} slot(s), every {interval} s (Ctrl-C to stop)")
+    while True:
+        started = time.monotonic()
+        workspace_tick(ws, contexts, build)
         time.sleep(max(5, interval - (time.monotonic() - started)))

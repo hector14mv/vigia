@@ -6,6 +6,7 @@ import contextlib
 import os
 import signal
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,10 +67,14 @@ def run_session(
     timeout: float,
     log: Path,
     env: dict[str, str] | None = None,
+    keep_fds: tuple[int, ...] = (),
 ) -> Result:
     """Run an engine session: its own process group (so a timeout kills the whole tree), output to `log`.
 
     `env`, when given, is the session's whole environment (not merged into ours), so it can leave variables out.
+    `keep_fds` are inherited by the session: vigia passes the target locks it holds (vigia.jobs.held), so a
+    PR stays locked while its engine lives, even if the process that started the engine is killed outright.
+    If this call is interrupted (Ctrl-C, or SIGTERM turned into SystemExit), the session is stopped first.
     """
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w", encoding="utf-8") as err:
@@ -83,21 +88,77 @@ def run_session(
                 text=True,
                 start_new_session=True,
                 env=env,
+                pass_fds=keep_fds,
             )
         except FileNotFoundError:
             return Result(127, "", f"{args[0]}: command not found")
         try:
             out, _ = proc.communicate(input=input, timeout=timeout)
+            # The engine is done, but a child it started may not be: nothing of the session outlives this call,
+            # or the target would be let go while something still works on it.
+            _end_group(proc.pid, grace=5, proc=proc)
             return Result(proc.returncode, out or "", "")
         except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGTERM)
-            try:
-                out, _ = proc.communicate(timeout=15)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
-                out, _ = proc.communicate()
+            out = _stop(proc, grace=15)
             return Result(
                 proc.returncode if proc.returncode is not None else -9, out or "", "", timed_out=True
             )
+        except BaseException:  # the runner is going away: the session must not outlive it
+            _stop(proc, grace=5)
+            raise
+
+
+def _stop(proc: subprocess.Popen, grace: float) -> str:
+    """SIGTERM the session's process group, SIGKILL what is left of it after `grace` seconds; return what it
+    printed.
+
+    The engine exiting is not the group exiting: a child that ignores SIGTERM and closed its inherited fds
+    (so it holds neither the output pipe nor the target lock) would keep working on the target after vigia
+    lets go of it. So the whole group gets the grace period, and is gone before this returns.
+    """
+    deadline = time.monotonic() + grace
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
+    out = None
+    try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            out, _ = proc.communicate(timeout=grace)
+    finally:  # output that cannot be decoded raises here: the group still goes before the error leaves
+        _end_group(proc.pid, grace=max(0.0, deadline - time.monotonic()), proc=proc)
+    if out is None:
+        out, _ = proc.communicate()
+    return out
+
+
+def _end_group(pgid: int, grace: float, proc: subprocess.Popen | None = None) -> None:
+    """Make sure no process is left in group `pgid`: SIGTERM, then SIGKILL after `grace` seconds, then wait for
+    the group to be gone (at most five more seconds). `proc`, the group's leader, is reaped along the way."""
+
+    def alive() -> bool:
+        if proc is not None:
+            proc.poll()  # reap the leader, or macOS keeps answering for its zombie
+        return _group_alive(pgid)
+
+    if not alive():
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pgid, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    while alive() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if alive():
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pgid, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while alive() and time.monotonic() < deadline:  # SIGKILLed orphans still need reaping
+        time.sleep(0.05)
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # macOS answers EPERM for a group whose only members are unreaped zombies
+        return True
+    return True

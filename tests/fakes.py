@@ -180,10 +180,16 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
         with (cwd / "textkit.py").open("a") as fh:
             fh.write(f"\n\ndef change_{k}():\n    return {k}\n")
 
-    def run(cmd, cwd, input, timeout, log, env=None):
+    def run(cmd, cwd, input, timeout, log, env=None, keep_fds=()):
         reviewer = "--json-schema" in cmd or "--output-schema" in cmd
         calls.append(
-            {"engine": cmd[0], "role": "reviewer" if reviewer else "builder", "cwd": cwd, "prompt": input}
+            {
+                "engine": cmd[0],
+                "role": "reviewer" if reviewer else "builder",
+                "cwd": cwd,
+                "prompt": input,
+                "keep_fds": keep_fds,
+            }
         )
         if reviewer:
             verdict = json.dumps(verdicts.pop(0))

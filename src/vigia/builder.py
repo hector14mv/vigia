@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from . import comments, prompts, tickets
+from . import comments, jobs, prompts, tickets
 from .context import Ctx
 from .engines import Outcome, handoff_body, handoff_commit
 from .proc import CommandError, run
@@ -65,11 +65,12 @@ def gaps(ctx: Ctx, issue: dict) -> list[str]:
     return found
 
 
-def next_issue(ctx: Ctx) -> dict | None:
-    """The oldest ready issue that is launchable. Non-launchable ones are refused on the way."""
+def next_issue(ctx: Ctx, skip: set[int] | frozenset[int] = frozenset()) -> dict | None:
+    """The oldest ready issue that is launchable, other than those in `skip` (already being built).
+    Non-launchable ones are refused on the way."""
     labels = ctx.cfg.labels
     for issue in ctx.gh.issues(labels.ready):
-        if labels.building in issue["labels"] or labels.parked in issue["labels"]:
+        if issue["number"] in skip or labels.building in issue["labels"] or labels.parked in issue["labels"]:
             continue
         problems = gaps(ctx, issue)
         if problems:
@@ -140,22 +141,28 @@ def record_head(ctx: Ctx, n: int, sha: str) -> bool:
 
 
 def recover(ctx: Ctx) -> None:
-    """Repair what an interrupted step left behind. Runs at the start of every tick, under the lock.
+    """Repair what an interrupted step left behind. Runs at the start of every tick, under the lock;
+    anything a live job owns (vigia.jobs) is not interrupted and is left alone.
 
     1. A build that started but neither opened a PR nor failed was interrupted (a crash, a failed label
        call): its issue is parked with the reason, never left outside the queue.
     2. A PR whose label step failed after `pr_opened` was recorded is enrolled (next paragraph).
     """
     for number in _unfinished_builds(ctx):
-        try:
-            issue = ctx.gh.issue(number)
-            if issue["state"] == "OPEN":
-                _fail_issue(ctx, issue, "the build was interrupted before it opened a pull request", None)
-            else:
-                ctx.ledger.append("build_failed", issue=number, reason="interrupted; the issue is closed")
-        except CommandError as exc:  # the next tick tries again
-            ctx.ledger.append("error", issue=number, action="recover_build", detail=str(exc)[:500])
-            ctx.say(f"#{number}: recovering the interrupted build failed — {exc}")
+        # Hold the issue's lock, then read the ledger again: a job that ended between the first read and
+        # here has recorded `pr_opened` or `build_failed`, and must not be parked from the stale list.
+        with jobs.hold(ctx, jobs.target("build", number)) as got:
+            if not got or number not in _unfinished_builds(ctx):
+                continue  # a live build job, or one that finished meanwhile: not interrupted
+            try:
+                issue = ctx.gh.issue(number)
+                if issue["state"] == "OPEN":
+                    _fail_issue(ctx, issue, "the build was interrupted before it opened a pull request", None)
+                else:
+                    ctx.ledger.append("build_failed", issue=number, reason="interrupted; the issue is closed")
+            except CommandError as exc:  # the next tick tries again
+                ctx.ledger.append("error", issue=number, action="recover_build", detail=str(exc)[:500])
+                ctx.say(f"#{number}: recovering the interrupted build failed — {exc}")
     _enroll_pending(ctx)
 
 
