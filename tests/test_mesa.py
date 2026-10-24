@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -113,6 +114,27 @@ def test_the_server_serves_the_page_and_the_state(world):  # noqa: F811
         srv.shutdown()
 
 
+def test_the_page_has_the_five_places_and_writes_nothing(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    srv = _serve(ctx)
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+        conn.request("GET", "/", headers={"Host": f"127.0.0.1:{srv.server_address[1]}"})
+        resp = conn.getresponse()
+        body, csp = resp.read(), resp.getheader("Content-Security-Policy")
+    finally:
+        srv.shutdown()
+    assert "connect-src 'self'" in csp and "script-src 'unsafe-inline'" in csp
+    assert b'<meta name="viewport"' in body and b'id="mesa-sample"' in body and b"{{SAMPLE}}" not in body
+    for place in (b'"Your turn"', b'"Factory"', b'"Captures"', b'"Feed"', b'"Fuel"'):
+        assert place in body
+    # read-only: no form, no write verb, no script from elsewhere, no markup built from strings
+    assert b"<form" not in body and b"method:" not in body and b"<script src" not in body
+    assert b"innerHTML" not in body and b'fetch("/api/state"' in body and b'fetch("/api/pr/"' in body
+    assert b"copy by hand" in body.lower() and b"mesa.theme" in body and b"mesa.tab" in body
+
+
 def test_the_server_is_read_only_and_answers_only_its_own_host(world):  # noqa: F811
     gh, build = world
     ctx, _ = build([])
@@ -126,8 +148,16 @@ def test_the_server_is_read_only_and_answers_only_its_own_host(world):  # noqa: 
         srv.shutdown()
 
 
-def _render(tmp_path, state):
-    """What the page shows for `state`, by running its own script under Node with a minimal DOM."""
+PLACES = ("turn", "factory", "captures", "feed", "fuel", "decide")
+LINK = re.compile(
+    r"^(#/[A-Za-z0-9_./-]*|https://claude\.ai/new|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+    r"(/(pull|issues)/\d{1,9}(/files)?)?(/issues\?q=[A-Za-z0-9%._+:-]*)?(#new_comment_field)?)$"
+)
+
+
+def _render(tmp_path, state, routes=PLACES):
+    """What the page shows for `state` on each route, at phone width and at desktop width: the page's own scripts
+    run under Node (tests/mesa_render.js) with a small DOM, so these are the cards, words and links it builds."""
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -135,9 +165,20 @@ def _render(tmp_path, state):
     data.write_text(json.dumps(state), encoding="utf-8")
     script = Path(__file__).with_name("mesa_render.js")
     out = subprocess.run(
-        [node, str(script), str(mesa.PAGE), str(data)], capture_output=True, text=True, check=True
+        [node, str(script), str(mesa.PAGE), str(data), *routes], capture_output=True, text=True, check=False
     )
-    return json.loads(out.stdout)
+    assert out.returncode == 0, out.stderr
+    shown = json.loads(out.stdout)
+    for layout in shown.values():
+        for view in layout.values():
+            bad = [href for href in view["links"] if not LINK.match(href)]
+            assert not bad, f"links outside the allow-list: {bad}"
+    return shown
+
+
+def _views(shown, route):
+    """The same route on both layouts."""
+    return [shown["phone"][route], shown["desk"][route]]
 
 
 def test_a_repo_that_cannot_be_read_is_shown_as_unknown_not_as_empty(world, tmp_path):  # noqa: F811
@@ -164,8 +205,11 @@ def test_a_repo_that_cannot_be_read_is_shown_as_unknown_not_as_empty(world, tmp_
     ]
     assert repo["labels"]["ready"] == "vigia:ready" and repo["merged_today"] == []
     shown = _render(tmp_path, mesa.state([ctx]))
-    assert "Nothing needs you" not in shown["turn"] and "Cannot read" in shown["turn"]
-    assert "No open pull requests" not in shown["factory"] and "unknown" in shown["factory"]
+    for turn, factory in zip(_views(shown, "turn"), _views(shown, "factory"), strict=True):
+        assert "Nothing needs you" not in turn["text"] and "Cannot read" in turn["text"]
+        assert "Bad credentials" in turn["text"] and "gh auth status" in turn["text"]
+        assert "No open pull requests" not in factory["text"] and "unknown" in factory["text"]
+        assert "0 open PRs" not in factory["text"] and "queue empty" not in factory["text"]
 
 
 def test_a_ticket_parked_before_it_had_a_pr_needs_you(world, tmp_path):  # noqa: F811
@@ -186,9 +230,11 @@ def test_a_ticket_parked_before_it_had_a_pr_needs_you(world, tmp_path):  # noqa:
         }
     ]
     assert s["feed"][0]["event"] == "build_failed" and "left no changes" in s["feed"][0]["text"]
-    shown = _render(tmp_path, s)
-    assert "Nothing needs you" not in shown["turn"]
-    assert f"#{n} Add a helper" in shown["turn"] and "the builder left no changes" in shown["turn"]
+    shown = _render(tmp_path, s, routes=("turn",))
+    for turn in _views(shown, "turn"):
+        assert "Nothing needs you" not in turn["text"]
+        assert f"Build failed · {gh.repo.split('/')[-1]} #{n}" in turn["text"]
+        assert "Add a helper" in turn["text"] and "the builder left no changes" in turn["text"]
 
 
 def test_a_workspace_counts_its_shared_limit_not_the_sum_of_its_repos(world, tmp_path):  # noqa: F811
@@ -200,9 +246,13 @@ def test_a_workspace_counts_its_shared_limit_not_the_sum_of_its_repos(world, tmp
         s["repos"][0], slots=1, jobs=[{"target": "pr-1", "number": 1, "issue": False, "action": "gate"}] * 2
     )
     other = dict(s["repos"][0], repo="acme/other", slots=1, jobs=[])
-    assert "sessions <b>2/2</b>" in _render(tmp_path, dict(s, repos=[two, other]))["pulse"]
+    shown = _render(tmp_path, dict(s, repos=[two, other]), routes=("factory",))
+    assert "sessions 2 / 2" in shown["desk"]["factory"]["text"]
+    assert "2 of 2 slots" in shown["phone"]["factory"]["text"]
     alone = dict(s, slots=None, repos=[two, other])  # no workspace: each repo's own watch.slots adds up
-    assert "sessions <b>2/3</b>" in _render(tmp_path, alone)["pulse"]
+    shown = _render(tmp_path, alone, routes=("factory",))
+    assert "sessions 2 / 3" in shown["desk"]["factory"]["text"]
+    assert "2 of 3 slots" in shown["phone"]["factory"]["text"]
 
 
 def test_a_list_that_cannot_be_read_is_never_shown_as_nothing_to_do(world, tmp_path):  # noqa: F811
@@ -218,11 +268,11 @@ def test_a_list_that_cannot_be_read_is_never_shown_as_nothing_to_do(world, tmp_p
     gh.issues = flaky
     repo = mesa.state([ctx])["repos"][0]
     assert repo["human_tasks"] is None and repo["unread"] == ["human tasks"]
-    shown = _render(tmp_path, mesa.state([ctx]))
-    assert "Nothing needs you" not in shown["turn"] and "Could not read: human tasks" in shown["turn"]
+    for turn in _views(_render(tmp_path, mesa.state([ctx]), routes=("turn",)), "turn"):
+        assert "Nothing needs you" not in turn["text"] and "Could not read: human tasks" in turn["text"]
 
 
-def test_decisions_that_cannot_be_read_are_unknown_not_none(world):  # noqa: F811
+def test_decisions_that_cannot_be_read_are_unknown_not_none(world, tmp_path):  # noqa: F811
     gh, build = world
     ctx, _ = build([])
     gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
@@ -240,6 +290,10 @@ def test_decisions_that_cannot_be_read_are_unknown_not_none(world):  # noqa: F81
     assert repo["decisions"] is None and repo["unread"] == ["decisions"]
     assert repo["prs"][0]["blocked_by"] is None  # whether a decision blocks it is unknown
     assert mesa.pr_detail(ctx, repo["prs"][0]["number"])["blocked_by"] is None
+    shown = _render(tmp_path, s, routes=("turn", "decide"))
+    for turn, decide in zip(_views(shown, "turn"), _views(shown, "decide"), strict=True):
+        assert "Nothing needs you" not in turn["text"] and "Could not read: decisions" in turn["text"]
+        assert "No open decisions" not in decide["text"] and "Decisions unknown" in decide["text"]
 
 
 def test_a_refused_ticket_stays_until_its_issue_resolves_it_whatever_its_age(world, tmp_path):  # noqa: F811
@@ -282,7 +336,8 @@ def test_refusals_that_cannot_be_checked_are_unknown_not_none(world, tmp_path): 
     gh.open_issues = down
     repo = mesa.state([ctx])["repos"][0]
     assert repo["refused"] is None and "refused tickets" in repo["unread"]
-    assert "Nothing needs you" not in _render(tmp_path, mesa.state([ctx]))["turn"]
+    for turn in _views(_render(tmp_path, mesa.state([ctx]), routes=("turn",)), "turn"):
+        assert "Nothing needs you" not in turn["text"] and "Could not read: refused tickets" in turn["text"]
 
 
 def test_a_refused_ticket_that_is_being_built_is_no_longer_refused(world, tmp_path):  # noqa: F811
@@ -314,12 +369,94 @@ def test_the_page_names_the_labels_the_repo_configured(world, tmp_path):  # noqa
     repo = s["repos"][0]
     parked = dict(_pr(s, pr), number=pr + 1, next="wait", waiting_for=None, parked=True)
     issue = {"number": 99, "title": "Broke", "url": "", "reason": "the builder left no changes"}
-    shown = _render(tmp_path, dict(s, repos=[dict(repo, prs=repo["prs"] + [parked], parked_issues=[issue])]))
-    turn = shown["turn"]
-    assert "<code>approved:head</code> approves" in turn and "vigia:human-ok" not in turn
-    assert "remove <code>on-hold</code> and add <code>todo:agent</code>" in turn
-    assert "then remove <code>on-hold</code>" in turn
-    assert "vigia:parked" not in turn and "vigia:ready" not in turn
+    planned = {"number": 98, "title": "Planned", "url": "", "tier": "T1"}
+    detail = mesa.pr_detail(ctx, pr)
+    page = dict(
+        s,
+        repos=[dict(repo, prs=repo["prs"] + [parked], parked_issues=[issue], proposed=[planned], queue=[])],
+        pr_details={
+            f"{gh.repo}#{pr}": detail,
+            f"{gh.repo}#{pr + 1}": dict(detail, number=pr + 1, parked=True, waiting_for=None),
+        },
+    )
+    shown = _render(
+        tmp_path, page, routes=("turn", "factory", f"pr/{gh.repo}/{pr}", f"pr/{gh.repo}/{pr + 1}")
+    )
+    for layout in shown.values():
+        turn, factory = layout["turn"]["html"], layout["factory"]["html"]
+        assert "<code>approved:head</code>" in turn and "vigia:human-ok" not in turn
+        # the ticket parked before a PR, then the parked PR, then the planned ticket
+        assert "remove <code>on-hold</code> and add <code>todo:agent</code>" in turn
+        assert "then remove <code>on-hold</code>" in turn
+        assert "<code>vigia:proposed</code> for <code>todo:agent</code>" in turn
+        assert "vigia:parked" not in turn and "vigia:ready" not in turn
+        assert "vigia:ready" not in factory
+        waiting, stopped = layout[f"pr/{gh.repo}/{pr}"]["html"], layout[f"pr/{gh.repo}/{pr + 1}"]["html"]
+        assert "<code>approved:head</code>" in waiting and "vigia:human-ok" not in waiting
+        assert "Removing <code>on-hold</code>" in stopped and "vigia:parked" not in stopped
+    assert "add <code>todo:agent</code>" in shown["phone"]["factory"]["html"]  # the phone's empty queue
+
+
+def test_every_place_renders_on_both_layouts_and_says_when_nothing_needs_you(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    s = mesa.state([ctx])  # every list read, all empty
+    shown = _render(tmp_path, s)
+    for turn in _views(shown, "turn"):
+        assert "Nothing needs you" in turn["text"] and "Could not read" not in turn["text"]
+    for route, words in (
+        ("factory", "Sessions"),
+        ("captures", "No UI changes"),
+        ("feed", "Today"),
+        ("fuel", "Codex"),
+        ("decide", "No open decisions"),
+    ):
+        for view in _views(shown, route):
+            assert words in view["text"], route
+
+
+def test_the_real_state_renders_every_card_and_its_detail(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([CHANGES, APPROVE, APPROVE])
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    for _ in range(6):  # build, gate P1, fix, gate, review, wait for the human
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    d = gh.add_issue("Pick a path", BODY.replace("#38, #39", f"#{pr}"), ["vigia:decision"])
+    gh.add_issue("Buy the domain", "Time: 10 min\nDue: 2026-10-27\nOrigin: plan\n", ["vigia:human-task"])
+    s = dict(mesa.state([ctx], _now(ctx)), pr_details={f"{gh.repo}#{pr}": mesa.pr_detail(ctx, pr)})
+    routes = (*PLACES, f"decide/{gh.repo}/{d}", f"pr/{gh.repo}/{pr}")
+    shown = _render(tmp_path, s, routes=routes)
+    for turn in _views(shown, "turn"):
+        assert (
+            "Touch billing" in turn["text"] and "Should engine sessions keep a GitHub login?" in turn["text"]
+        )
+        assert "Buy the domain" in turn["text"] and "Nothing needs you" not in turn["text"]
+    for view in _views(shown, f"decide/{gh.repo}/{d}"):
+        assert "Isolate the session" in view["text"] and "Answer C on GitHub" in view["text"]
+    for view in _views(shown, f"pr/{gh.repo}/{pr}"):
+        assert "What was tried" in view["text"] and "Gate round 1" in view["text"]
+
+
+def test_the_page_puts_every_api_string_in_as_text_and_links_only_github(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([APPROVE, APPROVE])
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    for _ in range(4):
+        tick(ctx)
+    s = mesa.state([ctx])
+    repo = s["repos"][0]
+    evil = '<img src=x onerror="alert(1)">'
+    pr = dict(repo["prs"][0], title=evil, url="javascript:alert(1)")
+    task = {"number": 7, "title": evil, "url": "https://evil.example/steal", "since": None}
+    page = dict(s, repos=[dict(repo, prs=[pr], human_tasks=[task], unread=[evil])])
+    shown = _render(tmp_path, page, routes=("turn", "factory"))  # _render also checks every link
+    for layout in shown.values():
+        for view in layout.values():
+            assert "img" not in view["tags"] and "script" not in view["tags"]
+            assert evil not in view["html"] and "&lt;img src=x" in view["html"]
+            assert not any("javascript:" in href or "evil.example" in href for href in view["links"])
+        assert evil in layout["turn"]["text"]  # shown, as text
 
 
 def _now(ctx):
