@@ -98,6 +98,9 @@ class FakeGitHub:
     def _item(self, n: int) -> dict:
         return self.issues_.get(n) or self.prs_[n]
 
+    def open_issues(self) -> list[dict]:
+        return [dict(i) for i in self.issues_.values() if i["state"] == "OPEN"]
+
     def issues(self, label: str) -> list[dict]:
         return [dict(i) for i in self.issues_.values() if i["state"] == "OPEN" and label in i["labels"]]
 

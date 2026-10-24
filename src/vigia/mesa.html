@@ -1,0 +1,380 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>vigia Mesa</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a control desk. Phones: one column with a bottom tab bar. Wide screens: "Your turn" stays on the left,
+   the factory, the feed and the fuel share the right column. Every color is a token; both themes are designed. */
+:root {
+  --bg: #eef1f5; --surface: #ffffff; --surface-2: #f6f8fb; --ink: #121a24; --muted: #5b6878; --rule: #d8dee7;
+  --beam: #b4540a; --beam-soft: #fbe7d3; --beam-ink: #7a3606;
+  --ok: #17663f; --ok-bg: #dcefe4; --warn: #8a5a00; --warn-bg: #f7ebcc; --stop: #a3261b; --stop-bg: #f8dedb;
+  --idle: #64748b; --idle-bg: #e6eaf0; --run: #1d4ed8; --run-bg: #dde7fb;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0c1117; --surface: #141b24; --surface-2: #19222d; --ink: #e5eaf0; --muted: #98a4b3; --rule: #253141;
+  --beam: #f0a050; --beam-soft: #33230f; --beam-ink: #f7c48e;
+  --ok: #7bd3a0; --ok-bg: #11301f; --warn: #e8c46a; --warn-bg: #30270c; --stop: #f39a90; --stop-bg: #3a1714;
+  --idle: #a3afbe; --idle-bg: #222c38; --run: #93b4ff; --run-bg: #17264a; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0c1117; --surface: #141b24; --surface-2: #19222d; --ink: #e5eaf0; --muted: #98a4b3; --rule: #253141;
+  --beam: #f0a050; --beam-soft: #33230f; --beam-ink: #f7c48e;
+  --ok: #7bd3a0; --ok-bg: #11301f; --warn: #e8c46a; --warn-bg: #30270c; --stop: #f39a90; --stop-bg: #3a1714;
+  --idle: #a3afbe; --idle-bg: #222c38; --run: #93b4ff; --run-bg: #17264a; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
+a { color: inherit; }
+.shell { max-width: 1240px; margin: 0 auto; padding-block: 16px 96px; grid-template-columns: minmax(0, 1fr);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 16px; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; justify-content: space-between; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand b { font: 750 24px/1 var(--display); letter-spacing: -0.02em; }
+.brand span { font: 500 12px/1 var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.pulse { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 500 12.5px/1 var(--mono); padding: 7px 10px;
+  border-radius: 999px; background: var(--surface); border: 1px solid var(--rule); color: var(--muted); white-space: nowrap; }
+.pill b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+.dot.late { background: var(--warn); } .dot.dead { background: var(--stop); }
+.sample { overflow-wrap: anywhere; font: 500 12px/1.4 var(--mono); color: var(--beam-ink); background: var(--beam-soft); padding: 8px 12px; border-radius: 8px; }
+.grid { display: grid; gap: 16px; align-items: start; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 960px) { .grid { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); } .tabbar { display: none; }
+  .panel[data-tab="turn"] { display: grid !important; } }
+.panel { display: grid; gap: 12px; min-width: 0; }
+.panel h2 { font: 650 18px/1.2 var(--display); margin: 0; display: flex; align-items: center; gap: 8px; }
+.count { font: 600 12px/1 var(--mono); background: var(--beam); color: var(--surface); border-radius: 999px; padding: 4px 7px; }
+.hint { color: var(--muted); font-size: 13.5px; margin: 0; }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px 16px;
+  display: grid; gap: 10px; min-width: 0; }
+.card.t2 { border-left: 4px solid var(--beam); }
+.card.parked { border-left: 4px solid var(--stop); }
+.card.refused { border-left: 4px solid var(--warn); }
+.card.unavailable { border-left: 4px solid var(--stop); }
+.kicker { font: 500 11.5px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.title { font-weight: 600; overflow-wrap: anywhere; }
+.meta { font: 400 12.5px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.evidence { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.evidence li { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; }
+.evidence li::before { content: "✓"; color: var(--ok); font-weight: 600; flex: none; }
+.evidence li.no::before { content: "•"; color: var(--muted); }
+.why { font-size: 14px; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font: 600 13.5px/1 var(--body);
+  padding: 10px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn:focus-visible { outline: 2px solid var(--beam); outline-offset: 2px; }
+.empty { background: var(--surface); border: 1px dashed var(--rule); border-radius: var(--radius); padding: 18px; color: var(--muted); }
+.repo { display: grid; gap: 10px; }
+.repo-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
+.repo-head h3 { font: 650 16px/1.2 var(--display); margin: 0; }
+.slots { display: flex; gap: 4px; align-items: center; font: 500 12px/1 var(--mono); color: var(--muted); }
+.slot { width: 18px; height: 8px; border-radius: 3px; background: var(--idle-bg); }
+.slot.busy { background: var(--run); }
+.pr { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 10px; min-width: 0; }
+.pr-top { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; }
+.pr-top .title { font-size: 14.5px; }
+.tier { flex: none; font: 600 11.5px/1 var(--mono); padding: 5px 7px; border-radius: 6px; background: var(--idle-bg); color: var(--idle); }
+.tier.T1 { background: var(--run-bg); color: var(--run); } .tier.T2 { background: var(--beam-soft); color: var(--beam-ink); }
+.steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+.step { font: 500 11px/1.2 var(--mono); text-align: center; padding: 6px 2px 5px; border-radius: 6px; background: var(--idle-bg);
+  color: var(--idle); border-top: 3px solid transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step.done { background: var(--ok-bg); color: var(--ok); border-top-color: var(--ok); }
+.step.now { background: var(--run-bg); color: var(--run); border-top-color: var(--run); }
+.step.wait { background: var(--beam-soft); color: var(--beam-ink); border-top-color: var(--beam); }
+.step.stop { background: var(--stop-bg); color: var(--stop); border-top-color: var(--stop); }
+.step.skip { opacity: 0.45; }
+.next { font-size: 13.5px; color: var(--muted); overflow-wrap: anywhere; }
+.next b { color: var(--ink); font-weight: 600; }
+.running { display: inline-flex; align-items: center; gap: 6px; color: var(--run); font-weight: 600; }
+.running::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--run); }
+@media (prefers-reduced-motion: no-preference) { .running::before { animation: beat 1.6s ease-in-out infinite; } }
+@keyframes beat { 50% { opacity: 0.25; } }
+.queue { display: flex; flex-wrap: wrap; gap: 6px; }
+.queue a { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; text-decoration: none; background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 6px 10px; max-width: 100%; }
+.queue a span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); margin: 0; padding: 0; list-style: none; }
+.feed li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 10px 14px; align-items: baseline; }
+.feed li + li { border-top: 1px solid var(--rule); }
+.feed time { font: 500 12px/1.4 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.feed .ev { min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+.tag { font: 600 11px/1 var(--mono); padding: 3px 6px; border-radius: 5px; margin-right: 6px; }
+.tag.merged { background: var(--ok-bg); color: var(--ok); } .tag.parked { background: var(--stop-bg); color: var(--stop); }
+.tag.verdict { background: var(--run-bg); color: var(--run); } .tag.built { background: var(--idle-bg); color: var(--idle); }
+.tag.p1 { background: var(--stop-bg); color: var(--stop); }
+.fuel { display: grid; gap: 12px; }
+.tank { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 8px; }
+.tank-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.tank-head b { font: 600 15px/1 var(--display); }
+.tank-head span { font: 500 13px/1 var(--mono); font-variant-numeric: tabular-nums; }
+.bar { height: 10px; border-radius: 5px; background: var(--idle-bg); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--ok); border-radius: 5px; }
+.bar i.mid { background: var(--warn); } .bar i.low { background: var(--stop); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--rule);
+  border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
+.stat { background: var(--surface); padding: 12px 14px; display: grid; gap: 2px; }
+.stat b { font: 600 22px/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12.5px; color: var(--muted); }
+.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: grid; grid-template-columns: repeat(4, 1fr);
+  background: var(--surface); border-top: 1px solid var(--rule);
+  padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+.tabbar button { font: 600 12.5px/1 var(--body); background: none; border: 0; color: var(--muted); padding: 14px 4px; cursor: pointer;
+  display: grid; justify-items: center; gap: 4px; }
+.tabbar button[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 3px 0 var(--beam); }
+.tabbar .badge { font: 600 11px/1 var(--mono); color: var(--beam); }
+.deskTabs { display: none; gap: 6px; }
+@media (min-width: 960px) { .deskTabs { display: flex; } }
+.deskTabs button { font: 600 13px/1 var(--body); border: 1px solid var(--rule); background: var(--surface); color: var(--muted);
+  padding: 8px 12px; border-radius: 999px; cursor: pointer; }
+.deskTabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.panel[hidden] { display: none !important; }
+footer { color: var(--muted); font-size: 12.5px; }
+.panel, .repo, .pr, .card, .fuel, .tank { grid-template-columns: minmax(0, 1fr); }
+</style>
+
+<div class="shell">
+  <div class="top">
+    <div class="brand"><b>vigia</b><span>Mesa</span></div>
+    <div class="pulse" id="pulse"></div>
+  </div>
+  <div class="sample" id="sample" hidden></div>
+
+  <div class="grid">
+    <section class="panel" data-tab="turn" id="panel-turn" aria-labelledby="h-turn"></section>
+    <div class="panel" style="gap:12px">
+      <div class="deskTabs" role="tablist" aria-label="Views">
+        <button type="button" role="tab" id="d-factory" data-go="factory" aria-selected="true">Factory</button>
+        <button type="button" role="tab" id="d-feed" data-go="feed" aria-selected="false">Feed</button>
+        <button type="button" role="tab" id="d-fuel" data-go="fuel" aria-selected="false">Fuel</button>
+      </div>
+      <section class="panel" data-tab="factory" id="panel-factory"></section>
+      <section class="panel" data-tab="feed" id="panel-feed" hidden></section>
+      <section class="panel" data-tab="fuel" id="panel-fuel" hidden></section>
+    </div>
+  </div>
+  <footer id="foot"></footer>
+</div>
+
+<nav class="tabbar" role="tablist" aria-label="Views">
+  <button type="button" role="tab" id="m-turn" data-go="turn" aria-selected="true">Your turn<span class="badge" id="badge"></span></button>
+  <button type="button" role="tab" id="m-factory" data-go="factory" aria-selected="false">Factory</button>
+  <button type="button" role="tab" id="m-feed" data-go="feed" aria-selected="false">Feed</button>
+  <button type="button" role="tab" id="m-fuel" data-go="fuel" aria-selected="false">Fuel</button>
+</nav>
+
+<script id="mesa-sample" type="application/json">{{SAMPLE}}</script>
+<script>
+(function () {
+  "use strict";
+  var STEPS = ["build", "ci", "gate", "review", "human", "merge"];
+  var STEP_LABEL = { build: "Build", ci: "CI", gate: "Gate", review: "Review", human: "Human", merge: "Merge" };
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function ago(iso, now) {
+    if (!iso) return "never";
+    var s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+    if (s < 90) return s + " s ago"; if (s < 5400) return Math.round(s / 60) + " min ago";
+    if (s < 129600) return Math.round(s / 3600) + " h ago"; return Math.round(s / 86400) + " d ago";
+  }
+  function hhmm(iso) { var d = new Date(iso); return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+  function until(iso, now) {
+    if (!iso) return ""; var h = Math.round((Date.parse(iso) - now) / 3600000);
+    return h > 36 ? "resets in " + Math.round(h / 24) + " days" : "resets in " + Math.max(h, 0) + " h";
+  }
+
+  var LABELS = { ready: "vigia:ready", parked: "vigia:parked", human_ok: "vigia:human-ok" };
+  // The repo's own label names: vigia.toml can rename them, and a card must name the label that works
+  function label(c, name) { return (c.labels || {})[name] || LABELS[name]; }
+
+  function turnCards(state) {
+    var cards = [];
+    state.repos.forEach(function (r) {
+      // A repo vigia could not read has unknown work, not none: say so instead of "Nothing needs you"
+      if (r.error) cards.push({ kind: "unavailable", repo: r.repo, error: r.error });
+      // Part of a repo could not be read: those lists are incomplete, so this is a card too, never "Nothing needs you"
+      if (r.unread && r.unread.length) cards.push({ kind: "partial", repo: r.repo, unread: r.unread });
+      (r.prs || []).forEach(function (p) {
+        if (p.next === "wait" && p.waiting_for === "human") {
+          cards.push({ kind: "t2", repo: r.repo, labels: r.labels, pr: p });
+        } else if (p.parked) {
+          cards.push({ kind: "parked", repo: r.repo, labels: r.labels, pr: p });
+        }
+      });
+      (r.parked_issues || []).forEach(function (i) { cards.push({ kind: "parked-issue", repo: r.repo, labels: r.labels, issue: i }); });
+      (r.refused || []).forEach(function (i) { cards.push({ kind: "refused", repo: r.repo, issue: i }); });
+      (r.human_tasks || []).forEach(function (i) { cards.push({ kind: "task", repo: r.repo, issue: i }); });
+    });
+    return cards;
+  }
+
+  function renderTurn(state) {
+    var cards = turnCards(state), html = ['<h2 id="h-turn">Your turn' + (cards.length ? ' <span class="count">' + cards.length + "</span>" : "") + "</h2>"];
+    html.push('<p class="hint">Only what needs a person. Everything else runs without you.</p>');
+    if (!cards.length) html.push('<div class="empty">Nothing needs you. The factory is working through its queue.</div>');
+    cards.forEach(function (c) {
+      if (c.kind === "unavailable") {
+        html.push('<article class="card unavailable"><span class="kicker">Cannot read · ' + esc(c.repo) + "</span>" +
+          '<div class="why">' + esc(c.error) + "</div>" +
+          '<p class="hint">Its pull requests and tickets are unknown until vigia can read GitHub again: check <code>gh auth status</code> where vigia runs.</p></article>');
+      } else if (c.kind === "partial") {
+        var parts = c.unread.slice();
+        html.push('<article class="card unavailable"><span class="kicker">Not all read · ' + esc(c.repo) + "</span>" +
+          '<div class="why">Could not read: ' + esc(parts.join("; ")) + "</div>" +
+          '<p class="hint">This list may be missing things that need you. Check the issues on GitHub, or <code>gh auth status</code> where vigia runs.</p></article>');
+      } else if (c.kind === "parked-issue") {
+        html.push('<article class="card parked"><span class="kicker">Build failed · ' + esc(c.repo) + "</span>" +
+          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
+          '<div class="why">' + esc(c.issue.reason) + "</div>" +
+          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Open the ticket</a></div>' +
+          '<p class="hint">To resume: deal with the cause, remove <code>' + esc(label(c, "parked")) + '</code> and add <code>' + esc(label(c, "ready")) + '</code>.</p></article>');
+      } else if (c.kind === "t2") {
+        var p = c.pr, ev = (p.evidence || []).map(function (e) { return "<li>" + esc(e) + "</li>"; }).join("");
+        html.push('<article class="card t2"><span class="kicker">Approve a T2 change · ' + esc(c.repo) + "</span>" +
+          '<span class="title">#' + p.number + " " + esc(p.title) + "</span>" +
+          '<span class="meta">head ' + esc(p.head.slice(0, 8)) + " · built by " + esc(p.built_by || "?") + "</span>" +
+          '<ul class="evidence">' + ev + "</ul>" +
+          '<p class="hint">Adding <code>' + esc(label(c, "human_ok")) + '</code> approves this exact head. Any new push needs a new label.</p>' +
+          '<div class="actions"><a class="btn primary" href="' + esc(p.url) + '/files" target="_blank" rel="noopener">Read the diff</a>' +
+          '<a class="btn" href="' + esc(p.url) + '" target="_blank" rel="noopener">Add the label on GitHub</a></div></article>');
+      } else if (c.kind === "parked") {
+        var q = c.pr;
+        html.push('<article class="card parked"><span class="kicker">Parked · ' + esc(c.repo) + "</span>" +
+          '<span class="title">#' + q.number + " " + esc(q.title) + "</span>" +
+          '<div class="why">' + esc(q.reason) + "</div>" +
+          '<p class="hint">' + esc(q.tried || "") + "</p>" +
+          '<div class="actions"><a class="btn primary" href="' + esc(q.url) + '" target="_blank" rel="noopener">Open the PR</a>' +
+          (q.issue_url ? '<a class="btn" href="' + esc(q.issue_url) + '" target="_blank" rel="noopener">Edit the ticket</a>' : "") +
+          "</div><p class=\"hint\">To resume: deal with the cause, then remove <code>" + esc(label(c, "parked")) + "</code>. The counters start again.</p></article>");
+      } else if (c.kind === "refused") {
+        html.push('<article class="card refused"><span class="kicker">Ticket not launchable · ' + esc(c.repo) + "</span>" +
+          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
+          '<div class="why">Missing: ' + esc((c.issue.missing || []).join("; ")) + "</div>" +
+          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Complete the ticket</a></div></article>');
+      } else {
+        html.push('<article class="card"><span class="kicker">Only you can do this · ' + esc(c.repo) + "</span>" +
+          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
+          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Open</a></div></article>');
+      }
+    });
+    document.getElementById("panel-turn").innerHTML = html.join("");
+    var badge = document.getElementById("badge"); badge.textContent = cards.length ? String(cards.length) : "";
+  }
+
+  function stepClass(p, step) {
+    var s = (p.pipeline || {})[step] || "todo";
+    return { done: "done", now: "now", wait: "wait", stop: "stop", skip: "skip", todo: "" }[s] || "";
+  }
+  function renderFactory(state, now) {
+    var html = ["<h2>Factory</h2>"];
+    state.repos.forEach(function (r) {
+      // `vigia watch --slots N` can run more sessions than vigia.toml says: never show more busy than total
+      var busy = r.jobs.length, total = Math.max(r.slots, busy), slots = "";
+      for (var i = 0; i < total; i++) slots += '<i class="slot' + (i < busy ? " busy" : "") + '"></i>';
+      html.push('<div class="repo"><div class="repo-head"><h3>' + esc(r.repo) + '</h3><span class="slots" title="engine sessions">' +
+        slots + "&nbsp;" + busy + "/" + total + " sessions</span></div>");
+      if (r.prs === null) html.push('<div class="empty">Pull requests unknown: vigia cannot read this repo.</div>');
+      else if (!r.prs.length) html.push('<div class="empty">No open pull requests.</div>');
+      (r.prs || []).forEach(function (p) {
+        var steps = STEPS.map(function (s) { return '<span class="step ' + stepClass(p, s) + '">' + STEP_LABEL[s] + "</span>"; }).join("");
+        var job = r.jobs.filter(function (j) { return j.number === p.number; })[0];
+        var next = job ? '<span class="running">' + esc(job.action) + " running · " + esc(ago(job.since, now).replace(" ago", "")) + "</span>"
+          : "<b>" + esc(p.next) + "</b> · " + esc(p.reason);
+        html.push('<article class="pr"><div class="pr-top"><a class="title" href="' + esc(p.url) + '" target="_blank" rel="noopener">#' +
+          p.number + " " + esc(p.title) + '</a><span class="tier ' + esc(p.tier) + '">' + esc(p.tier) + "</span></div>" +
+          '<div class="steps">' + steps + '</div><div class="next">' + next + "</div></article>");
+      });
+      if (r.queue && r.queue.length) {
+        html.push('<p class="hint">Queue · ' + r.queue.length + ' ready</p><div class="queue">' + r.queue.map(function (i) {
+          return '<a href="' + esc(i.url) + '" target="_blank" rel="noopener"><span class="tier ' + esc(i.tier) + '">' + esc(i.tier) +
+            "</span><span>#" + i.number + " " + esc(i.title) + "</span></a>"; }).join("") + "</div>");
+      }
+      html.push("</div>");
+    });
+    document.getElementById("panel-factory").innerHTML = html.join("");
+  }
+
+  function renderFeed(state) {
+    var html = ['<h2>Feed</h2><ul class="feed">'];
+    state.feed.forEach(function (e) {
+      var tag = { merged: "merged", parked: "parked", build_failed: "parked", verdict: "verdict", pr_opened: "built", pushed: "built" }[e.event] || "built";
+      var label = { merged: "merged", parked: "parked", build_failed: "build failed", verdict: e.verdict, pr_opened: "built", pushed: "fix" }[e.event] || e.event;
+      var p1 = e.p1 ? '<span class="tag p1">' + e.p1 + " P1</span>" : "";
+      html.push('<li><time datetime="' + esc(e.ts) + '">' + esc(hhmm(e.ts)) + '</time><span class="ev"><span class="tag ' + tag + '">' +
+        esc(label) + "</span>" + p1 + esc(e.text) + "</span></li>");
+    });
+    html.push("</ul>");
+    document.getElementById("panel-feed").innerHTML = html.join("");
+  }
+
+  function renderFuel(state, now) {
+    var f = state.fuel || {}, html = ['<h2>Fuel</h2><div class="fuel">'];
+    function tank(name, t) {
+      if (!t) return '<div class="tank"><div class="tank-head"><b>' + name + '</b><span>unknown</span></div>' +
+        '<p class="hint">Claude Code keeps no quota file; read it with <code>/usage</code> in Claude Code.</p></div>';
+      var left = Math.max(0, 100 - t.used_percent), cls = left < 20 ? "low" : left < 45 ? "mid" : "";
+      return '<div class="tank"><div class="tank-head"><b>' + name + '</b><span>' + left.toFixed(0) + "% left this week</span></div>" +
+        '<div class="bar"><i class="' + cls + '" style="width:' + left + '%"></i></div><p class="hint">' + esc(until(t.resets_at, now)) +
+        " · read " + esc(ago(t.observed, now)) + "</p></div>";
+    }
+    html.push(tank("Codex", f.codex), tank("Claude", f.claude));
+    var s = state.stats || {};
+    html.push('<div class="stats">' +
+      '<div class="stat"><b>' + (s.merged_7d || 0) + "</b><span>merged in 7 days</span></div>" +
+      '<div class="stat"><b>' + (s.p1_7d || 0) + "</b><span>P1 caught by the gate</span></div>" +
+      '<div class="stat"><b>' + (s.median_minutes || "–") + "</b><span>median minutes, PR opened to merged</span></div>" +
+      '<div class="stat"><b>' + (s.sessions_today || 0) + "</b><span>engine sessions today</span></div></div></div>");
+    document.getElementById("panel-fuel").innerHTML = html.join("");
+  }
+
+  function renderPulse(state, now) {
+    var h = state.health || {}, age = h.last_tick ? (now - Date.parse(h.last_tick)) / 1000 : Infinity;
+    var dot = age < 600 ? "" : age < 3600 ? " late" : " dead";
+    var busy = state.repos.reduce(function (n, r) { return n + r.jobs.length; }, 0);
+    // A workspace shares one limit between its repos; on its own, a repo has its own watch.slots
+    var slots = state.slots != null ? Math.max(state.slots, busy)
+      : state.repos.reduce(function (n, r) { return n + Math.max(r.slots, r.jobs.length); }, 0);
+    document.getElementById("pulse").innerHTML =
+      '<span class="pill"><i class="dot' + dot + '"></i>watcher <b>' + esc(ago(h.last_tick, now)) + "</b></span>" +
+      '<span class="pill">sessions <b>' + busy + "/" + slots + "</b></span>" +
+      '<span class="pill">errors 24 h <b>' + (h.errors_24h || 0) + "</b></span>";
+    document.getElementById("foot").textContent = "Read-only. Every action links to GitHub, where your login decides. Generated " + hhmm(state.generated) + ".";
+  }
+
+  function render(state) {
+    var now = state.sample ? Date.parse(state.generated) : Date.now();
+    renderPulse(state, now); renderTurn(state); renderFactory(state, now); renderFeed(state); renderFuel(state, now);
+    var note = document.getElementById("sample");
+    if (state.sample) { note.hidden = false; note.textContent = state.sample; }
+  }
+
+  var tabs = document.querySelectorAll("[data-go]");
+  function go(name) {
+    var wide = window.matchMedia("(min-width: 960px)").matches;
+    if (wide && name === "turn") name = "factory";
+    document.querySelectorAll(".panel[data-tab]").forEach(function (p) {
+      p.hidden = p.dataset.tab !== name && !(wide && p.dataset.tab === "turn");
+    });
+    tabs.forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.go === name || (!wide && b.dataset.go === name))); });
+    try { localStorage.setItem("mesa-tab", name); } catch (e) {}
+  }
+  tabs.forEach(function (b) { b.addEventListener("click", function () { go(b.dataset.go); }); });
+
+  function load() {
+    var embedded = document.getElementById("mesa-sample").textContent.trim();
+    if (embedded && embedded.charAt(0) === "{") { render(JSON.parse(embedded)); return; }
+    fetch("/api/state", { cache: "no-store" }).then(function (r) { return r.json(); }).then(render)
+      .catch(function () { document.getElementById("pulse").innerHTML = '<span class="pill"><i class="dot dead"></i>Mesa cannot reach vigia</span>'; });
+  }
+  var saved = "turn"; try { saved = localStorage.getItem("mesa-tab") || "turn"; } catch (e) {}
+  go(saved); load();
+  if (!document.getElementById("mesa-sample").textContent.trim().startsWith("{")) setInterval(load, 15000);
+})();
+</script>

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from . import builder, comments, gate, jobs, tickets
 from .context import Ctx
+from .ledger import utcnow
 from .proc import CommandError
 from .rules import Decision, PRState, Verdict, decide
 
@@ -196,6 +197,9 @@ def tick(
     slots = ctx.cfg.slots if slots is None else slots
     parallel = slots > 1 if parallel is None else parallel
     with ctx.lock():
+        (ctx.state / "heartbeat").write_text(
+            utcnow() + "\n", encoding="utf-8"
+        )  # the Mesa's "watcher N s ago"
         builder.recover(ctx)
         gate.recover(ctx)
         seen = sense(ctx)

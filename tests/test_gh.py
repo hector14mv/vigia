@@ -222,3 +222,14 @@ def test_create_pr_returns_the_number_from_the_printed_url():
     assert call["args"][:4] == ["gh", "pr", "create", "-R"]
     assert "vigia/4" in call["args"]
     assert "main" in call["args"]
+
+
+def test_open_issues_reads_every_page_and_leaves_out_pull_requests():
+    pages = [
+        [{"number": 1, "title": "a", "html_url": "u1", "labels": [{"name": "tier:T1"}]}],
+        [{"number": 2, "title": "pr", "html_url": "u2", "labels": [], "pull_request": {}}],
+    ]
+    run = Runner(json.dumps(pages))
+    issues = GitHub("o/r", runner=run).open_issues()
+    assert issues == [{"number": 1, "title": "a", "url": "u1", "labels": ["tier:T1"]}]
+    assert "--paginate" in run.calls[0]["args"] and "--slurp" in run.calls[0]["args"]

@@ -44,6 +44,10 @@ flowchart LR
 The fifteen minutes run from install to your first merged pull request; a small T0 change takes
 about three minutes end to end once vigia is set up.
 
+> **Let an agent do it.** Paste [docs/agents/install.md](docs/agents/install.md) into Claude Code or Codex on the
+> machine that should run vigia. It installs and configures everything and stops for you at every login. For an
+> always-on factory on a server, with the Mesa on your phone, see [docs/server.md](docs/server.md).
+
 You need macOS or Linux, Python 3.11+, git, [uv](https://docs.astral.sh/uv/) (or
 [pipx](https://pipx.pypa.io)), and three CLIs logged in:
 [GitHub CLI](https://cli.github.com) (`gh auth login`),
@@ -225,6 +229,22 @@ vigia watch                # every repo, sharing the slots
 vigia status               # every repo
 ```
 
+## The Mesa
+
+`vigia mesa` serves the factory's control desk at http://127.0.0.1:8790, for a laptop or a phone:
+
+- **Your turn** — only what needs a person: a T2 change waiting for `vigia:human-ok` with the evidence on its
+  exact head, a parked PR with the reason and what was tried, a ticket refused for missing sections.
+- **Factory** — per repository, the sessions in use and every open PR on its path (build, CI, gate, review,
+  human, merge) with its next step, plus the queue.
+- **Feed** and **Fuel** — what just happened, Codex's weekly quota (Claude Code keeps no quota file: read it
+  with `/usage`), merges, P1s caught and engine sessions.
+
+It is read-only on purpose: every action is a link to GitHub, where your login decides, because a button that
+labels or approves would let any process on the machine act as you. It listens on 127.0.0.1 only; to open it
+from your phone, put it behind `tailscale serve` (see [docs/server.md](docs/server.md)). Run it in a workspace
+folder to see every repository.
+
 ## Commands
 
 | Command | What it does |
@@ -232,6 +252,7 @@ vigia status               # every repo
 | `vigia init [--repo OWNER/NAME] [--builder claude\|codex] [--yes] [--force] [--no-labels]` | check tools, choose engines per tier, write `vigia.toml`, create labels; `--repo` defaults to the clone's GitHub repo, `--yes` accepts the defaults, `--force` overwrites an existing `vigia.toml`, `--no-labels` skips creating labels |
 | `vigia run [--issue N]` | build one ready issue into a pull request (default: the oldest ready one) |
 | `vigia watch [--once] [--interval SECONDS] [--no-build] [--slots N]` | the loop, until Ctrl-C; merges and parks for every PR, and runs or starts engine sessions up to `watch.slots`; `--once` runs one tick, `--interval` sets the seconds between ticks (default `watch.interval_seconds`), `--no-build` only moves open PRs, `--slots` overrides the slots; in a workspace folder, every repo |
+| `vigia mesa [--host H] [--port P] [--allow-host NAME]` | the read-only control desk in a browser (default http://127.0.0.1:8790) |
 | `vigia workspace [--slots N] [--force]` | write `vigia.workspace.toml` for the clones below this folder |
 | `vigia status [--json \| --html PATH]` | queue, open PRs with their next step, parked reasons, recent ledger; `--json` prints JSON, `--html PATH` writes a self-contained HTML page and prints its path |
 | `vigia doctor [--json]` | check that vigia can work in this clone (tools, `vigia.toml`, repo, labels, CI workflow, test command, work root, lock); every problem comes with the command that fixes it; exit code 1 if any check fails |
