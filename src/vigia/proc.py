@@ -91,6 +91,9 @@ def run_session(
             return Result(127, "", f"{args[0]}: command not found")
         try:
             out, _ = proc.communicate(input=input, timeout=timeout)
+            # The engine is done, but a child it started may not be: nothing of the session outlives this call,
+            # or the target would be let go while something still works on it.
+            _end_group(proc.pid, grace=5, proc=proc)
             return Result(proc.returncode, out or "", "")
         except subprocess.TimeoutExpired:
             out = _stop(proc, grace=15)
@@ -116,17 +119,34 @@ def _stop(proc: subprocess.Popen, grace: float) -> str:
     out = None
     with contextlib.suppress(subprocess.TimeoutExpired):
         out, _ = proc.communicate(timeout=grace)
-    while _group_alive(proc.pid) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    if _group_alive(proc.pid):
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
+    _end_group(proc.pid, grace=max(0.0, deadline - time.monotonic()), proc=proc)
     if out is None:
         out, _ = proc.communicate()
-    deadline = time.monotonic() + 5
-    while _group_alive(proc.pid) and time.monotonic() < deadline:  # SIGKILLed orphans still need reaping
-        time.sleep(0.05)
     return out
+
+
+def _end_group(pgid: int, grace: float, proc: subprocess.Popen | None = None) -> None:
+    """Make sure no process is left in group `pgid`: SIGTERM, then SIGKILL after `grace` seconds, then wait for
+    the group to be gone (at most five more seconds). `proc`, the group's leader, is reaped along the way."""
+
+    def alive() -> bool:
+        if proc is not None:
+            proc.poll()  # reap the leader, or macOS keeps answering for its zombie
+        return _group_alive(pgid)
+
+    if not alive():
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pgid, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    while alive() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if alive():
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pgid, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while alive() and time.monotonic() < deadline:  # SIGKILLed orphans still need reaping
+        time.sleep(0.05)
 
 
 def _group_alive(pgid: int) -> bool:

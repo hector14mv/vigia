@@ -67,7 +67,7 @@ def discover(folder: Path) -> list[str]:
 
 
 def render(slots: int, repos: list[str]) -> str:
-    listed = ", ".join(f'"{r}"' for r in repos)
+    listed = ", ".join(config_mod._q(r) for r in repos)  # a folder name may hold quotes or backslashes
     return (
         "# vigia workspace: one home folder for every repository vigia works on.\n"
         "# Run `vigia watch` and `vigia status` from this folder.\n\n"

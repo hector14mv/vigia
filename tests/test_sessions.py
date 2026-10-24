@@ -152,3 +152,26 @@ def test_the_job_entry_point_ignores_a_vigia_py_in_the_clone(tmp_path):
     )
     assert out.returncode == 0 and out.stdout.startswith("vigia ")
     assert not (tmp_path / "shadowed").exists()
+
+
+def test_a_session_that_ends_well_leaves_nothing_behind(tmp_path):
+    from pathlib import Path
+
+    from vigia import proc
+
+    pid, child_pid = tmp_path / "engine.pid", tmp_path / "child.pid"
+    engine = ENGINE_WITH_STUBBORN_CHILD.format(pid=str(pid), child=str(child_pid)).replace(
+        "time.sleep(60)\n", "", 1
+    )  # the engine itself exits at once, cleanly, leaving its child behind
+    started = time.monotonic()
+    result = proc.run_session(
+        [sys.executable, "-c", engine], cwd=Path(tmp_path), input="", timeout=60, log=tmp_path / "s.log"
+    )
+    child = int(child_pid.read_text())
+    try:
+        assert result.code == 0 and not result.timed_out
+        assert not _alive(child)  # SIGTERM ignored, so it took the SIGKILL after the grace period
+        assert time.monotonic() - started < 30
+    finally:
+        if _alive(child):
+            os.kill(child, signal.SIGKILL)

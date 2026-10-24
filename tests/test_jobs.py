@@ -334,3 +334,11 @@ def test_slot_counts_outside_1_to_32_are_refused(capsys):
         with pytest.raises(SystemExit):
             cli.parser().parse_args(["watch", "--slots", bad])
     assert cli.parser().parse_args(["workspace", "--slots", "4"]).slots == 4
+
+
+def test_the_workspace_file_survives_folder_names_with_quotes_and_backslashes(tmp_path):
+    import tomllib
+
+    names = ['my"repo', "back\\slash", "plain"]
+    data = tomllib.loads(workspace.render(2, names))
+    assert data["workspace"]["repos"] == names
