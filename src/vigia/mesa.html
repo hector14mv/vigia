@@ -56,6 +56,7 @@ a { color: inherit; }
 .card.t2 { border-left: 4px solid var(--beam); }
 .card.parked { border-left: 4px solid var(--stop); }
 .card.refused { border-left: 4px solid var(--warn); }
+.card.unavailable { border-left: 4px solid var(--stop); }
 .kicker { font: 500 11.5px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .title { font-weight: 600; overflow-wrap: anywhere; }
 .meta { font: 400 12.5px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
@@ -192,13 +193,16 @@ footer { color: var(--muted); font-size: 12.5px; }
   function turnCards(state) {
     var cards = [];
     state.repos.forEach(function (r) {
-      r.prs.forEach(function (p) {
+      // A repo vigia could not read has unknown work, not none: say so instead of "Nothing needs you"
+      if (r.error) cards.push({ kind: "unavailable", repo: r.repo, error: r.error });
+      (r.prs || []).forEach(function (p) {
         if (p.next === "wait" && p.waiting_for === "human") {
           cards.push({ kind: "t2", repo: r.repo, pr: p });
         } else if (p.parked) {
           cards.push({ kind: "parked", repo: r.repo, pr: p });
         }
       });
+      (r.parked_issues || []).forEach(function (i) { cards.push({ kind: "parked-issue", repo: r.repo, issue: i }); });
       (r.refused || []).forEach(function (i) { cards.push({ kind: "refused", repo: r.repo, issue: i }); });
       (r.human_tasks || []).forEach(function (i) { cards.push({ kind: "task", repo: r.repo, issue: i }); });
     });
@@ -210,7 +214,17 @@ footer { color: var(--muted); font-size: 12.5px; }
     html.push('<p class="hint">Only what needs a person. Everything else runs without you.</p>');
     if (!cards.length) html.push('<div class="empty">Nothing needs you. The factory is working through its queue.</div>');
     cards.forEach(function (c) {
-      if (c.kind === "t2") {
+      if (c.kind === "unavailable") {
+        html.push('<article class="card unavailable"><span class="kicker">Cannot read · ' + esc(c.repo) + "</span>" +
+          '<div class="why">' + esc(c.error) + "</div>" +
+          '<p class="hint">Its pull requests and tickets are unknown until vigia can read GitHub again: check <code>gh auth status</code> where vigia runs.</p></article>');
+      } else if (c.kind === "parked-issue") {
+        html.push('<article class="card parked"><span class="kicker">Build failed · ' + esc(c.repo) + "</span>" +
+          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
+          '<div class="why">' + esc(c.issue.reason) + "</div>" +
+          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Open the ticket</a></div>' +
+          '<p class="hint">To resume: deal with the cause, remove <code>vigia:parked</code> and add <code>vigia:ready</code>.</p></article>');
+      } else if (c.kind === "t2") {
         var p = c.pr, ev = (p.evidence || []).map(function (e) { return "<li>" + esc(e) + "</li>"; }).join("");
         html.push('<article class="card t2"><span class="kicker">Approve a T2 change · ' + esc(c.repo) + "</span>" +
           '<span class="title">#' + p.number + " " + esc(p.title) + "</span>" +
@@ -255,8 +269,9 @@ footer { color: var(--muted); font-size: 12.5px; }
       for (var i = 0; i < total; i++) slots += '<i class="slot' + (i < busy ? " busy" : "") + '"></i>';
       html.push('<div class="repo"><div class="repo-head"><h3>' + esc(r.repo) + '</h3><span class="slots" title="engine sessions">' +
         slots + "&nbsp;" + busy + "/" + total + " sessions</span></div>");
-      if (!r.prs.length) html.push('<div class="empty">No open pull requests.</div>');
-      r.prs.forEach(function (p) {
+      if (r.prs === null) html.push('<div class="empty">Pull requests unknown: vigia cannot read this repo.</div>');
+      else if (!r.prs.length) html.push('<div class="empty">No open pull requests.</div>');
+      (r.prs || []).forEach(function (p) {
         var steps = STEPS.map(function (s) { return '<span class="step ' + stepClass(p, s) + '">' + STEP_LABEL[s] + "</span>"; }).join("");
         var job = r.jobs.filter(function (j) { return j.number === p.number; })[0];
         var next = job ? '<span class="running">' + esc(job.action) + " running · " + esc(ago(job.since, now).replace(" ago", "")) + "</span>"
@@ -265,7 +280,7 @@ footer { color: var(--muted); font-size: 12.5px; }
           p.number + " " + esc(p.title) + '</a><span class="tier ' + esc(p.tier) + '">' + esc(p.tier) + "</span></div>" +
           '<div class="steps">' + steps + '</div><div class="next">' + next + "</div></article>");
       });
-      if (r.queue.length) {
+      if (r.queue && r.queue.length) {
         html.push('<p class="hint">Queue · ' + r.queue.length + ' ready</p><div class="queue">' + r.queue.map(function (i) {
           return '<a href="' + esc(i.url) + '" target="_blank" rel="noopener"><span class="tier ' + esc(i.tier) + '">' + esc(i.tier) +
             "</span><span>#" + i.number + " " + esc(i.title) + "</span></a>"; }).join("") + "</div>");
@@ -278,8 +293,8 @@ footer { color: var(--muted); font-size: 12.5px; }
   function renderFeed(state) {
     var html = ['<h2>Feed</h2><ul class="feed">'];
     state.feed.forEach(function (e) {
-      var tag = { merged: "merged", parked: "parked", verdict: "verdict", pr_opened: "built", pushed: "built" }[e.event] || "built";
-      var label = { merged: "merged", parked: "parked", verdict: e.verdict, pr_opened: "built", pushed: "fix" }[e.event] || e.event;
+      var tag = { merged: "merged", parked: "parked", build_failed: "parked", verdict: "verdict", pr_opened: "built", pushed: "built" }[e.event] || "built";
+      var label = { merged: "merged", parked: "parked", build_failed: "build failed", verdict: e.verdict, pr_opened: "built", pushed: "fix" }[e.event] || e.event;
       var p1 = e.p1 ? '<span class="tag p1">' + e.p1 + " P1</span>" : "";
       html.push('<li><time datetime="' + esc(e.ts) + '">' + esc(hhmm(e.ts)) + '</time><span class="ev"><span class="tag ' + tag + '">' +
         esc(label) + "</span>" + p1 + esc(e.text) + "</span></li>");
@@ -312,7 +327,9 @@ footer { color: var(--muted); font-size: 12.5px; }
     var h = state.health || {}, age = h.last_tick ? (now - Date.parse(h.last_tick)) / 1000 : Infinity;
     var dot = age < 600 ? "" : age < 3600 ? " late" : " dead";
     var busy = state.repos.reduce(function (n, r) { return n + r.jobs.length; }, 0);
-    var slots = state.repos.reduce(function (n, r) { return n + Math.max(r.slots, r.jobs.length); }, 0);
+    // A workspace shares one limit between its repos; on its own, a repo has its own watch.slots
+    var slots = state.slots != null ? Math.max(state.slots, busy)
+      : state.repos.reduce(function (n, r) { return n + Math.max(r.slots, r.jobs.length); }, 0);
     document.getElementById("pulse").innerHTML =
       '<span class="pill"><i class="dot' + dot + '"></i>watcher <b>' + esc(ago(h.last_tick, now)) + "</b></span>" +
       '<span class="pill">sessions <b>' + busy + "/" + slots + "</b></span>" +

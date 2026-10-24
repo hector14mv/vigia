@@ -2,11 +2,17 @@
 
 import http.client
 import json
+import shutil
+import subprocess
 import threading
+from pathlib import Path
 
-from fakes import APPROVE, CHANGES
+import pytest
+
+from fakes import APPROVE, CHANGES, engine
 from test_e2e import TICKET, world  # noqa: F401  (world is a fixture)
 from vigia import jobs, mesa
+from vigia.proc import CommandError
 from vigia.watch import tick
 
 
@@ -114,3 +120,65 @@ def test_the_server_is_read_only_and_answers_only_its_own_host(world):  # noqa: 
         assert _get(srv, "/nope")[0] == 404
     finally:
         srv.shutdown()
+
+
+def _render(tmp_path, state):
+    """What the page shows for `state`, by running its own script under Node with a minimal DOM."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    data = tmp_path / "state.json"
+    data.write_text(json.dumps(state), encoding="utf-8")
+    script = Path(__file__).with_name("mesa_render.js")
+    out = subprocess.run(
+        [node, str(script), str(mesa.PAGE), str(data)], capture_output=True, text=True, check=True
+    )
+    return json.loads(out.stdout)
+
+
+def test_a_repo_that_cannot_be_read_is_shown_as_unknown_not_as_empty(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+
+    def expired(label):
+        raise CommandError(["gh", "pr", "list"], 1, "", "HTTP 401: Bad credentials")
+
+    gh.prs = expired
+    repo = mesa.state([ctx])["repos"][0]
+    assert "Bad credentials" in repo["error"]
+    assert (
+        repo["prs"] is None and repo["queue"] is None and repo["parked_issues"] is None
+    )  # unknown, not zero
+    shown = _render(tmp_path, mesa.state([ctx]))
+    assert "Nothing needs you" not in shown["turn"] and "Cannot read" in shown["turn"]
+    assert "No open pull requests" not in shown["factory"] and "unknown" in shown["factory"]
+
+
+def test_a_ticket_parked_before_it_had_a_pr_needs_you(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    ctx.engines._run = engine([], edits=lambda cwd, k: None)
+    n = gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)  # the builder leaves no changes: the issue is parked, no PR is opened
+    s = mesa.state([ctx])
+    assert s["repos"][0]["parked_issues"] == [
+        {"number": n, "title": "Add a helper", "url": "", "reason": "the builder left no changes"}
+    ]
+    assert s["feed"][0]["event"] == "build_failed" and "left no changes" in s["feed"][0]["text"]
+    shown = _render(tmp_path, s)
+    assert "Nothing needs you" not in shown["turn"]
+    assert f"#{n} Add a helper" in shown["turn"] and "the builder left no changes" in shown["turn"]
+
+
+def test_a_workspace_counts_its_shared_limit_not_the_sum_of_its_repos(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    s = mesa.state([ctx], slots=2)
+    assert s["slots"] == 2
+    two = dict(
+        s["repos"][0], slots=1, jobs=[{"target": "pr-1", "number": 1, "issue": False, "action": "gate"}] * 2
+    )
+    other = dict(s["repos"][0], repo="acme/other", slots=1, jobs=[])
+    assert "sessions <b>2/2</b>" in _render(tmp_path, dict(s, repos=[two, other]))["pulse"]
+    alone = dict(s, slots=None, repos=[two, other])  # no workspace: each repo's own watch.slots adds up
+    assert "sessions <b>2/3</b>" in _render(tmp_path, alone)["pulse"]

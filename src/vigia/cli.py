@@ -223,7 +223,8 @@ def cmd_mesa(args: argparse.Namespace) -> int:
 
     found = _workspace()
     contexts = found[1] if found else [Ctx.load(Path.cwd())]
-    srv = mesa.server(contexts, args.host, args.port, tuple(args.allow_host or ()))
+    slots = found[0].slots if found else None  # a workspace shares one limit between its repos
+    srv = mesa.server(contexts, args.host, args.port, tuple(args.allow_host or ()), slots=slots)
     names = ", ".join(c.cfg.repo for c in contexts)
     print(f"vigia Mesa for {names}: http://{args.host}:{srv.server_address[1]}/  (read-only; Ctrl-C to stop)")
     if args.host not in ("127.0.0.1", "localhost", "::1"):

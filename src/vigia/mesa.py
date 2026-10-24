@@ -87,13 +87,11 @@ def _pipeline(ctx: Ctx, seen, running: str | None) -> tuple[dict, str | None]:
     return steps, waiting
 
 
-def repo_state(ctx: Ctx, now: datetime) -> dict:
-    cfg, labels = ctx.cfg, ctx.cfg.labels
-    rows = ctx.ledger.rows()
-    live = set(jobs.live(ctx))
+def _running(ctx: Ctx, rows: list[dict]) -> list[dict]:
+    """The engine sessions holding a lock on this machine: read locally, so known even when GitHub is not."""
     started = {r.get("target"): r for r in rows if r["event"] in ("job_spawned", "job_started")}
     running = []
-    for name in sorted(live):
+    for name in sorted(set(jobs.live(ctx))):
         kind, _, number = name.partition("-")
         row = started.get(name) or {}
         running.append(
@@ -105,6 +103,13 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                 "since": row.get("ts"),
             }
         )
+    return running
+
+
+def repo_state(ctx: Ctx, now: datetime) -> dict:
+    cfg, labels = ctx.cfg, ctx.cfg.labels
+    rows = ctx.ledger.rows()
+    running = _running(ctx, rows)
     prs = []
     for s in sense(ctx, track=False):
         n = s.pr["number"]
@@ -160,6 +165,19 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
         for i in ctx.gh.issues(labels.ready)
         if labels.building not in i["labels"]
     ]
+    # A build that failed before it opened a PR parks the issue itself (builder._fail_issue): no PR shows it,
+    # and only a person can resume it.
+    parked_issues = []
+    for i in ctx.gh.issues(labels.parked):
+        failed = ctx.ledger.last("build_failed", issue=i["number"]) or {}
+        parked_issues.append(
+            {
+                "number": i["number"],
+                "title": i["title"],
+                "url": i["url"],
+                "reason": failed.get("reason") or "parked; the ticket's last comment says why",
+            }
+        )
     week_ago = now - timedelta(days=7)
     refused, seen_issues = [], set()
     for r in reversed(rows):
@@ -194,6 +212,7 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
         "jobs": running,
         "prs": prs,
         "queue": queue,
+        "parked_issues": parked_issues,
         "refused": refused,
         "human_tasks": human_tasks,
     }
@@ -210,6 +229,8 @@ def _feed_line(repo: str, r: dict) -> dict | None:
         }
     if e == "parked":
         return {"ts": r["ts"], "event": e, "text": f"{short} #{r['pr']} — {r.get('reason')}"}
+    if e == "build_failed":
+        return {"ts": r["ts"], "event": e, "text": f"{short} #{r.get('issue')} — {r.get('reason')}"}
     if e == "verdict" and r.get("verdict") != "UNAVAILABLE":
         return {
             "ts": r["ts"],
@@ -233,8 +254,11 @@ def _feed_line(repo: str, r: dict) -> dict | None:
     return None
 
 
-def state(contexts: list[Ctx], now: datetime | None = None) -> dict:
-    """Everything the page shows, for every repo. Anything that cannot be read is null, never zero."""
+def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = None) -> dict:
+    """Everything the page shows, for every repo. Anything that cannot be read is null, never zero.
+
+    `slots` is the workspace's shared limit on engine sessions, when the repos run as one workspace: then
+    the total is that limit, not the sum of each repo's `watch.slots`."""
     now = now or datetime.now(UTC)
     repos, feed, merged_7d, p1_7d, minutes, sessions_today, errors, beats = [], [], 0, 0, [], 0, 0, []
     week, day = now - timedelta(days=7), now - timedelta(days=1)
@@ -242,16 +266,17 @@ def state(contexts: list[Ctx], now: datetime | None = None) -> dict:
     for ctx in contexts:
         try:
             repos.append(repo_state(ctx, now))
-        except CommandError as exc:
+        except CommandError as exc:  # unknown, not empty: the page must not say there is nothing to do
             repos.append(
                 {
                     "repo": ctx.cfg.repo,
                     "slots": ctx.cfg.slots,
-                    "jobs": [],
-                    "prs": [],
-                    "queue": [],
-                    "refused": [],
-                    "human_tasks": [],
+                    "jobs": _running(ctx, ctx.ledger.rows()),
+                    "prs": None,
+                    "queue": None,
+                    "parked_issues": None,
+                    "refused": None,
+                    "human_tasks": None,
                     "error": str(exc)[:300],
                 }
             )
@@ -280,6 +305,7 @@ def state(contexts: list[Ctx], now: datetime | None = None) -> dict:
     feed.sort(key=lambda e: e["ts"], reverse=True)
     return {
         "generated": _iso(now),
+        "slots": slots,
         "health": {"last_tick": max(beats) if beats else None, "errors_24h": errors},
         "fuel": {"codex": fuel.codex_weekly(), "claude": None},
         "stats": {
@@ -299,14 +325,15 @@ def page() -> bytes:
 
 
 class _Cache:
-    def __init__(self, contexts: list[Ctx], seconds: float):
-        self.contexts, self.seconds = contexts, seconds
+    def __init__(self, contexts: list[Ctx], seconds: float, slots: int | None = None):
+        self.contexts, self.seconds, self.slots = contexts, seconds, slots
         self.lock, self.body, self.at = threading.Lock(), b"", 0.0
 
     def get(self) -> bytes:
         with self.lock:
             if time.monotonic() - self.at > self.seconds or not self.body:
-                self.body = json.dumps(state(self.contexts), ensure_ascii=False).encode("utf-8")
+                body = state(self.contexts, slots=self.slots)
+                self.body = json.dumps(body, ensure_ascii=False).encode("utf-8")
                 self.at = time.monotonic()
             return self.body
 
@@ -373,6 +400,7 @@ def server(
     port: int = DEFAULT_PORT,
     allow_hosts: tuple[str, ...] = (),
     cache_seconds: float = 15,
+    slots: int | None = None,
 ) -> ThreadingHTTPServer:
     allowed = LOCAL_HOSTS | {h.lower() for h in allow_hosts} | {host.lower()}
-    return ThreadingHTTPServer((host, port), handler(_Cache(contexts, cache_seconds), allowed))
+    return ThreadingHTTPServer((host, port), handler(_Cache(contexts, cache_seconds, slots), allowed))
