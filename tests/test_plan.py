@@ -55,6 +55,14 @@ def test_filing_sends_only_launchable_t0_t1_to_the_queue(world):  # noqa: F811
     assert len(ctx.ledger.events("planned")) == 4
 
 
+def test_a_repo_from_an_older_init_gets_the_planner_labels_before_anything_is_filed(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.known_labels = {"vigia:ready", "tier:T0", "tier:T1", "tier:T2"}  # what an older `vigia init` created
+    filed = plan.file_plan(ctx, plan.parse(json.dumps(_plan())), "g")
+    assert len(filed) == 4 and {"vigia:proposed", "vigia:human-task"} <= gh.known_labels
+
+
 def test_propose_only_files_nothing_as_ready(world):  # noqa: F811
     gh, build = world
     ctx, _ = build([])

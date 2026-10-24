@@ -16,6 +16,7 @@ from pathlib import Path
 from . import tickets
 from .config import TIERS, Seat
 from .context import Ctx
+from .init import label_specs
 
 PROPOSED = "vigia:proposed"
 HUMAN_TASK = "vigia:human-task"
@@ -145,10 +146,20 @@ def parse(text: str) -> dict | None:
 def file_plan(ctx: Ctx, plan: dict, goal: str, auto_ready: bool = True) -> list[dict]:
     """Create the issues. Returns [{'number', 'title', 'labels'}] for what was filed."""
     labels = ctx.cfg.labels
-    filed = []
+    checked = []
     for t in plan["tickets"]:
         gaps = tickets.missing(t["body"])
-        ready = auto_ready and not gaps and t["tier"] != "T2"
+        checked.append((t, gaps, auto_ready and not gaps and t["tier"] != "T2"))
+    # A repo set up by an older `vigia init` has no planner labels yet: create them first, so a plan is never
+    # left half filed by a label GitHub refuses.
+    needed = {PROPOSED for _, _, ready in checked if not ready} | (
+        {HUMAN_TASK} if plan["human_tasks"] else set()
+    )
+    for name, color, description in label_specs(labels):
+        if name in needed:
+            ctx.gh.ensure_label(name, color, description)
+    filed = []
+    for t, gaps, ready in checked:
         names = [labels.tier(t["tier"]), labels.ready if ready else PROPOSED]
         body = t["body"] + f"\n\n<!-- vigia:planned goal={json.dumps(goal[:200])} -->\n"
         if gaps:
