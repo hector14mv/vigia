@@ -86,6 +86,10 @@ class Git:
                 encoding="utf-8",
             )
 
+    def files(self, commit: str) -> list[str]:
+        """Every tracked file at `commit`."""
+        return [f for f in self._git("ls-tree", "-r", "--name-only", commit).stdout.splitlines() if f]
+
     def dirty(self, wt: Path) -> bool:
         return bool(self._git("status", "--porcelain", cwd=wt).stdout.strip())
 

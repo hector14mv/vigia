@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import signal
 import sys
 from contextlib import contextmanager
@@ -218,6 +219,22 @@ def cmd_workspace(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plan(args: argparse.Namespace) -> int:
+    from . import plan
+
+    ctx = Ctx.load(Path.cwd())
+    with ctx.lock():
+        result, filed = plan.plan(ctx, args.goal, limit=args.max, dry_run=args.dry_run)
+    if args.dry_run:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+    for item in filed:
+        print(f"#{item['number']} [{', '.join(item['labels'])}] {item['title']}")
+    if not filed:
+        print("The planner proposed nothing.")
+    return 0
+
+
 def cmd_mesa(args: argparse.Namespace) -> int:
     from . import mesa
 
@@ -315,6 +332,14 @@ def parser() -> argparse.ArgumentParser:
     )
     s.add_argument("--force", action="store_true", help="overwrite an existing vigia.workspace.toml")
     s.set_defaults(func=cmd_workspace)
+
+    s = sub.add_parser(
+        "plan", help="turn a goal into proposed tickets in the template, for a person to ratify"
+    )
+    s.add_argument("goal", help="what you want, in a sentence or a paragraph")
+    s.add_argument("--max", type=int, default=5, help="at most this many tickets (default 5)")
+    s.add_argument("--dry-run", action="store_true", help="print the plan, file nothing")
+    s.set_defaults(func=cmd_plan)
 
     s = sub.add_parser(
         "mesa", help="the control desk in a browser: what needs you, every PR's next step, events, fuel"

@@ -10,7 +10,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from vigia.proc import Result
+from vigia.proc import CommandError, Result
 
 
 class Clock:
@@ -65,6 +65,7 @@ class FakeGitHub:
         self.ci: dict[str, str] = {}  # sha -> ci state (default passing)
         self.merged: list[tuple[int, str]] = []
         self.next = 1
+        self.known_labels: set[str] | None = None  # None: every label exists
 
     # helpers for tests
     def add_issue(self, title: str, body: str, labels: list[str]) -> int:
@@ -107,6 +108,14 @@ class FakeGitHub:
     def issue(self, n: int) -> dict:
         return dict(self.issues_[n])
 
+    def create_issue(self, title: str, body: str, labels: list[str]) -> int:
+        unknown = [name for name in labels if self.known_labels is not None and name not in self.known_labels]
+        if unknown:  # what `gh issue create` does with a label the repo does not have
+            raise CommandError(
+                ["gh", "issue", "create"], 1, "", f"could not add label: '{unknown[0]}' not found"
+            )
+        return self.add_issue(title, body, labels)
+
     def add_labels(self, n: int, *labels: str) -> None:
         item = self._item(n)
         item["labels"] = sorted(set(item["labels"]) | set(labels))
@@ -127,7 +136,8 @@ class FakeGitHub:
         return {"actor": found[-1][0], "ts": found[-1][1], "id": found[-1][2]} if found else None
 
     def ensure_label(self, name: str, color: str, description: str) -> None:
-        pass
+        if self.known_labels is not None:
+            self.known_labels.add(name)
 
     def _view(self, p: dict) -> dict:
         view = dict(p)

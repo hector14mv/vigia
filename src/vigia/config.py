@@ -26,6 +26,11 @@ EFFORTS = {
 }
 
 
+# Labels `vigia plan` files with, whatever vigia.toml says: a ticket waiting for a person, and work only a person can do.
+PROPOSED = "vigia:proposed"
+HUMAN_TASK = "vigia:human-task"
+
+
 class ConfigError(ValueError):
     """vigia.toml is missing, malformed or breaks one of the rules."""
 
@@ -77,6 +82,13 @@ class Labels:
 
     def tier(self, tier: str) -> str:
         return f"{self.tier_prefix}{tier}"
+
+    def collisions(self) -> list[str]:
+        """Workflow labels that are also a planner or tier label (GitHub compares labels ignoring case). A ready
+        label named `vigia:proposed` would send every ticket the planner holds back straight to the queue."""
+        others = {n.casefold() for n in (PROPOSED, HUMAN_TASK, *(self.tier(t) for t in TIERS))}
+        workflow = (self.ready, self.building, self.review, self.parked, self.human_ok)
+        return [n for n in workflow if n.casefold() in others]
 
 
 @dataclass(frozen=True)
@@ -259,6 +271,8 @@ def parse(data: dict, path: Path | None = None) -> Config:
     names = [labels.ready, labels.building, labels.review, labels.parked, labels.human_ok]
     if len(set(names)) != len(names):
         raise ConfigError("labels: every label must be different")
+    if labels.collisions():
+        raise ConfigError(f"labels: {labels.collisions()} are reserved for the planner and the tiers")
 
     watch_t = data.get("watch") or {}
     checks_t = data.get("checks") or {}

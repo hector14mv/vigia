@@ -130,6 +130,13 @@ class GitHub:
             key=lambda r: r["number"],
         )
 
+    def create_issue(self, title: str, body: str, labels: list[str]) -> int:
+        args = ["issue", "create", "-R", self.repo, "--title", title, "--body-file", "-"]
+        for name in labels:
+            args += ["--label", name]
+        url = self._gh(*args, input=body).strip().splitlines()[-1]
+        return int(url.rstrip("/").rsplit("/", 1)[-1])
+
     def issue(self, number: int) -> dict:
         r = json.loads(
             self._gh(

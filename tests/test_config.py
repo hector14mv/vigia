@@ -111,6 +111,14 @@ def test_labels_must_differ():
         parse(doc)
 
 
+@pytest.mark.parametrize("name", ["vigia:proposed", "VIGIA:HUMAN-TASK", "tier:T1"])
+def test_labels_must_not_be_a_planner_or_tier_label(name):
+    doc = base_doc()
+    doc["labels"] = {"ready": name}
+    with pytest.raises(ConfigError, match="reserved"):
+        parse(doc)
+
+
 def test_engine_args_override_round_trips():
     doc = base_doc()
     doc["engines"] = {"codex": {"builder": ["--sandbox", "danger-full-access"]}}

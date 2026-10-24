@@ -211,6 +211,7 @@ footer { color: var(--muted); font-size: 12.5px; }
       (r.parked_issues || []).forEach(function (i) { cards.push({ kind: "parked-issue", repo: r.repo, labels: r.labels, issue: i }); });
       (r.refused || []).forEach(function (i) { cards.push({ kind: "refused", repo: r.repo, issue: i }); });
       (r.human_tasks || []).forEach(function (i) { cards.push({ kind: "task", repo: r.repo, issue: i }); });
+      (r.proposed || []).forEach(function (i) { cards.push({ kind: "proposed", repo: r.repo, labels: r.labels, issue: i }); });
     });
     return cards;
   }
@@ -258,6 +259,11 @@ footer { color: var(--muted); font-size: 12.5px; }
           '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
           '<div class="why">Missing: ' + esc((c.issue.missing || []).join("; ")) + "</div>" +
           '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Complete the ticket</a></div></article>');
+      } else if (c.kind === "proposed") {
+        html.push('<article class="card refused"><span class="kicker">Planned ticket to ratify · ' + esc(c.repo) + "</span>" +
+          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + ' <span class="tier ' + esc(c.issue.tier) + '">' + esc(c.issue.tier) + "</span></span>" +
+          '<p class="hint">Read it; if it says the right thing, swap <code>vigia:proposed</code> for <code>' + esc(label(c, "ready")) + '</code>.</p>' +
+          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Read the ticket</a></div></article>');
       } else {
         html.push('<article class="card"><span class="kicker">Only you can do this · ' + esc(c.repo) + "</span>" +
           '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
