@@ -37,8 +37,8 @@ def make_runner(
             if not repo_ok:
                 raise CommandError(args, 1, "", "Could not resolve to a Repository")
             return Result(0, json.dumps({"nameWithOwner": REPO}), "")
-        if head == ["gh", "label"]:
-            return Result(0, json.dumps([{"name": n} for n in have]), "")
+        if head == ["gh", "api"] and any("/labels" in a for a in args):
+            return Result(0, "".join(f"{n}\n" for n in have), "")
         raise AssertionError(f"unexpected command: {args}")
 
     runner.calls = calls
@@ -112,7 +112,7 @@ def test_unreachable_repo_fails_and_labels_are_not_checked(clone):
     checks = by_name(doctor.collect(clone, runner))
     assert checks["github repo"].status == "fail"
     assert checks["labels"].status == "fail"
-    assert not any(c[:2] == ["gh", "label"] for c in runner.calls)
+    assert not any("/labels" in " ".join(c) for c in runner.calls)
 
 
 def test_no_config_fails_and_skips_the_repo_checks(tmp_path, monkeypatch):
@@ -238,3 +238,23 @@ def test_command_exit_code(clone, monkeypatch, capsys, codex, code, last):
     monkeypatch.setattr(doctor, "collect", lambda start: real_collect(start, make_runner(codex=codex)))
     assert cli.main(["doctor"]) == code
     assert capsys.readouterr().out.strip().splitlines()[-1] == last
+
+
+def test_a_work_root_that_resolves_to_home_fails_like_a_build_would(clone, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    cfg = config_mod.load(clone / "vigia.toml")
+    root = context.work_root(clone, cfg)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    root.symlink_to(home)  # writable, a directory, and exactly what safety.check_root refuses
+    check = by_name(doctor.collect(clone, make_runner()))["work root"]
+    assert check.status == "fail" and "refusing" in check.detail
+    assert check.fix.startswith("remove ")
+
+
+def test_labels_are_read_from_every_page(clone):
+    runner = make_runner()
+    by_name(doctor.collect(clone, runner))
+    listing = next(c for c in runner.calls if any("/labels" in a for a in c))
+    assert "--paginate" in listing

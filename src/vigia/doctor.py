@@ -60,13 +60,11 @@ def _repo(runner: Runner, repo: str) -> Check:
 def _labels(runner: Runner, cfg: Config, reachable: bool) -> Check:
     if not reachable:
         return Check("labels", FAIL, "not checked: repo unreachable", "fix the github repo check first")
-    r = _run(runner, ["gh", "label", "list", "-R", cfg.repo, "--limit", "500", "--json", "name"])
+    # Every page: a label past any fixed limit must not be reported missing (its create command would fail).
+    r = _run(runner, ["gh", "api", "--paginate", f"repos/{cfg.repo}/labels?per_page=100", "--jq", ".[].name"])
     if not (r and r.code == 0):
         return Check("labels", FAIL, "could not list the labels", f"run `gh label list -R {cfg.repo}`")
-    try:
-        have = {row["name"] for row in json.loads(r.stdout or "[]")}
-    except (json.JSONDecodeError, TypeError, KeyError):
-        return Check("labels", FAIL, "could not read the label list", f"run `gh label list -R {cfg.repo}`")
+    have = {line.strip() for line in (r.stdout or "").splitlines() if line.strip()}
     specs = label_specs(cfg.labels)
     missing = [spec for spec in specs if spec[0] not in have]
     if not missing:
@@ -111,6 +109,10 @@ def _work_root(clone: Path | None, cfg: Config | None) -> Check:
         root = work_root(clone, cfg) if clone and cfg else safety.check_root(safety.default_root())
     except safety.UnsafePath as exc:
         return Check("work root", FAIL, str(exc), "point TMPDIR at a directory outside your home")
+    try:
+        safety.check_root(root)  # what every build checks: the per-clone folder may be a symlink to home
+    except safety.UnsafePath as exc:
+        return Check("work root", FAIL, str(exc), f"remove {shlex.quote(str(root))}; vigia creates it again")
     if os.path.lexists(root) and not root.is_dir():
         return Check(
             "work root",
