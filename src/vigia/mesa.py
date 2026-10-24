@@ -26,6 +26,7 @@ from .watch import sense
 
 PAGE = Path(__file__).with_name("mesa.html")
 DEFAULT_PORT = 8790
+REFUSED_CHECKS = 10  # refused tickets whose issue state is read on each refresh, newest first
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
 
@@ -178,15 +179,23 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                 "reason": failed.get("reason") or "parked; the ticket's last comment says why",
             }
         )
-    week_ago = now - timedelta(days=7)
-    refused, seen_issues = [], set()
+    # What could not be read from GitHub: those lists are incomplete, and the page must say so rather than show
+    # them as empty.
+    unread: list[str] = []
+    # A refused ticket stays here, whatever its age, until its issue is closed or ready again. Each check costs one
+    # GitHub call, so only the newest REFUSED_CHECKS are checked; the rest are counted, never dropped silently.
+    refused, seen_issues, unchecked = [], set(), 0
     for r in reversed(rows):
-        if r["event"] != "refused" or r.get("issue") in seen_issues or (_ts(r["ts"]) or now) < week_ago:
+        if r["event"] != "refused" or r.get("issue") in seen_issues:
             continue
         seen_issues.add(r["issue"])
+        if len(seen_issues) > REFUSED_CHECKS:
+            unchecked += 1
+            continue
         try:
             issue = ctx.gh.issue(r["issue"])
         except CommandError:
+            unread.append(f"refused ticket #{r['issue']}")
             continue
         if issue["state"] == "OPEN" and labels.ready not in issue["labels"]:
             refused.append(
@@ -197,15 +206,14 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                     "missing": r.get("gaps") or [],
                 }
             )
-        if len(refused) >= 5:
-            break
     try:
         human_tasks = [
             {"number": i["number"], "title": i["title"], "url": i["url"]}
             for i in ctx.gh.issues("vigia:human-task")
         ]
     except CommandError:
-        human_tasks = []
+        human_tasks = None  # unknown, not none
+        unread.append("human tasks")
     return {
         "repo": cfg.repo,
         "slots": cfg.slots,
@@ -214,7 +222,9 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
         "queue": queue,
         "parked_issues": parked_issues,
         "refused": refused,
+        "refused_unchecked": unchecked,
         "human_tasks": human_tasks,
+        "unread": unread,
     }
 
 

@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -182,3 +183,43 @@ def test_a_workspace_counts_its_shared_limit_not_the_sum_of_its_repos(world, tmp
     assert "sessions <b>2/2</b>" in _render(tmp_path, dict(s, repos=[two, other]))["pulse"]
     alone = dict(s, slots=None, repos=[two, other])  # no workspace: each repo's own watch.slots adds up
     assert "sessions <b>2/3</b>" in _render(tmp_path, alone)["pulse"]
+
+
+def test_a_list_that_cannot_be_read_is_never_shown_as_nothing_to_do(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    real = gh.issues
+
+    def flaky(label):
+        if label == "vigia:human-task":
+            raise CommandError(["gh", "issue", "list"], 1, "", "HTTP 502")
+        return real(label)
+
+    gh.issues = flaky
+    repo = mesa.state([ctx])["repos"][0]
+    assert repo["human_tasks"] is None and repo["unread"] == ["human tasks"]
+    shown = _render(tmp_path, mesa.state([ctx]))
+    assert "Nothing needs you" not in shown["turn"] and "Could not read: human tasks" in shown["turn"]
+
+
+def test_a_refused_ticket_stays_until_its_issue_resolves_it_whatever_its_age(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    n = gh.add_issue("Too vague", "## Outcome\nmake it better\n", ["tier:T1"])
+    ctx.ledger.append("refused", issue=n, gaps=["no Scope section"])
+    later = datetime.fromisoformat(ctx.ledger.rows()[-1]["ts"].replace("Z", "+00:00")) + timedelta(days=30)
+    repo = mesa.state([ctx], later)["repos"][0]
+    assert [i["number"] for i in repo["refused"]] == [n]  # a month later, still there
+    gh.issues_[n]["state"] = "CLOSED"
+    assert mesa.state([ctx], later)["repos"][0]["refused"] == []  # gone once the issue resolves it
+
+
+def test_refused_tickets_past_the_check_limit_are_counted_not_dropped(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    for k in range(mesa.REFUSED_CHECKS + 2):
+        n = gh.add_issue(f"Vague {k}", "x", ["tier:T1"])
+        ctx.ledger.append("refused", issue=n, gaps=["no Outcome section"])
+    repo = mesa.state([ctx])["repos"][0]
+    assert len(repo["refused"]) == mesa.REFUSED_CHECKS and repo["refused_unchecked"] == 2
+    assert "2 older refused tickets not checked" in _render(tmp_path, mesa.state([ctx]))["turn"]

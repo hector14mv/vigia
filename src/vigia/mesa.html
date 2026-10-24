@@ -195,6 +195,8 @@ footer { color: var(--muted); font-size: 12.5px; }
     state.repos.forEach(function (r) {
       // A repo vigia could not read has unknown work, not none: say so instead of "Nothing needs you"
       if (r.error) cards.push({ kind: "unavailable", repo: r.repo, error: r.error });
+      // Part of a repo could not be read: those lists are incomplete, so this is a card too, never "Nothing needs you"
+      if ((r.unread && r.unread.length) || r.refused_unchecked) cards.push({ kind: "partial", repo: r.repo, unread: r.unread || [], unchecked: r.refused_unchecked || 0 });
       (r.prs || []).forEach(function (p) {
         if (p.next === "wait" && p.waiting_for === "human") {
           cards.push({ kind: "t2", repo: r.repo, pr: p });
@@ -218,6 +220,12 @@ footer { color: var(--muted); font-size: 12.5px; }
         html.push('<article class="card unavailable"><span class="kicker">Cannot read · ' + esc(c.repo) + "</span>" +
           '<div class="why">' + esc(c.error) + "</div>" +
           '<p class="hint">Its pull requests and tickets are unknown until vigia can read GitHub again: check <code>gh auth status</code> where vigia runs.</p></article>');
+      } else if (c.kind === "partial") {
+        var parts = c.unread.slice();
+        if (c.unchecked) parts.push(c.unchecked + " older refused ticket" + (c.unchecked === 1 ? "" : "s") + " not checked");
+        html.push('<article class="card unavailable"><span class="kicker">Not all read · ' + esc(c.repo) + "</span>" +
+          '<div class="why">Could not read: ' + esc(parts.join("; ")) + "</div>" +
+          '<p class="hint">This list may be missing things that need you. Check the issues on GitHub, or <code>gh auth status</code> where vigia runs.</p></article>');
       } else if (c.kind === "parked-issue") {
         html.push('<article class="card parked"><span class="kicker">Build failed · ' + esc(c.repo) + "</span>" +
           '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
