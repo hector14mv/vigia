@@ -216,34 +216,34 @@ def test_a_refused_ticket_stays_until_its_issue_resolves_it_whatever_its_age(wor
     assert mesa.state([ctx], later)["repos"][0]["refused"] == []  # gone once the issue resolves it
 
 
-def test_refused_tickets_past_the_check_limit_are_counted_not_dropped(world, tmp_path):  # noqa: F811
-    gh, build = world
-    ctx, _ = build([])
-    for k in range(mesa.REFUSED_CHECKS + 2):
-        n = gh.add_issue(f"Vague {k}", "x", ["tier:T1"])
-        ctx.ledger.append("refused", issue=n, gaps=["no Outcome section"])
-    repo = mesa.state([ctx])["repos"][0]
-    assert len(repo["refused"]) == mesa.REFUSED_CHECKS and repo["refused_unchecked"] == 2
-    assert "2 older refused tickets not checked" in _render(tmp_path, mesa.state([ctx]))["turn"]
-
-
-def test_an_old_refusal_is_checked_in_turn_not_hidden_behind_newer_resolved_ones(world, tmp_path):  # noqa: F811
+def test_every_pending_refusal_shows_however_many_newer_ones_were_resolved(world, tmp_path):  # noqa: F811
     gh, build = world
     ctx, _ = build([])
     first = gh.add_issue("Still vague", "x", ["tier:T1"])
     ctx.ledger.append("refused", issue=first, gaps=["no Outcome section"])
-    for k in range(mesa.REFUSED_CHECKS):
+    for k in range(12):
         n = gh.add_issue(f"Gave up {k}", "x", ["tier:T1"])
         ctx.ledger.append("refused", issue=n, gaps=["no Outcome section"])
         gh.issues_[n]["state"] = "CLOSED"
-    checks: dict = {}  # what the server keeps between refreshes
-    repo = mesa.state([ctx], checks=checks)["repos"][0]
-    assert repo["refused"] == [] and repo["refused_unchecked"] == 1  # the newest ten first
-    repo = mesa.state([ctx], checks=checks)["repos"][0]
-    assert [i["number"] for i in repo["refused"]] == [first] and repo["refused_unchecked"] == 0
-    assert repo["refused"][0]["missing"] == ["no Outcome section"]
-    repo = mesa.state([ctx], checks=checks)["repos"][0]  # known from its last check while others are read
-    assert [i["number"] for i in repo["refused"]] == [first]
+    repo = mesa.state([ctx])["repos"][0]
+    assert [i["number"] for i in repo["refused"]] == [first] and repo["refused"][0]["missing"] == [
+        "no Outcome section"
+    ]
+
+
+def test_refusals_that_cannot_be_checked_are_unknown_not_none(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    n = gh.add_issue("Vague", "x", ["tier:T1"])
+    ctx.ledger.append("refused", issue=n, gaps=["no Outcome section"])
+
+    def down():
+        raise CommandError(["gh", "api"], 1, "", "HTTP 502")
+
+    gh.open_issues = down
+    repo = mesa.state([ctx])["repos"][0]
+    assert repo["refused"] is None and "refused tickets" in repo["unread"]
+    assert "Nothing needs you" not in _render(tmp_path, mesa.state([ctx]))["turn"]
 
 
 def test_a_refused_ticket_that_is_being_built_is_no_longer_refused(world, tmp_path):  # noqa: F811

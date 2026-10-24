@@ -86,6 +86,20 @@ class GitHub:
         return self._login
 
     # -- issues --
+    def open_issues(self) -> list[dict]:
+        """Every open issue, whatever its labels, across all pages (pull requests excluded)."""
+        rows = self._api("GET", f"repos/{self.repo}/issues?state=open&per_page=100", paginate=True) or []
+        return [
+            {
+                "number": r["number"],
+                "title": r["title"],
+                "url": r.get("html_url", ""),
+                "labels": sorted(x["name"] for x in r.get("labels") or []),
+            }
+            for r in rows
+            if "pull_request" not in r
+        ]
+
     def issues(self, label: str) -> list[dict]:
         out = self._gh(
             "issue",
