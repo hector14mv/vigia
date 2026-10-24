@@ -105,12 +105,12 @@ def spawn(ctx: Ctx, action: str, number: int, stage: str = "") -> bool:
     except BlockingIOError:
         os.close(fd)
         return False
-    logs = ctx.state / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
     # -I: the job runs in the clone, and a `vigia.py` there must not be what `-m vigia` imports (nor PYTHONPATH)
     cmd = [sys.executable, "-I", "-m", "vigia", "job", action, str(number)] + ([stage] if stage else [])
     cmd += ["--lock-fd", str(fd)]
-    try:
+    try:  # everything that can fail from here on must still close the locked file
+        logs = ctx.state / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
         with (logs / f"job-{action}-{number}.log").open("a", encoding="utf-8") as log:
             subprocess.Popen(  # noqa: S603 - a fixed argv, no shell
                 cmd,

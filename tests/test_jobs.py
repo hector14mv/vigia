@@ -235,6 +235,45 @@ def test_spawn_reserves_the_slot_before_the_child_runs(world, monkeypatch):  # n
     assert ctx.ledger.last("job_spawned")["target"] == "pr-12"
 
 
+def test_spawn_releases_the_lock_when_the_log_folder_cannot_be_made(world, monkeypatch):  # noqa: F811
+    import subprocess
+
+    import pytest
+
+    gh, build = world
+    ctx, _ = build([])
+    started = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: started.append(a))
+    ctx.state.mkdir(parents=True, exist_ok=True)
+    (ctx.state / "logs").write_text("not a folder")  # `.vigia/logs` cannot be created
+    with pytest.raises(OSError):
+        jobs.spawn(ctx, "fix", 12, "gate")
+    assert started == []
+    assert not jobs.busy(ctx, "pr-12")  # the descriptor was closed: nothing keeps the target locked
+    assert ctx.ledger.last("job_spawned") is None
+    (ctx.state / "logs").unlink()
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: None)
+    assert jobs.spawn(ctx, "fix", 12, "gate") is True  # and the target can be taken again
+
+
+def test_no_gate_starts_while_the_build_that_opened_the_pr_holds_its_issue(world, monkeypatch):  # noqa: F811
+    gh, build = world
+    ctx, run = build([APPROVE])
+    n = gh.add_issue("One", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)  # slots 1: builds inline; the PR is open and labelled
+    pr = next(iter(gh.prs_))
+    spawned = []
+    monkeypatch.setattr(
+        jobs, "spawn", lambda c, action, number, stage="": spawned.append((action, number)) or True
+    )
+    ctx.cfg = replace(ctx.cfg, slots=3)
+    with jobs.hold(ctx, jobs.target("build", n)):  # the build job has not posted its handoff yet
+        seen = tick(ctx)
+    assert spawned == [] and decisions(seen) == [(pr, "wait")]
+    tick(ctx)  # the build job ended
+    assert spawned == [("gate", pr)]
+
+
 def test_a_job_skips_a_pr_taken_out_of_vigia_or_an_issue_parked_meanwhile(world):  # noqa: F811
     gh, build = world
     ctx, run = build([APPROVE])

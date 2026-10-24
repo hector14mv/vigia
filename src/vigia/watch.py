@@ -203,6 +203,8 @@ def tick(
         for s in seen:  # a live job owns its PR: no merge, park or second session until it ends
             if jobs.target("gate", s.pr["number"]) in running:
                 s.decision = Decision("wait", "a job is working on it", s.pr["head"])
+            elif _still_building(ctx, s.pr["number"], running):
+                s.decision = Decision("wait", "its build job has not finished its handoff", s.pr["head"])
         for s in seen:  # report every decision first, so the output reads in the order things happen
             ctx.say(f"PR #{s.pr['number']}: {s.decision}")
         for s in seen:
@@ -229,6 +231,13 @@ def tick(
             if issue is not None:
                 jobs.run(ctx, "build", issue["number"])
         return seen
+
+
+def _still_building(ctx: Ctx, n: int, running: set[str]) -> bool:
+    """True while the build job that opened PR `n` still holds its issue: the PR is labelled before the build
+    posts its handoff comment, and a gate started in that gap would see a PR with no known builder."""
+    issue = (ctx.ledger.last("pr_opened", pr=n) or {}).get("issue")
+    return issue is not None and jobs.target("build", issue) in running
 
 
 def _building(running: set[str]) -> set[int]:
