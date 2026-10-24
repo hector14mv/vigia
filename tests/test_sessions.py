@@ -27,17 +27,33 @@ def stop(signum, frame):
 signal.signal(signal.SIGTERM, stop)
 fd = os.open({lock!r}, os.O_RDWR | os.O_CREAT)
 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-engine = "import os, time; open({pid!r}, 'w').write(str(os.getpid())); time.sleep(60)"
-proc.run_session([sys.executable, "-c", engine], cwd=Path({cwd!r}), input="", timeout=120,
+proc.run_session([sys.executable, "-c", {engine!r}], cwd=Path({cwd!r}), input="", timeout=120,
                  log=Path({log!r}), keep_fds=(fd,))
 """
 
 
-def _start(tmp_path):
+ENGINE = "import os, time; open({pid!r}, 'w').write(str(os.getpid())); time.sleep(60)"
+
+# An engine that leaves behind a child the SIGTERM does not reach: it ignores the signal, and it closed every
+# inherited fd and redirected its output, so neither the output pipe nor the target lock tracks it.
+ENGINE_WITH_STUBBORN_CHILD = """\
+import os, subprocess, sys, time
+child = "import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); open({child!r}, 'w').write(str(os.getpid())); time.sleep(60)"
+subprocess.Popen([sys.executable, "-c", child], close_fds=True,
+                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+while not (os.path.exists({child!r}) and open({child!r}).read()):
+    time.sleep(0.05)
+open({pid!r}, 'w').write(str(os.getpid()))
+time.sleep(60)
+"""
+
+
+def _start(tmp_path, engine=ENGINE):
     lock, pid = tmp_path / "pr-1.lock", tmp_path / "engine.pid"
     script = tmp_path / "job.py"
+    engine = engine.format(pid=str(pid), child=str(tmp_path / "child.pid"))
     script.write_text(
-        SESSION.format(lock=str(lock), pid=str(pid), cwd=str(tmp_path), log=str(tmp_path / "s.log"))
+        SESSION.format(lock=str(lock), engine=engine, cwd=str(tmp_path), log=str(tmp_path / "s.log"))
     )
     job = subprocess.Popen([sys.executable, str(script)], cwd=tmp_path)
     for _ in range(200):
@@ -100,6 +116,20 @@ def test_a_terminated_job_stops_its_engine_first(tmp_path):
     finally:
         if _alive(engine):
             os.kill(engine, signal.SIGKILL)
+
+
+def test_a_terminated_job_stops_what_its_engine_left_behind_before_letting_go(tmp_path):
+    job, lock, engine = _start(tmp_path, ENGINE_WITH_STUBBORN_CHILD)
+    child = int((tmp_path / "child.pid").read_text())
+    try:
+        job.send_signal(signal.SIGTERM)
+        assert job.wait(timeout=30) == 143
+        assert not _alive(child)  # gone by the time the job exits, so the freed target is really free
+        assert not _locked(lock)
+    finally:
+        for pid in (engine, child):
+            if _alive(pid):
+                os.kill(pid, signal.SIGKILL)
 
 
 def test_engine_sessions_inherit_the_locks_their_runner_holds(world):  # noqa: F811
