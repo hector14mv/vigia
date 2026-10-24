@@ -59,7 +59,14 @@ def _skill(clone: Path) -> str:
     ):
         if path.is_file():
             return path.read_text(encoding="utf-8")
-    return "Write each ticket body in exactly this template:\n\n" + tickets.TEMPLATE
+    return "Write each ticket body in exactly this template:\n\n" + strip_front_matter(tickets.TEMPLATE)
+
+
+def strip_front_matter(text: str) -> str:
+    """Drop a leading `---` YAML block (GitHub's issue-template header): it belongs to the template file, not to
+    a ticket's body."""
+    match = re.match(r"\s*---\n.*?\n---\n", text, re.S)
+    return text[match.end() :].lstrip() if match else text
 
 
 def prompt(
