@@ -1268,6 +1268,7 @@ def test_a_mesa_that_has_not_read_github_yet_answers_at_once_with_what_this_mach
     try:
         started = time.monotonic()
         first = json.loads(cache.get())
+        _until(lambda: calls)  # the refresh thread is inside GitHub's call, not merely started
         again = json.loads(cache.get())
         assert time.monotonic() - started < 1  # GitHub has not answered, and nobody waited for it
         repo = first["repos"][0]

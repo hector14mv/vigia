@@ -147,7 +147,14 @@ def test_no_config_fails_and_skips_the_repo_checks(tmp_path, monkeypatch):
     checks = by_name(doctor.collect(empty, make_runner()))
     assert checks["vigia.toml"].status == "fail"
     assert "vigia init" in checks["vigia.toml"].fix
+    assert not checks["vigia.toml"].fix.endswith(("named", "the"))
     assert "labels" not in checks and "lock" not in checks
+
+
+def test_a_broken_config_fix_names_the_file(clone):
+    (clone / "vigia.toml").write_text("not = [valid", encoding="utf-8")
+    check = by_name(doctor.collect(clone, make_runner()))["vigia.toml"]
+    assert check.status == "fail" and check.fix == f"correct {clone / 'vigia.toml'}"
 
 
 def test_invalid_config_fails(clone):
