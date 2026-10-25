@@ -1,8 +1,9 @@
 # Roadmap
 
-vigia v0.1 is the core of a private factory, rewritten to run anywhere. That factory merged 360 pull
-requests in two weeks; the story is in [the article](https://hectormoyanovelez.com/fabrica). v0.2 brings
-over the rest, in roughly the order below. This page gives an order, never dates.
+vigia v0.1 is a private factory rewritten to run anywhere: parallel sessions, several repositories, the Mesa,
+the planner and the engine report came over in the first weekend. That factory merged 360 pull
+requests in two weeks; the story is in [the article](https://hectormoyanovelez.com/fabrica). v0.2 brings over
+the rest, in roughly the order below. This page gives an order, never dates.
 
 ## Routing
 
@@ -22,24 +23,34 @@ over the rest, in roughly the order below. This page gives an order, never dates
   before it merges, so what was reviewed is what lands ([#39](https://github.com/hector14mv/vigia/issues/39)).
   Built and tested, held back from v0.1 by its review: a check made before the merge can race a moving
   base unless GitHub enforces up-to-date branches, and it must survive a crash between push and record.
-
+- A merge GitHub refuses because the branch is behind waits for a person with the reason, instead of being
+  retried every tick ([#59](https://github.com/hector14mv/vigia/issues/59)).
+- A T2 change waiting for its human label holds the merges that would make it conflict, so a person's approval
+  is never thrown away by an unrelated merge ([#49](https://github.com/hector14mv/vigia/issues/49)).
 - A final full CI run on the exact accepted head, so what merges is what was reviewed and tested.
 - A classifier that parks any database migration that is not purely additive, because those need a person.
 
 ## Sessions
 
+- Chosen environment variables passed into engine sessions, for Bedrock, Vertex or a proxy
+  ([#42](https://github.com/hector14mv/vigia/issues/42)).
 - Memory, disk and load gates per slot, so parallel sessions do not starve the machine.
 - Resuming a finished session in its own context, so a follow-up does not start from zero.
 - Warm dependency caches per lockfile, so a new session does not reinstall everything.
 
 ## The person's loop
 
-- Decision cards with options and a recommendation, so a question to you takes seconds to answer.
+- Decision cards with options and a recommendation, answered with a `/vigia decide <option>` comment, so a
+  question to you takes seconds to answer.
+- The planner promoting independent T0/T1 tickets to the queue by itself, with the dependency and duplicate
+  rules its review found; in v0.1 you ratify every planned ticket.
+- Follow-ups from a merged PR's handoff filed as issues ([#41](https://github.com/hector14mv/vigia/pull/41)).
 - A "Probar" tray to confirm a change works or file a bug, so checking a result is one tap.
 - Buttons on the Mesa once it has its own login, so you can act where you read.
 
 ## Notifications
 
+- Messages through your own Telegram bot when something needs you ([#44](https://github.com/hector14mv/vigia/issues/44)).
 - Phone cards with buttons, so you can answer without opening a laptop.
 
 ## Fuel and cost
@@ -56,7 +67,7 @@ over the rest, in roughly the order below. This page gives an order, never dates
 
 ## Records
 
-- A weekly engine table, so you can compare engines on real results.
+- A weekly engine digest on top of `vigia report`, so you can compare engines on real results without asking.
 - Routing verdicts that move a router cell with data, so routing improves from evidence.
 
 ## Operations

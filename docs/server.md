@@ -73,6 +73,13 @@ vigia workspace          # writes vigia.workspace.toml: these clones and the slo
 vigia doctor             # in each clone: every check should say ok
 ```
 
+On GitHub, protect each repository's base branch (**Settings → Branches**, a rule for `main`; branch rules need
+a public repository, or a paid plan for a private one): **Require status
+checks to pass before merging** with your CI check, **Require branches to be up to date before merging**, and
+**Do not allow bypassing the above settings** (vigia merges with your login, which an admin rule would let
+through). vigia v0.1 does not re-review a PR whose base moved after its review; this rule is what stops a stale
+head from merging. Do not require approving reviews.
+
 Secrets for the service go in a file only you can read, which the unit loads:
 
 ```bash

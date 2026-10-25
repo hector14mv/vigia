@@ -31,7 +31,11 @@ this file only orders the work.
 4. **Repositories.** Ask which GitHub repositories vigia should work on and which lab should build (the other
    one reviews). Clone them side by side in one folder (e.g. `~/factory`), run `vigia init` in each (answer its
    questions with the person), commit and push the files it writes if the person agrees, then run
-   `vigia workspace` in the folder.
+   `vigia workspace` in the folder. Then ask the person to protect each base branch on GitHub (Settings →
+   Branches, a rule for `main`: "Require status checks to pass before merging" with their CI check, and
+   "Require branches to be up to date before merging", "Do not allow bypassing the above settings", no required
+   approving reviews). Do not change repository
+   settings yourself: vigia v0.1 relies on this rule to keep a stale head from merging, and it is theirs to set.
 5. **Check.** `vigia doctor` in each clone, if this version has it; otherwise `vigia status`. Everything should
    be ok.
 6. **Server only.** Write the two systemd user units from `docs/server.md` §4, enable linger, start them, and
