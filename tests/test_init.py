@@ -124,10 +124,11 @@ def test_init_stops_when_an_engine_is_not_logged_in(tmp_path, kwargs):
             create_labels=False,
         )
     assert not (tmp_path / "vigia.toml").exists()
-    assert any(m.strip().startswith("NO ") for m in messages)
+    assert any(m.strip().startswith("fail ") for m in messages)
+    assert not any(m.strip().startswith("NO ") for m in messages)
     # the name column is padded, so the detail starts in one column whatever the tool
-    rows = [m for m in messages if m.strip().startswith(("ok ", "NO "))]
-    assert [m[6:22].strip() for m in rows] == ["git", "gh logged in", "claude logged in", "codex logged in"]
+    rows = [m for m in messages if m.strip().startswith(("ok ", "fail"))]
+    assert [m[7:23].strip() for m in rows] == ["git", "gh logged in", "claude logged in", "codex logged in"]
 
 
 def test_init_builder_codex_gates_with_claude(tmp_path):
@@ -218,6 +219,21 @@ def test_init_creates_the_follow_up_label():
 
     specs = {name: description for name, _, description in label_specs(Labels())}
     assert "vigia:follow-up" in specs
+
+
+def test_the_t2_label_description_says_personal_data():
+    from vigia.config import Labels
+    from vigia.init import label_specs
+
+    specs = {name: description for name, _, description in label_specs(Labels())}
+    assert "personal data" in specs["tier:T2"]
+
+
+def test_init_closing_lines_follow_the_quickstart(tmp_path):
+    _, messages = run_init(tmp_path)
+    text = "\n".join(messages[messages.index("Next:") :])
+    order = [text.index(s) for s in ("vigia doctor", "Commit and push", "Protect main", "Open an issue")]
+    assert order == sorted(order)
 
 
 CI_PROMPT = "Merge without CI? (y/N)"

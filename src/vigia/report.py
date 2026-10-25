@@ -133,30 +133,39 @@ def build(ledgers: dict[str, Ledger], days: int = 7, now: datetime | None = None
     }
 
 
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
 def render(data: dict) -> str:
     t = data["totals"]
     totals = (
         f"{t['merged']} merged · {t['p1_gate']} P1 found by the gate, {t['p1_review']} by tier reviewers · "
-        f"{t['fix_rounds']} fix rounds · {t['parks']} parks"
+        f"{_count(t['fix_rounds'], 'fix round')} · {_count(t['parks'], 'park')}"
     )
     if t["updates"] > 0:
-        totals += f" · {t['updates']} base updates"
+        totals += f" · {_count(t['updates'], 'base update')}"
     window = "last day" if data["days"] == 1 else f"last {data['days']} days"
-    out = [
-        f"vigia report · {window} · {', '.join(data['repos'])}",
-        totals,
-        "",
-        "Builders            tiers     opened merged  first-round P1  gate rounds/merge  median min  parked",
-    ]
+    out = [f"vigia report · {window} · {', '.join(data['repos'])}", totals, ""]
+    if not (data["builders"] or data["reviewers"] or t["merged"] or t["parks"]):
+        return "\n".join(out + ["no pull requests in this window"])
+    # Each header is built with the same widths and alignment as its rows, so a word sits over its column.
+    out.append(
+        f"  {'Builders':<26} {'tiers':<9} {'opened':>6} {'merged':>6}  {'first-round P1':>14}  "
+        f"{'gate rounds/merge':>17}  {'median min':>10}  {'parked':>6}"
+    )
     for b in data["builders"]:
         rate = "–" if b["first_round_p1_rate"] is None else f"{b['first_round_p1_rate']:.0%}"
         rounds = "–" if b["gate_rounds_per_merge"] is None else f"{b['gate_rounds_per_merge']:.2f}"
         minutes = "–" if b["median_minutes_to_merge"] is None else f"{b['median_minutes_to_merge']:.0f}"
         out.append(
-            f"  {b['model']:<26} {','.join(b['tiers']):<9} {b['opened']:>4} {b['merged']:>6}  {rate:>14}  "
+            f"  {b['model']:<26} {','.join(b['tiers']):<9} {b['opened']:>6} {b['merged']:>6}  {rate:>14}  "
             f"{rounds:>17}  {minutes:>10}  {b['parked']:>6}"
         )
-    out += ["", "Reviewers           as            verdicts   P1   P2  no verdict"]
+    out += [
+        "",
+        f"  {'Reviewers':<26} {'as':<12} {'verdicts':>8} {'P1':>4} {'P2':>4}  {'no verdict':>10}",
+    ]
     for r in data["reviewers"]:
         out.append(
             f"  {r['model']:<26} {','.join(r['as']):<12} {r['verdicts']:>8} {r['p1']:>4} {r['p2']:>4}  {r['unavailable']:>10}"

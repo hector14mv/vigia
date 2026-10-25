@@ -18,8 +18,8 @@ Every ticket carries one **tier**, and the tier decides how much review the chan
 | Tier | What it touches | Review stack before the merge |
 |---|---|---|
 | **T0** | cosmetic changes, docs, tests, internal tooling | CI green → one cross-lab gate |
-| **T1** | product logic with no money and no other people's data | CI green → cross-lab gate → a stronger reviewer |
-| **T2** | money, auth, personal data, migrations, messages to customers, credentials, the process itself | CI green → cross-lab gate → a stronger reviewer → a human label on the exact head |
+| **T1** | product logic with no money and no other people's data | CI green → cross-lab gate → a second reviewer |
+| **T2** | money, auth, personal data, migrations, messages to customers, credentials, the process itself | CI green → cross-lab gate → a second reviewer → a human label on the exact head |
 
 When a change fits two tiers, the higher one wins. A ticket that turns out to touch a T2 surface is
 re-tiered upward as soon as that is known, never downward mid-flight. The model that wrote the

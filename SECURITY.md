@@ -28,8 +28,12 @@ reach your keyring again.
 One more limit: vigia controls the environment it starts a session with, not your shell's startup files. If
 `~/.zprofile`, `~/.zshenv`, `~/.bash_profile` or `~/.profile` exports a GitHub token, a login shell that a
 session opens exports it again. `gh` does not need such a line (it keeps its own login); remove it, or keep it
-only in the interactive `~/.zshrc`, which login shells do not read. For that, run vigia under a separate OS
+only in `~/.zshrc`, which non-interactive shells do not read. To rule this out, run vigia under a separate OS
 user or in a container (see [Run it safely](#run-it-safely)).
+
+Engine sessions also start with the MCP servers you configured for Claude Code and Codex on this machine, so a
+session can see those tools; whether it may call one depends on that CLI's own permission settings. Starting
+sessions without them is [#89](https://github.com/hector14mv/vigia/issues/89).
 
 ## Who can start a build
 

@@ -16,7 +16,7 @@ Must still hold: <existing behaviour this change could break and must not, each 
 - [ ] <verifiable criterion>
 
 ## Done-test
-<The command or steps a human runs to see it works.>
+<The command or steps a human runs to see that it works.>
 
 ## Risks
-<What could go wrong; data, money or security surfaces touched (if any, the tier is T2).>
+<What could go wrong; personal data, money or security surfaces touched (if any, the tier is T2).>
