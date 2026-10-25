@@ -110,13 +110,14 @@ class GitHub:
             if "pull_request" not in r
         ]
 
-    def issues_by(self, creator: str, since: str) -> list[dict]:
-        """Every issue `creator` opened or that changed since `since` (ISO time), in any state and with any labels,
-        across all pages (pull requests excluded): what vigia itself filed, whatever happened to it since."""
+    def issues_by(self, creator: str, since: str | None) -> list[dict]:
+        """Every issue `creator` opened, in any state and with any labels, across all pages (pull requests
+        excluded), changed at or after `since` (an ISO time on GitHub's clock; None: no lower bound)."""
+        after = f"&since={since}" if since else ""
         rows = (
             self._api(
                 "GET",
-                f"repos/{self.repo}/issues?state=all&creator={creator}&since={since}&per_page=100",
+                f"repos/{self.repo}/issues?state=all&creator={creator}{after}&per_page=100",
                 paginate=True,
             )
             or []
@@ -293,6 +294,13 @@ class GitHub:
             .splitlines()[-1]
         )
         return int(url.rstrip("/").rsplit("/", 1)[-1])
+
+    def merged_at(self, number: int) -> str | None:
+        """When GitHub merged PR `number`, on GitHub's own clock, or None if it says it is not merged."""
+        out = self._gh(
+            "pr", "view", str(number), "-R", self.repo, "--json", "mergedAt", "-q", ".mergedAt"
+        ).strip()
+        return out or None
 
     def merge(self, number: int, sha: str) -> None:
         """Squash-merge only if the PR's head is still exactly `sha` (GitHub refuses otherwise)."""

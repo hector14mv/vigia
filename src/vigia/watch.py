@@ -185,7 +185,10 @@ def file_follow_ups(ctx: Ctx, n: int) -> None:
     failed creation is an `error` row, tried again next tick up to `caps.attempts` times per bullet.
     """
     merged = ctx.ledger.last("merged", pr=n) or {}
-    sha, since = merged.get("sha", ""), merged.get("ts", "")
+    sha = merged.get("sha", "")
+    # The lower bound for what vigia already filed is GitHub's own merge time, never this machine's clock: a follow-up
+    # is created after GitHub merged the PR, on the same clock, whatever the local time says.
+    since = ctx.gh.merged_at(n)
     found: dict[str, str] = {}  # hash -> text, in handoff order, exact duplicates dropped
     for body in comments.handoffs(ctx.gh.comments(n), ctx.gh.login()):
         for text in comments.follow_ups(body):

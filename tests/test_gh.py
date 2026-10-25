@@ -246,3 +246,16 @@ def test_issues_by_reads_every_page_in_any_state_and_leaves_out_pull_requests():
     args = " ".join(run.calls[0]["args"])
     assert "state=all" in args and "creator=vigia-bot" in args and "since=2026-10-25T10:00:00Z" in args
     assert "--paginate" in run.calls[0]["args"]
+
+
+def test_merged_at_reads_githubs_own_time_and_none_when_not_merged():
+    run = Runner("2026-10-25T10:00:00Z\n", "\n")
+    gh = GitHub("o/r", runner=run)
+    assert gh.merged_at(7) == "2026-10-25T10:00:00Z" and gh.merged_at(8) is None
+    assert run.calls[0]["args"][-4:] == ["--json", "mergedAt", "-q", ".mergedAt"]
+
+
+def test_issues_by_without_a_lower_bound_asks_for_every_issue():
+    run = Runner("[]")
+    GitHub("o/r", runner=run).issues_by("vigia-bot", None)
+    assert "since=" not in " ".join(run.calls[0]["args"])

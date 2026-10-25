@@ -794,3 +794,22 @@ def test_crash_leftovers_count_toward_the_cap_even_when_their_bullet_is_gone(wor
     assert len(follow_up_issues(gh)) == 5  # the leftover was adopted, so no room is left for the new note
     assert "a brand new note" not in [i["title"] for i in follow_up_issues(gh)]
     assert len(ctx.ledger.events("followup_filed", pr=pr)) == 5
+
+
+def test_recovery_looks_back_from_githubs_merge_time_not_the_local_clock(world):  # noqa: F811
+    from vigia.watch import file_follow_ups
+
+    gh, ctx, pr = ready_to_merge(world, "\n## Follow-ups\n- rename the helper\n")
+    tick(ctx, build=False)
+    tick(ctx, build=False)  # merge
+    asked = []
+    real = gh.issues_by
+
+    def recording(creator, since):
+        asked.append(since)
+        return real(creator, since)
+
+    gh.issues_by = recording
+    file_follow_ups(ctx, pr)
+    merged_row = ctx.ledger.last("merged", pr=pr)
+    assert asked == [gh.merged_at(pr)] and asked[0] != merged_row["ts"]
