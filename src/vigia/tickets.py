@@ -17,7 +17,6 @@ TEMPLATE = """\
 ---
 name: vigia ticket
 about: Work for an AI builder. The body is its whole prompt, so say what, not how.
-labels: ["vigia:ready"]
 ---
 
 ## Outcome

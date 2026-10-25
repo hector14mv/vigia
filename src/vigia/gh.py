@@ -60,6 +60,35 @@ def _pr(data: dict) -> dict:
     }
 
 
+TICKET_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) { title body }
+  }
+}
+"""
+
+
+APPROVAL_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $before: String) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      lastEditedAt
+      labels(first: 100) { nodes { name } }
+      timelineItems(last: 100, before: $before, itemTypes: [LABELED_EVENT, RENAMED_TITLE_EVENT]) {
+        pageInfo { hasPreviousPage startCursor }
+        nodes {
+          __typename
+          ... on LabeledEvent { id createdAt label { name } actor { __typename login } }
+          ... on RenamedTitleEvent { createdAt }
+        }
+      }
+    }
+  }
+}
+"""
+
+
 PR_FIELDS = (
     "number,title,body,url,state,isDraft,headRefOid,headRefName,baseRefName,labels,mergeable,statusCheckRollup,"
     "additions,deletions,changedFiles"
@@ -230,6 +259,78 @@ class GitHub:
                     "id": r.get("id"),
                 }
         return found
+
+    def _issue_graphql(self, query: str, number: int, *extra: str) -> dict:
+        owner, name = self.repo.split("/", 1)
+        args = [
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            *extra,
+        ]
+        out = self._gh(*args, "-F", f"number={number}")
+        issue = (((json.loads(out or "{}").get("data") or {}).get("repository")) or {}).get("issue")
+        if not issue:  # a pull request or a deleted issue: nothing a build may be given
+            raise CommandError(["gh", *args], 1, out, f"#{number} is not an issue of {self.repo}")
+        return issue
+
+    def ticket(self, number: int) -> dict:
+        """{'title', 'body'} of issue `number`, the text a build would be given. Whether it may be is `approval()`'s
+        to say, read before and after this: one GraphQL request does not promise its fields are one snapshot."""
+        issue = self._issue_graphql(TICKET_QUERY, number)
+        return {"title": issue.get("title") or "", "body": issue.get("body") or ""}
+
+    def approval(self, number: int, label: str) -> dict:
+        """The latest time `label` was added to issue `number`, and what changed the ticket since.
+
+        {'ready': {'id', 'actor', 'user', 'ts'} | None, 'renamed': a title change came after it,
+        'edited': when the body was last edited (ISO time on GitHub's clock, None if never), 'present': the label is
+        on the issue now, so an approval withdrawn by removing the label counts for nothing}. The label and rename
+        events are paged backwards from the newest until that label event is found, so any number of other label
+        events cannot hide it. `id` is GitHub's node id of the event; `user` is False when the actor is a bot, an
+        app or gone. `edited` and `present` come from the first page: a body read before this call is covered by
+        them.
+        """
+        ready, renamed, before, present = None, False, None, False
+        while True:
+            issue = self._issue_graphql(
+                APPROVAL_QUERY, number, *(["-f", f"before={before}"] if before else [])
+            )
+            if before is None:
+                edited = issue.get("lastEditedAt")
+                present = label in {x.get("name") for x in (issue.get("labels") or {}).get("nodes") or []}
+            items = issue.get("timelineItems") or {}
+            for node in reversed(items.get("nodes") or []):
+                if node.get("__typename") == "RenamedTitleEvent":
+                    renamed = True
+                elif (
+                    node.get("__typename") == "LabeledEvent"
+                    and (node.get("label") or {}).get("name") == label
+                ):
+                    actor = node.get("actor") or {}
+                    ready = {
+                        "id": node.get("id"),
+                        "actor": actor.get("login"),
+                        "user": actor.get("__typename") == "User",
+                        "ts": node.get("createdAt") or "",
+                    }
+                    break
+            info = items.get("pageInfo") or {}
+            before = info.get("startCursor")
+            if ready is not None or not info.get("hasPreviousPage") or not before:
+                break
+        return {"ready": ready, "renamed": renamed, "edited": edited, "present": present}
+
+    def permission(self, login: str) -> str:
+        """`login`'s permission on the repository: admin, write, read or none (maintain reads as write, triage as
+        read; GitHub's own mapping)."""
+        data = self._api("GET", f"repos/{self.repo}/collaborators/{quote(login, safe='')}/permission") or {}
+        return data.get("permission") or "none"
 
     def ensure_label(self, name: str, color: str, description: str) -> None:
         self._gh(

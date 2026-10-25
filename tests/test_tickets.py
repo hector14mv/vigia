@@ -145,3 +145,13 @@ def test_crlf_and_lf_bodies_parse_identically():
     assert sections(crlf) == sections(body)
     assert sections(crlf)["Done-test"] == "~~~sh\npython -m pytest -q\n~~~"
     assert missing(crlf) == missing(body) == []
+
+
+def test_the_ticket_templates_apply_no_labels():
+    """GitHub applies a template's labels whoever opens the issue: an outsider must not get `vigia:ready` that way."""
+    from pathlib import Path
+
+    repo_template = Path(__file__).parents[1] / ".github" / "ISSUE_TEMPLATE" / "vigia-ticket.md"
+    for text in (TEMPLATE, repo_template.read_text(encoding="utf-8")):
+        front = text.split("---")[1]
+        assert "labels:" not in front and "name: vigia ticket" in front

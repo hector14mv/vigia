@@ -150,20 +150,18 @@ def owned(ctx: Ctx, name: str, lock_fd: int | None) -> Iterator[bool]:
 
 def still_due(ctx: Ctx, action: str, number: int) -> tuple[bool, object, object]:
     """Re-read GitHub just before spending a session: (due, item, decision). A PR must still be open, managed by
-    vigia and decided to need `action`; an issue must still be ready and not building or parked."""
+    vigia and decided to need `action`; an issue must still be ready, not building or parked, and pass
+    `builder.launchable`, whose reading of the title and body is the item a build is given."""
     from . import builder, watch  # lazily: those modules import this one
 
     labels = ctx.cfg.labels
     if action == "build":
         issue = ctx.gh.issue(number)
         stopped = {labels.building, labels.parked} & set(issue["labels"])
-        due = (
-            issue["state"] == "OPEN"
-            and labels.ready in issue["labels"]
-            and not stopped
-            and not builder.gaps(ctx, issue)
-        )
-        return due, issue, None
+        if issue["state"] != "OPEN" or labels.ready not in issue["labels"] or stopped:
+            return False, issue, None
+        checked = builder.launchable(ctx, issue)
+        return checked is not None, checked or issue, None
     pr = ctx.gh.pr(number)
     if pr["state"] != "OPEN" or labels.review not in pr["labels"]:
         return False, pr, None
