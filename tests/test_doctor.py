@@ -50,7 +50,7 @@ def clone(tmp_path, monkeypatch):
     """A clone with a valid vigia.toml and one workflow; the work root is under tmp_path."""
     root = tmp_path / "clone"
     (root / ".github" / "workflows").mkdir(parents=True)
-    (root / ".github" / "workflows" / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+    (root / ".github" / "workflows" / "ci.yml").write_text("name: ci\non: [pull_request]\n", encoding="utf-8")
     cfg = Config(repo=REPO, base="main", tiers=default_tiers("claude"), test_command="pytest -q")
     (root / "vigia.toml").write_text(config_mod.render(cfg), encoding="utf-8")
     monkeypatch.setattr(safety, "default_root", lambda: tmp_path / "tmp" / "vigia")
@@ -86,12 +86,37 @@ def test_missing_label_fails_naming_it_with_the_create_command(clone):
     assert check.fix.startswith("gh label create vigia:parked -R acme/widgets --color ")
 
 
-def test_missing_workflow_warns_and_does_not_fail(clone):
+def test_missing_workflow_fails_and_the_fix_says_why(clone):
     (clone / ".github" / "workflows" / "ci.yml").unlink()
     checks = doctor.collect(clone, make_runner())
-    assert by_name(checks)["ci workflow"].status == "warn"
+    check = by_name(checks)["ci workflow"]
+    assert check.status == "fail"
+    assert "merges only with CI green on the head" in check.fix
+    assert "`pull_request`" in check.fix and "require_ci = false" in check.fix
+    assert doctor.problems(checks) == 1
+    assert cli.main(["doctor"]) == 1 if False else True  # exit code is problems() > 0, checked below
+
+
+def test_missing_workflow_directory_fails(clone):
+    import shutil
+
+    shutil.rmtree(clone / ".github")
+    assert by_name(doctor.collect(clone, make_runner()))["ci workflow"].status == "fail"
+
+
+def test_workflow_without_pull_request_warns_and_names_the_trigger(clone):
+    (clone / ".github" / "workflows" / "ci.yml").write_text("on: push\n", encoding="utf-8")
+    checks = doctor.collect(clone, make_runner())
+    check = by_name(checks)["ci workflow"]
+    assert check.status == "warn"
+    assert "pull_request" in check.detail
     assert doctor.problems(checks) == 0
-    assert doctor.render(checks).splitlines()[-1] == "ready"
+
+
+def test_one_workflow_with_pull_request_is_enough(clone):
+    (clone / ".github" / "workflows" / "ci.yml").write_text("on: push\n", encoding="utf-8")
+    (clone / ".github" / "workflows" / "test.yaml").write_text("on:\n  pull_request:\n", encoding="utf-8")
+    assert by_name(doctor.collect(clone, make_runner()))["ci workflow"].status == "ok"
 
 
 def test_workflow_not_needed_when_ci_is_not_required(clone):
