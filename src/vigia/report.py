@@ -135,10 +135,15 @@ def build(ledgers: dict[str, Ledger], days: int = 7, now: datetime | None = None
 
 def render(data: dict) -> str:
     t = data["totals"]
+    totals = (
+        f"{t['merged']} merged · {t['p1_gate']} P1 found by the gate, {t['p1_review']} by tier reviewers · "
+        f"{t['fix_rounds']} fix rounds · {t['parks']} parks"
+    )
+    if t["updates"] > 0:
+        totals += f" · {t['updates']} base updates"
     out = [
         f"vigia report · last {data['days']} days · {', '.join(data['repos'])}",
-        f"{t['merged']} merged · {t['p1_gate']} P1 found by the gate, {t['p1_review']} by tier reviewers · "
-        f"{t['fix_rounds']} fix rounds · {t['parks']} parks · {t['updates']} base updates",
+        totals,
         "",
         "Builders            tiers     opened merged  first-round P1  gate rounds/merge  median min  parked",
     ]

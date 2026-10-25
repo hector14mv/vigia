@@ -360,6 +360,19 @@ def _spawn_jobs(ctx: Ctx, seen: list[Seen], build: bool, free: int, running: set
             free -= 1
 
 
+def summary(ctx: Ctx) -> str:
+    """One line for `vigia watch --once`: the PRs vigia manages here, the tickets ready to build, the sessions running."""
+    labels = ctx.cfg.labels
+    prs = len(ctx.gh.prs(labels.review))
+    ready = [
+        i
+        for i in ctx.gh.issues(labels.ready)
+        if labels.building not in i["labels"] and labels.parked not in i["labels"]
+    ]
+    sessions = len(jobs.live(ctx))
+    return f"{ctx.cfg.repo}: {prs} PR{'' if prs == 1 else 's'} · {len(ready)} ready · {sessions} sessions running"
+
+
 def loop(ctx: Ctx, interval: int, build: bool | None = None) -> None:
     ctx.say(f"vigia watching {ctx.cfg.repo} every {interval} s (Ctrl-C to stop)")
     while True:

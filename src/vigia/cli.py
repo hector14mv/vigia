@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import signal
 import sys
@@ -10,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
-from . import __version__, builder, doctor, gate, jobs, status, watch, workspace
+from . import __version__, builder, doctor, gate, jobs, status, tickets, watch, workspace
 from . import config as config_mod
 from . import init as init_mod
 from .config import ConfigError
@@ -165,6 +166,13 @@ def _slots(value: str) -> int:
     return slots
 
 
+def _summarize(ctx: Ctx) -> None:
+    try:
+        print(watch.summary(ctx))
+    except CommandError as exc:  # the tick already did its work: a failed read must not turn it into an error
+        print(f"{ctx.cfg.repo}: summary unavailable — {exc}")
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     _stop_on_sigterm()
     build = False if args.no_build else None
@@ -175,6 +183,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
             ws = workspace.Workspace(ws.path, ws.repos, args.slots)
         if args.once:
             watch.workspace_tick(ws, contexts, build)
+            for c in contexts:
+                _summarize(c)
             return 0
         try:
             watch.workspace_loop(
@@ -188,6 +198,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         ctx.cfg = replace(ctx.cfg, slots=args.slots)
     if args.once:
         watch.tick(ctx, build)  # tick reports each decision itself, before acting on it
+        _summarize(ctx)
         return 0
     try:
         watch.loop(ctx, args.interval or ctx.cfg.interval_seconds, build)
@@ -250,7 +261,13 @@ def cmd_mesa(args: argparse.Namespace) -> int:
     found = _workspace()
     contexts = found[1] if found else [Ctx.load(Path.cwd())]
     slots = found[0].slots if found else None  # a workspace shares one limit between its repos
-    srv = mesa.server(contexts, args.host, args.port, tuple(args.allow_host or ()), slots=slots)
+    try:
+        srv = mesa.server(contexts, args.host, args.port, tuple(args.allow_host or ()), slots=slots)
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE:
+            raise
+        print(f"vigia: port {args.port} is in use: pass --port with a free one", file=sys.stderr)
+        return 2
     names = ", ".join(c.cfg.repo for c in contexts)
     print(f"vigia Mesa for {names}: http://{args.host}:{srv.server_address[1]}/  (read-only; Ctrl-C to stop)")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
@@ -262,6 +279,16 @@ def cmd_mesa(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         print("\nstopped")
     return 0
+
+
+def cmd_ticket(args: argparse.Namespace) -> int:
+    try:
+        body = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(f"vigia: cannot read {args.file}: {exc}") from exc
+    gaps = tickets.missing(body)
+    print("\n".join(gaps) if gaps else "ok")
+    return 1 if gaps else 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -293,7 +320,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="vigia",
-        description="AI agents write the code. A different lab reviews it. A script with no AI merges it.",
+        description="Agents build. The other lab reviews. A deterministic decision table merges only the reviewed commit.",
     )
     p.add_argument("--version", action="version", version=f"vigia {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
@@ -367,7 +394,9 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(func=cmd_mesa)
 
-    s = sub.add_parser("job", help=argparse.SUPPRESS)  # what `vigia watch` starts for each parallel session
+    s = sub.add_parser(
+        "job"
+    )  # what `vigia watch` starts for each parallel session; no help= keeps it out of --help
     s.add_argument("action", choices=jobs.ACTIONS)
     s.add_argument("number", type=int)
     s.add_argument("stage", nargs="?")
@@ -384,11 +413,17 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(func=cmd_status)
 
+    s = sub.add_parser("ticket", help="check a ticket body (a file, or - for stdin) against the template")
+    s.add_argument("file", help="the ticket body, or - to read it from stdin")
+    s.set_defaults(func=cmd_ticket)
+
     s = sub.add_parser(
         "doctor", help="check that vigia can work in this clone, with the fix for each problem"
     )
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_doctor)
+    # the usage line lists the commands a person types; `job` still parses, it is just not offered
+    sub.metavar = "{" + ",".join(name for name in sub.choices if name != "job") + "}"
     return p
 
 
