@@ -233,3 +233,16 @@ def test_open_issues_reads_every_page_and_leaves_out_pull_requests():
     issues = GitHub("o/r", runner=run).open_issues()
     assert issues == [{"number": 1, "title": "a", "url": "u1", "labels": ["tier:T1"]}]
     assert "--paginate" in run.calls[0]["args"] and "--slurp" in run.calls[0]["args"]
+
+
+def test_issues_by_reads_every_page_in_any_state_and_leaves_out_pull_requests():
+    pages = [
+        [{"number": 1, "title": "a", "body": "x", "html_url": "u1", "state": "closed"}],
+        [{"number": 2, "title": "pr", "body": "", "html_url": "u2", "pull_request": {}}],
+    ]
+    run = Runner(json.dumps(pages))
+    issues = GitHub("o/r", runner=run).issues_by("vigia-bot", "2026-10-25T10:00:00Z")
+    assert issues == [{"number": 1, "title": "a", "body": "x", "url": "u1"}]
+    args = " ".join(run.calls[0]["args"])
+    assert "state=all" in args and "creator=vigia-bot" in args and "since=2026-10-25T10:00:00Z" in args
+    assert "--paginate" in run.calls[0]["args"]

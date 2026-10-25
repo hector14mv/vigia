@@ -99,6 +99,9 @@ class FakeGitHub:
     def _item(self, n: int) -> dict:
         return self.issues_.get(n) or self.prs_[n]
 
+    def issues_by(self, creator: str, since: str) -> list[dict]:
+        return [dict(i) for i in self.issues_.values()]  # every issue in the fake was filed by its one login
+
     def open_issues(self) -> list[dict]:
         return [dict(i) for i in self.issues_.values() if i["state"] == "OPEN"]
 

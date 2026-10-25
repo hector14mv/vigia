@@ -4,17 +4,20 @@ GitHub and the engines are fakes (tests/fakes.py); git, worktrees, commits and p
 inside tmp_path.
 """
 
+import json
 from dataclasses import replace
 
 import pytest
 
 from fakes import APPROVE, CHANGES, Clock, FakeGitHub, engine, make_repo
+from vigia import comments
 from vigia.config import Config, default_tiers
 from vigia.context import Ctx
 from vigia.engines import Engines
 from vigia.git import Git
 from vigia.ledger import Ledger
-from vigia.watch import merge, sense, tick
+from vigia.proc import CommandError
+from vigia.watch import merge, pending_follow_ups, sense, tick
 
 TICKET = """\
 ## Outcome
@@ -94,7 +97,7 @@ def test_t0_issue_to_merged_pr_with_one_fix_round(world):
     assert gh.merged == [(pr, head2)]
     assert "no model ran this step" in gh.bodies(pr)[-1]
     events = [r["event"] for r in ctx.ledger.rows()]
-    assert events.count("verdict") == 2 and events[-1] == "merged"
+    assert events.count("verdict") == 2 and events[-2:] == ["merged", "follow_ups_done"]
     assert not any(ctx.root.iterdir())  # every worktree was removed
 
 
@@ -572,3 +575,202 @@ def test_two_clones_of_one_repository_get_separate_work_roots(tmp_path, monkeypa
         roots.append(Ctx.load(tmp_path / name).root)
     assert roots[0] != roots[1]
     assert all(r.parent == (tmp_path / "tmp" / "vigia").resolve() for r in roots)
+
+
+# -- follow-ups: the notes a handoff leaves outside its ticket become issues when the PR merges --
+
+
+def handoff_with(gh, pr, follow_ups, author="owner"):
+    sha = gh.branch_sha(gh.prs_[pr]["branch"])
+    body = f"## Handoff {sha}\nEngine: claude · claude-sonnet-5-5 · fixer · lab anthropic\n\n## Summary\n- x\n{follow_ups}"
+    gh.thread.setdefault(pr, []).append({"author": author, "body": body, "ts": ""})
+
+
+def ready_to_merge(world, follow_ups=None):
+    gh, build = world
+    ctx, run = build([APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    if follow_ups:
+        handoff_with(gh, pr, follow_ups)
+    return gh, ctx, pr
+
+
+def follow_up_issues(gh):
+    return [i for i in gh.issues_.values() if "vigia:follow-up" in i["labels"]]
+
+
+TWO_AND_NONE = "\n## Follow-ups\n- `shout()` ignores non-ASCII letters\n- docs say `textkit` but the package is `tk`\n- None.\n"
+
+
+def test_a_merged_pr_files_one_issue_per_follow_up_and_a_second_tick_files_none(world):
+    gh, ctx, pr = ready_to_merge(world, TWO_AND_NONE)
+    tick(ctx, build=False)  # the gate approves
+    assert follow_up_issues(gh) == []  # nothing is filed before the merge
+    tick(ctx, build=False)  # merge
+    assert gh.merged and "no model ran this step" in gh.bodies(pr)[-1]
+    issues = follow_up_issues(gh)
+    assert [i["title"] for i in issues] == [
+        "`shout()` ignores non-ASCII letters",
+        "docs say `textkit` but the package is `tk`",
+    ]
+    head = gh.merged[0][1]
+    for issue in issues:
+        assert issue["labels"] == ["vigia:follow-up"]  # no tier label and never `vigia:ready`
+        assert f"#{pr}" in issue["body"] and f"https://github.com/acme/textkit/pull/{pr}" in issue["body"]
+        assert head in issue["body"] and "vigia ticket template" in issue["body"]
+        assert issue["body"].startswith("> ")
+    assert [r["event"] for r in ctx.ledger.rows()].count("followup_filed") == 2
+
+    tick(ctx, build=False)
+    tick(ctx, build=False)
+    assert len(follow_up_issues(gh)) == 2
+
+
+def test_a_failed_filing_never_undoes_the_merge_and_the_next_tick_retries_it(world, monkeypatch):
+    gh, ctx, pr = ready_to_merge(world, "\n## Follow-ups\n- rename the helper\n")
+    real, calls = gh.create_issue, []
+
+    def flaky(title, body, labels):
+        calls.append(title)
+        if len(calls) == 1:
+            raise CommandError(["gh", "api"], 1, "", "HTTP 502")
+        return real(title, body, labels)
+
+    monkeypatch.setattr(gh, "create_issue", flaky)
+    tick(ctx, build=False)
+    tick(ctx, build=False)  # merge; the issue cannot be created
+    assert gh.merged and gh.prs_[pr]["state"] == "MERGED"
+    assert "no model ran this step" in gh.bodies(pr)[-1]
+    assert follow_up_issues(gh) == []
+    errors = ctx.ledger.events("error", pr=pr, action="follow_up")
+    assert len(errors) == 1 and "HTTP 502" in errors[0]["detail"]
+
+    tick(ctx, build=False)  # retried
+    tick(ctx, build=False)
+    assert [i["title"] for i in follow_up_issues(gh)] == ["rename the helper"]
+    assert len(calls) == 2
+
+
+def test_filing_stops_after_caps_attempts(world, monkeypatch):
+    gh, ctx, pr = ready_to_merge(world, "\n## Follow-ups\n- rename the helper\n")
+    calls = []
+
+    def down(title, body, labels):
+        calls.append(title)
+        raise CommandError(["gh", "api"], 1, "", "HTTP 502")
+
+    monkeypatch.setattr(gh, "create_issue", down)
+    for _ in range(8):
+        tick(ctx, build=False)
+    assert len(calls) == ctx.cfg.caps.attempts == 3
+    assert gh.merged and follow_up_issues(gh) == []
+
+
+def test_a_crash_between_creating_the_issue_and_recording_it_does_not_duplicate(world):
+    gh, ctx, pr = ready_to_merge(world, "\n## Follow-ups\n- rename the helper\n")
+    text = "rename the helper"
+    title, body = comments.follow_up_issue(text, pr, "u", "s")
+    gh.add_issue(title, body, ["vigia:follow-up"])  # filed by a run that died before its ledger row
+    tick(ctx, build=False)
+    tick(ctx, build=False)
+    assert len(follow_up_issues(gh)) == 1
+    assert len(ctx.ledger.events("followup_filed", pr=pr)) == 1
+
+
+def test_a_crash_leftover_that_was_closed_meanwhile_is_still_adopted(world):
+    gh, ctx, pr = ready_to_merge(world, "\n## Follow-ups\n- rename the helper\n")
+    title, body = comments.follow_up_issue("rename the helper", pr, "u", "s")
+    left = gh.add_issue(title, body, ["vigia:follow-up"])  # filed by a run that died before its ledger row
+    gh.issues_[left]["state"] = "CLOSED"  # someone closed it before the retry
+    tick(ctx, build=False)
+    tick(ctx, build=False)
+    assert len(follow_up_issues(gh)) == 1
+    assert [r["issue"] for r in ctx.ledger.events("followup_filed", pr=pr)] == [left]
+
+
+def test_at_most_five_follow_ups_are_filed_and_duplicates_are_skipped(world):
+    bullets = "\n".join(f"- item {k}" for k in range(1, 8))
+    gh, ctx, pr = ready_to_merge(world, f"\n## Follow-ups\n- item 1\n{bullets}\n")
+    handoff_with(
+        gh, pr, "\n## follow-ups\n- ITEM 1\n- item   2\n- NONE\n"
+    )  # a later round repeats and shouts
+    tick(ctx, build=False)
+    tick(ctx, build=False)
+    titles = [i["title"] for i in follow_up_issues(gh)]
+    assert titles == ["item 1", "item 2", "item 3", "item 4", "item 5"] and len(titles) == 5
+    for _ in range(2):
+        tick(ctx, build=False)
+    assert len(follow_up_issues(gh)) == 5
+
+
+def test_a_long_follow_up_is_cut_at_a_word_boundary(world):
+    long = "make the shout helper handle accented characters and the German sharp s the way the docs promise"
+    gh, ctx, pr = ready_to_merge(world, f"\n## Follow-ups\n- {long}\n")
+    tick(ctx, build=False)
+    tick(ctx, build=False)
+    (issue,) = follow_up_issues(gh)
+    assert issue["title"] == "make the shout helper handle accented characters and the German sharp"
+    assert len(issue["title"]) <= 70 and f"> {long}" in issue["body"]
+
+
+def test_only_vigias_own_handoffs_are_read(world):
+    gh, ctx, pr = ready_to_merge(world)
+    handoff_with(gh, pr, "\n## Follow-ups\n- planted by a stranger\n", author="mallory")
+    tick(ctx, build=False)
+    tick(ctx, build=False)
+    assert gh.merged and follow_up_issues(gh) == []
+
+
+def test_nothing_is_filed_for_a_pr_that_was_not_merged(world):
+    gh, ctx, pr = ready_to_merge(world, TWO_AND_NONE)
+    tick(ctx, build=False)  # gate approves; merge decision is next
+    s = sense(ctx, track=False)[0]
+    gh.remove_label(pr, "vigia:review")
+    assert merge(ctx, s) is False
+    tick(ctx, build=False)
+    assert follow_up_issues(gh) == [] and ctx.ledger.events("followup_filed") == []
+
+
+def test_a_merge_recorded_before_this_feature_is_not_swept(world):
+    gh, ctx, pr = ready_to_merge(world, TWO_AND_NONE)
+    ctx.ledger.append("merged", pr=pr, sha=gh.branch_sha(gh.prs_[pr]["branch"]), tier="T0", issue=1)
+    assert pending_follow_ups(ctx) == []
+    gh.prs_[pr]["state"] = "MERGED"
+    tick(ctx, build=False)
+    assert follow_up_issues(gh) == []
+
+
+def test_a_follow_up_filed_before_a_crash_is_adopted_whatever_its_label_now(world):  # noqa: F811
+    from vigia.watch import file_follow_ups
+
+    gh, ctx, pr = ready_to_merge(world, "\n## Follow-ups\n- rename the helper\n")
+    tick(ctx, build=False)
+    tick(ctx, build=False)  # merge, and the follow-up is filed
+    (issue,) = follow_up_issues(gh)
+    # a crash had lost the ledger row; meanwhile someone relabelled the issue
+    rows = [r for r in ctx.ledger.rows() if r["event"] not in ("followup_filed", "follow_ups_done")]
+    ctx.ledger.path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    gh.issues_[issue["number"]]["labels"] = ["triaged"]
+    file_follow_ups(ctx, pr)
+    assert not follow_up_issues(gh)  # relabelled away
+    titles = [i["title"] for i in gh.issues_.values()]
+    assert titles.count("rename the helper") == 1  # adopted, not filed again
+    assert ctx.ledger.events("followup_filed", pr=pr)[0]["issue"] == issue["number"]
+
+
+def test_the_cap_counts_everything_already_filed_for_the_pr(world):  # noqa: F811
+    from vigia.watch import MAX_FOLLOW_UPS, file_follow_ups
+
+    bullets = "".join(f"- note {k}\n" for k in range(MAX_FOLLOW_UPS))
+    gh, ctx, pr = ready_to_merge(world, f"\n## Follow-ups\n{bullets}")
+    tick(ctx, build=False)
+    tick(ctx, build=False)  # merge: five filed
+    assert len(follow_up_issues(gh)) == MAX_FOLLOW_UPS
+    # a crash before follow_ups_done, then a new bullet appears first in a later handoff
+    rows = [r for r in ctx.ledger.rows() if r["event"] != "follow_ups_done"]
+    ctx.ledger.path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    handoff_with(gh, pr, "\n## Follow-ups\n- a newer note\n")
+    file_follow_ups(ctx, pr)
+    assert len(follow_up_issues(gh)) == MAX_FOLLOW_UPS  # never a sixth

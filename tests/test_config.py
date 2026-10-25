@@ -157,3 +157,10 @@ def test_multiline_and_control_characters_round_trip():
     cfg = parse(doc)
     assert cfg.test_command == command.strip()
     assert parse(tomllib.loads(render(cfg))).test_command == cfg.test_command
+
+
+def test_the_follow_up_label_must_differ_from_the_ready_label():
+    doc = base_doc()
+    doc["labels"] = {"follow_up": "vigia:ready"}
+    with pytest.raises(ConfigError, match="different"):
+        parse(doc)

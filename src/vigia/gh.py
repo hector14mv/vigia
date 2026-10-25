@@ -110,6 +110,28 @@ class GitHub:
             if "pull_request" not in r
         ]
 
+    def issues_by(self, creator: str, since: str) -> list[dict]:
+        """Every issue `creator` opened or that changed since `since` (ISO time), in any state and with any labels,
+        across all pages (pull requests excluded): what vigia itself filed, whatever happened to it since."""
+        rows = (
+            self._api(
+                "GET",
+                f"repos/{self.repo}/issues?state=all&creator={creator}&since={since}&per_page=100",
+                paginate=True,
+            )
+            or []
+        )
+        return [
+            {
+                "number": r["number"],
+                "title": r["title"],
+                "body": r.get("body") or "",
+                "url": r.get("html_url", ""),
+            }
+            for r in rows
+            if "pull_request" not in r
+        ]
+
     def issues(self, label: str) -> list[dict]:
         out = self._gh(
             "issue",
