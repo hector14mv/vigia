@@ -139,6 +139,9 @@ class Engines:
                 # a deny rule beats any allow rule, even under bypassPermissions: no shell, no writes
                 extra += ["--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit"]
         if seat.engine == "claude":
+            # no session reaches the user's MCP servers (mail, calendar, browser...), whatever the overrides say:
+            # strict mode loads only `--mcp-config` servers, and no `--mcp-config` survives
+            extra = _without_option(extra, "--mcp-config") + ["--strict-mcp-config"]
             cmd = ["claude", "-p", "--model", seat.model]
             if seat.effort:
                 cmd += ["--effort", seat.effort]
@@ -150,7 +153,17 @@ class Engines:
             cmd = ["codex", "exec", "-m", seat.model]
             if seat.effort:
                 cmd += ["-c", f"model_reasoning_effort={seat.effort}"]
-            cmd += extra + ["-C", str(workdir), "-o", str(out_file)]
+            # no session reaches the user's MCP servers (mail, calendar, browser...), whatever the overrides say:
+            # no user config.toml (its servers), no ChatGPT apps, no plugins (local or remote, with their servers
+            # and hooks). Auth still comes from CODEX_HOME. A later `-c` beats an earlier one and any `--enable`.
+            cmd += _without_codex_config(extra, "mcp_servers") + [
+                "--ignore-user-config",
+                "-c",
+                "features.apps=false",
+                "-c",
+                "features.plugins=false",
+            ]
+            cmd += ["-C", str(workdir), "-o", str(out_file)]
             if guards:
                 # Codex builds the environment of the commands it runs from its own policy (a user's config may
                 # keep only "core" variables), which would drop the session's guards: pass everything the session
@@ -245,6 +258,46 @@ def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
     env = {k: v for k, v in base.items() if k in SESSION_ENV or k.startswith(SESSION_ENV_PREFIXES)}
     env.update(session_guards(gh_config))
     return env
+
+
+def _without_option(args: list[str], option: str) -> list[str]:
+    """`args` without `option`, in either spelling (`--opt=v` or `--opt v1 v2 ...`), and every value it takes:
+    Claude's list options take values up to the next argument that starts with `-`."""
+    out: list[str] = []
+    dropping = False
+    for a in args:
+        if a == option or a.startswith(option + "="):
+            dropping = a == option
+            continue
+        if dropping and not a.startswith("-"):
+            continue
+        dropping = False
+        out.append(a)
+    return out
+
+
+def _without_codex_config(args: list[str], key: str) -> list[str]:
+    """`args` without the `-c`/`--config` overrides that set `key` or anything under it."""
+
+    def sets_key(value: str) -> bool:
+        name = value.split("=", 1)[0].strip()
+        return name == key or name.startswith(key + ".")
+
+    out: list[str] = []
+    skip = False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a in ("-c", "--config") and i + 1 < len(args) and sets_key(args[i + 1]):
+            skip = True
+            continue
+        if a.startswith("--config=") and sets_key(a[len("--config=") :]):
+            continue
+        if a.startswith("-c") and len(a) > 2 and sets_key(a[2:].removeprefix("=")):  # `-ckey=v`, `-c=key=v`
+            continue
+        out.append(a)
+    return out
 
 
 def _claude_error(stdout: str) -> bool:

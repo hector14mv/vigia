@@ -98,6 +98,106 @@ def test_claude_builder_keeps_its_shell(tmp_path):
     assert "--disallowedTools" not in cmd and "Bash" in cmd
 
 
+# Builders and fixers run as "builder"; gates, reviewers and the planner run as "reviewer".
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+@pytest.mark.parametrize("with_schema", [False, True])
+def test_claude_sessions_load_no_mcp_servers(tmp_path, role, with_schema):
+    schema = tmp_path / "s.json"
+    schema.write_text('{"type": "object"}')
+    cmd = Engines(CFG, tmp_path).command(
+        Seat("claude", "claude-opus-5-5", "high"),
+        role,
+        tmp_path,
+        tmp_path / "o",
+        schema if with_schema else None,
+    )
+    # strict mode with no --mcp-config: none of the user's servers, plugins' or claude.ai connectors
+    assert cmd[cmd.index("--output-format") - 1] == "--strict-mcp-config"
+    assert not [a for a in cmd if a.startswith("--mcp-config")]
+    assert cmd[:6] == ["claude", "-p", "--model", "claude-opus-5-5", "--effort", "high"]
+
+
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_claude_override_cannot_bring_mcp_servers_back(tmp_path, role):
+    override = [
+        "--mcp-config",
+        "mail.json",
+        '{"mcpServers": {"cal": {"command": "cal-mcp"}}}',
+        "--permission-mode",
+        "default",
+        "--mcp-config=browser.json",
+        "--allowedTools",
+        "Read",
+    ]
+    cfg = Config(
+        repo="o/r",
+        base="main",
+        tiers=default_tiers(),
+        engine_args={"claude": {role: tuple(override)}},
+    )
+    cmd = Engines(cfg, tmp_path).command(
+        Seat("claude", "claude-opus-5-5"), role, tmp_path, tmp_path / "o", None
+    )
+    assert not [a for a in cmd if a.startswith("--mcp-config") or "mcpServers" in a or a.endswith(".json")]
+    assert cmd[4:8] == ["--permission-mode", "default", "--allowedTools", "Read"]  # the rest passes through
+    assert cmd[cmd.index("--output-format") - 1] == "--strict-mcp-config"
+    if role == "reviewer":
+        assert {"Bash", "Edit", "Write", "NotebookEdit"} <= set(_last_denied(cmd))
+
+
+def _codex_forced_mcp_off(cmd: list[str]) -> int:
+    """Where the flags that start a Codex session with no MCP servers begin; fails if they are not all there."""
+    forced = ["--ignore-user-config", "-c", "features.apps=false", "-c", "features.plugins=false"]
+    starts = [i for i in range(len(cmd)) if cmd[i : i + len(forced)] == forced]
+    assert len(starts) == 1
+    return starts[0]
+
+
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_codex_sessions_load_no_mcp_servers(tmp_path, role):
+    cmd = Engines(CFG, tmp_path).command(
+        Seat("codex", "gpt-6.1-sol", "high"), role, tmp_path, tmp_path / "o", None, guards={"A": "1"}
+    )
+    at = _codex_forced_mcp_off(cmd)
+    assert at > cmd.index("--sandbox") and cmd[at + 5] == "-C"  # after the role's (or override's) arguments
+    assert cmd[:4] == ["codex", "exec", "-m", "gpt-6.1-sol"]
+    assert "model_reasoning_effort=high" in cmd
+    sandbox = "read-only" if role == "reviewer" else "workspace-write"
+    assert cmd[cmd.index("--sandbox") + 1] == sandbox
+    assert not [a for a in cmd if a.startswith("mcp_servers")]
+
+
+def test_codex_override_cannot_bring_mcp_servers_back(tmp_path):
+    override = [
+        "-c",
+        "features.plugins=true",
+        "--enable",
+        "apps",
+        "-c",
+        'mcp_servers.mail.command="mail-mcp"',
+        "--config",
+        "mcp_servers={cal = {url = 'https://cal.example'}}",
+        '--config=mcp_servers.browser.command="pw"',
+        '-cmcp_servers.notes.command="notes"',
+        "-c",
+        "model_verbosity=low",
+    ]
+    cfg = Config(
+        repo="o/r",
+        base="main",
+        tiers=default_tiers(),
+        engine_args={"codex": {"builder": tuple(override)}},
+    )
+    cmd = Engines(cfg, tmp_path).command(
+        Seat("codex", "gpt-6.1-sol"), "builder", tmp_path, tmp_path / "o", None
+    )
+    assert not [a for a in cmd if "mcp_servers" in a]
+    at = _codex_forced_mcp_off(cmd)
+    # the override's own feature switches come first, so the forced `-c` (which beats them) has the last word
+    assert cmd.index("features.plugins=true") < at and cmd.index("apps") < at
+    assert cmd[cmd.index("model_verbosity=low") - 1] == "-c"  # an unrelated override still passes through
+
+
 def test_run_reads_codex_final_message_and_claude_json(tmp_path):
     seen = {}
 
