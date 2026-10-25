@@ -365,13 +365,16 @@ brings over the factory, not just its core: parallel engine sessions and a works
 repositories with a shared budget, the Mesa, a planner that turns a goal into tickets for you to ratify, an
 engine report from the ledger, and a guide to run it all on an always-on server.
 
-**vigia built vigia.** From 23 to 25 October 2026 this repository and vigia-demo ran on vigia itself. Their
-ledgers, read by `vigia report`, count 35 pull requests merged by the watcher: 27 written by vigia's own builder
-sessions, the rest by an interactive Claude Code session put through the same flow, every one gated on its exact
-commit by a model from the other lab. That gate returned 97 P1 findings across 95 verdicts, and no head
-with an open P1 merged; 25 times a PR used up its rounds and was parked for a person. Several designs in this
-release changed because of what the gate found, and one feature, bringing a moved base into a PR, stayed out of
-v0.1 for the same reason.
+**vigia built vigia.** From 23 October 2026 until 25 October at 21:12 (Madrid), this repository and vigia-demo
+ran on vigia itself. Their ledgers count 54 pull requests merged by `vigia watch`: 43 built by vigia's own builder
+sessions, the other 11 by an interactive Claude Code session put through the same flow. Every one was gated on its
+exact commit by a model from the other lab. The gate returned 106 P1 findings across 121 verdicts, no pull request
+merged while the latest review of its head reported a P1, and 28 times a pull request was parked for a person
+with the reason written on it. Each merged pull request shows its handoff, verdicts and merge comment:
+[vigia](https://github.com/hector14mv/vigia/pulls?q=is%3Apr+is%3Amerged) and
+[vigia-demo](https://github.com/hector14mv/vigia-demo/pulls?q=is%3Apr+is%3Amerged). Several designs in this
+release changed because of what the gate found, and one feature, bringing a moved base into a pull request,
+stayed out of v0.1 for the same reason.
 
 ## Limitations of v0.1
 

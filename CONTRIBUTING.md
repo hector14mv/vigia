@@ -23,7 +23,9 @@ the builder's whole prompt, so say what should change, not how. Give it one tier
 `tier:T1` or `tier:T2`, as [the operating model's table](docs/operating-model.md#1-damage-sets-the-review-not-the-author) defines them; when two
 fit, the higher wins.
 
-Maintainers add `vigia:ready` when the ticket is ready to build.
+Maintainers add `vigia:ready` when the ticket is ready to build. vigia builds only when that label comes from
+someone with write, maintain or admin access, and only on the ticket as it was then: any change to the body or
+the title after the label needs a maintainer to add it again.
 
 ## How this repository's pull requests flow
 

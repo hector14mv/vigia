@@ -136,7 +136,9 @@ the watcher before the session starts, so no two sessions ever work on the same 
 ## What a human still does
 
 - **Ratifies planned tickets** that wait as `vigia:proposed`, and does the `vigia:human-task` issues.
-- **Decides what to build**: writes, or approves, the ticket and its tier.
+- **Decides what to build**: writes, or approves, the ticket and its tier, and adds `vigia:ready`. vigia builds
+  only a label added by someone with write access, on the ticket as it was then; an edit after it needs the label
+  again, and removing it withdraws the approval (`builder.authorize`).
 - **Owns T2**: adds `vigia:human-ok` on the exact head of every T2 change. A label added before the
   head moved never counts (`watch.human_approved` compares GitHub's own event order, not clocks).
 - **Unparks**: reads the reason, deals with it, removes `vigia:parked`. The round and fix counters
