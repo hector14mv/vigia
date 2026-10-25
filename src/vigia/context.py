@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -72,13 +73,19 @@ class Ctx:
         return comments.engine_family(self.gh.comments(pr), self.gh.login())
 
     @contextmanager
-    def lock(self) -> Iterator[None]:
+    def lock(self, wait: float = 0) -> Iterator[None]:
+        """The clone's lock. Fails at once when another process holds it, or after `wait` seconds of trying."""
         self.state.mkdir(parents=True, exist_ok=True)
         with (self.state / "lock").open("w") as fh:
-            try:
-                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise Busy(f"another vigia process is working in {self.clone}") from exc
+            deadline = time.monotonic() + wait
+            while True:
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise Busy(f"another vigia process is working in {self.clone}") from exc
+                    time.sleep(0.5)
             try:
                 yield
             finally:

@@ -232,8 +232,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
     from . import plan
 
     ctx = Ctx.load(Path.cwd())
-    with ctx.lock():
-        result, filed = plan.plan(ctx, args.goal, limit=args.max, dry_run=args.dry_run)
+    # plan.plan takes the clone's lock itself, only while it reads and while it files
+    result, filed = plan.plan(ctx, args.goal, limit=args.max, dry_run=args.dry_run)
     if args.dry_run:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0

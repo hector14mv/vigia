@@ -913,3 +913,29 @@ def test_a_detail_whose_head_moved_never_offers_the_old_head_while_it_refreshes(
     after = json.loads(out.stdout)["after"]["text"]
     assert "the head has moved since" in after and "fffffff" in after
     assert "Approve this head" not in after and "Approve on GitHub" not in after
+
+
+def test_a_proposed_ticket_shows_with_its_tier_even_past_the_first_hundred(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    n = gh.add_issue("feat: planned thing", TICKET, ["tier:T1", "vigia:proposed"])
+    gh.add_issue("feat: not proposed", TICKET, ["tier:T0", "vigia:ready"])
+    gh.issues = lambda label: []  # what `gh issue list --limit 100` returns for a ticket on a later page
+    repo = mesa.state([ctx])["repos"][0]
+    assert [(p["number"], p["title"], p["tier"]) for p in repo["proposed"]] == [
+        (n, "feat: planned thing", "T1")
+    ]
+    assert "proposed tickets" not in repo["unread"]
+
+
+def test_proposed_tickets_that_cannot_be_read_are_unknown_not_none(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("feat: planned thing", TICKET, ["tier:T1", "vigia:proposed"])
+
+    def down():
+        raise CommandError(["gh", "api"], 1, "", "HTTP 502")
+
+    gh.open_issues = down
+    repo = mesa.state([ctx])["repos"][0]
+    assert repo["proposed"] is None and "proposed tickets" in repo["unread"]
