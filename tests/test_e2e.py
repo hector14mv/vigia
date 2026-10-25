@@ -711,7 +711,7 @@ def test_a_long_follow_up_is_cut_at_a_word_boundary(world):
     tick(ctx, build=False)
     tick(ctx, build=False)
     (issue,) = follow_up_issues(gh)
-    assert issue["title"] == "make the shout helper handle accented characters and the German sharp"
+    assert issue["title"] == "make the shout helper handle accented characters and the German sharp…"
     assert len(issue["title"]) <= 70 and f"> {long}" in issue["body"]
 
 
