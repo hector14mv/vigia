@@ -855,11 +855,11 @@ def handler(cache: _Cache, allowed: set[str]) -> type[BaseHTTPRequestHandler]:
         def do_GET(self):  # noqa: N802 - http.server's naming
             if not self._host_ok():
                 self._send(403, b"forbidden host\n", "text/plain; charset=utf-8")
-            elif self.path in ("/", "/index.html"):
+            elif (path := self.path.split("?", 1)[0]) in ("/", "/index.html"):
                 self._send(200, page(), "text/html; charset=utf-8")
-            elif self.path == "/api/state":
+            elif path == "/api/state":
                 self._json(cache.get)
-            elif match := _PR_PATH.match(self.path):
+            elif match := _PR_PATH.match(path):
                 self._json(lambda: cache.pr(f"{match.group(1)}/{match.group(2)}", int(match.group(3))))
             else:
                 self._send(404, b"not found\n", "text/plain; charset=utf-8")
