@@ -116,12 +116,6 @@ class FakeGitHub:
             )
         return self.add_issue(title, body, labels)
 
-    def item_open(self, n: int) -> bool:
-        return self._item(n)["state"] == "OPEN"
-
-    def close_issue(self, n: int) -> None:
-        self.issues_[n]["state"] = "CLOSED"
-
     def add_labels(self, n: int, *labels: str) -> None:
         item = self._item(n)
         item["labels"] = sorted(set(item["labels"]) | set(labels))

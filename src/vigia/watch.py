@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from . import builder, comments, decisions, gate, jobs, tickets
+from . import builder, comments, gate, jobs, tickets
 from .context import Ctx
 from .ledger import utcnow
 from .proc import CommandError
@@ -77,45 +77,6 @@ def human_approved(ctx: Ctx, pr: dict) -> bool:
     if event is None or baseline is None or not event.get("id") or event["id"] <= baseline:
         return False
     return not ctx.cfg.humans or event["actor"] in ctx.cfg.humans
-
-
-def record_decisions(ctx: Ctx) -> None:
-    """Record the answers people gave to open decision issues (`/vigia decide B` as a comment).
-
-    Only a comment by `checks.humans` (or, when that list is empty, by vigia's own GitHub login, which is the
-    account that runs it) counts. The `decided` row is written first: it is what unblocks the tickets the
-    decision names, and it must not be lost if the comments or the close fail. An answered issue that is still
-    open has its close retried on later ticks; the comments are posted once."""
-    try:
-        issues = ctx.gh.issues(decisions.LABEL)
-        voices = set(ctx.cfg.humans) or {ctx.gh.login()}
-    except CommandError as exc:
-        ctx.say(f"decisions: could not read them — {exc}")
-        return
-    done = {r.get("issue"): r for r in ctx.ledger.events("decided")}
-    for d in issues:
-        n = d["number"]
-        try:
-            if n in done:
-                ctx.gh.close_issue(n)
-                continue
-            found = decisions.answer(ctx.gh.comments(n), decisions.option_keys(d["body"]), voices)
-            if found is None:
-                continue
-            ctx.ledger.append("decided", issue=n, **found)
-            blocks = decisions.refs(decisions.field(d["body"], "Blocks"))
-            reason = f" — {found['reason']}" if found["reason"] else ""
-            note = f"Decision #{n}: option {found['key']} chosen by {found['by']}{reason}\n"
-            ctx.say(f"decision #{n}: {found['key']} by {found['by']}")
-            ctx.gh.comment(n, note)
-            for b in blocks:
-                ctx.gh.comment(b, note)
-            ctx.gh.close_issue(n)
-        except (
-            CommandError
-        ) as exc:  # the answer is recorded; whatever failed after it is not worth losing the tick
-            ctx.ledger.append("error", issue=n, action="record_decision", detail=str(exc)[:500])
-            ctx.say(f"decision #{n}: follow-up failed — {exc}")
 
 
 def state(ctx: Ctx, pr: dict) -> PRState:
@@ -241,7 +202,6 @@ def tick(
         )  # the Mesa's "watcher N s ago"
         builder.recover(ctx)
         gate.recover(ctx)
-        record_decisions(ctx)
         seen = sense(ctx)
         running = set(jobs.live(ctx))
         for s in seen:  # a live job owns its PR: no merge, park or second session until it ends

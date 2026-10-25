@@ -21,8 +21,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .proc import CommandError
-
 if TYPE_CHECKING:
     from .context import Ctx
 
@@ -160,10 +158,6 @@ def still_due(ctx: Ctx, action: str, number: int) -> tuple[bool, object, object]
             and not stopped
             and not builder.gaps(ctx, issue)
         )
-        try:
-            due = due and not builder.blockers(ctx, issue)
-        except CommandError:  # cannot tell whether something still blocks it: do not spend a session
-            due = False
         return due, issue, None
     pr = ctx.gh.pr(number)
     if pr["state"] != "OPEN" or labels.review not in pr["labels"]:

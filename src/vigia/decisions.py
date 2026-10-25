@@ -13,8 +13,7 @@ A decision issue carries the `vigia:decision` label and a body in a fixed shape:
 
     Recommendation: B — <one line why>
 
-A person answers by commenting `/vigia decide B` (optionally followed by a reason) on the issue. This module
-reads that shape and that command; the watcher records the answer (`watch.record_decisions`).
+This module only reads that shape, for the Mesa. Answering stays a GitHub act.
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ import re
 LABEL = "vigia:decision"
 _OPTION = re.compile(r"^###\s+([A-Z])\.\s+(.+?)\s*$")
 _REFS = re.compile(r"#(\d+)")
-_ANSWER = re.compile(r"^[ \t]*/vigia[ \t]+decide[ \t]+([A-Za-z])\b[ \t]*(.*?)[ \t]*$", re.M)
 
 
 def field(body: str, name: str) -> str | None:
@@ -74,22 +72,3 @@ def parse(body: str) -> dict | None:
         "due": field(body, "Due"),
         "origin": field(body, "Origin"),
     }
-
-
-def option_keys(body: str) -> set[str]:
-    """The option letters a decision body offers (also for a body `parse` rejects: a bad shape never hides one)."""
-    return {m.group(1) for line in (body or "").splitlines() if (m := _OPTION.match(line))}
-
-
-def answer(thread: list[dict], keys: set[str], voices: set[str]) -> dict | None:
-    """The first `/vigia decide X` comment in `thread` by one of `voices` whose X is one of `keys`, as
-    {'key', 'by', 'reason'}; None when nobody entitled has answered. The first valid answer stands: a later
-    comment does not change it. Comments by anyone else never count."""
-    for c in thread:
-        if c.get("author") not in voices:
-            continue
-        for match in _ANSWER.finditer(c.get("body") or ""):
-            key = match.group(1).upper()
-            if key in keys:
-                return {"key": key, "by": c["author"], "reason": match.group(2) or None}
-    return None
