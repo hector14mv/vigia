@@ -86,28 +86,26 @@ def authorize(ctx: Ctx, issue: dict) -> dict | None:
 
     The latest `ready` label event must come from a user with write, maintain or admin permission, and neither the
     body nor the title may have changed since: vigia builds the ticket that person saw, nothing an author or a
-    triager wrote later. One GraphQL read gives the title, the body, the body's last edit and the events together,
-    so the text that will be built is exactly the text whose edit time was compared. A ticket that fails is refused.
-    When GitHub cannot be read nothing is built and nothing is removed: an `error` row, and the next tick tries again.
+    triager wrote later. The approval is read first, then the text, then the approval again: the second read must
+    name the same label event, and its edit time and renames, read after the text, cover the text that will be
+    built. A ticket that fails is refused. When GitHub cannot be read, or `ready` was added again while vigia was
+    reading, nothing is built and nothing is removed: an `error` row, and the next tick tries again.
     """
     labels, n = ctx.cfg.labels, issue["number"]
     try:
-        seen = ctx.gh.ticket(n)
-        events = seen["events"]
-        at = max(
-            (i for i, e in enumerate(events) if e["event"] == "labeled" and e["label"] == labels.ready),
-            default=None,
-        )
-        added = events[at] if at is not None else None
+        added = ctx.gh.approval(n, labels.ready)["ready"]
         actor = (added or {}).get("actor") or ""
         permission = ctx.gh.permission(actor) if added and added["user"] and actor else "none"
+        if added is not None and added["user"] and permission in MAINTAINER:
+            seen = ctx.gh.ticket(n)
+            since = ctx.gh.approval(n, labels.ready)
     except CommandError as exc:
         ctx.ledger.append("error", issue=n, action="check_ready", detail=str(exc)[:500])
         ctx.say(f"#{n}: could not read who added `{labels.ready}` — retrying next tick")
         return None
     if added is None or not added["user"] or permission not in MAINTAINER:
         if added is None:
-            why = f"no `{labels.ready}` label event among the issue's latest 100 label and rename events"
+            why = f"no `{labels.ready}` label event in the issue's history"
         elif not added["user"]:
             why = f"`{labels.ready}` was added by `{actor or 'a deleted account'}`, which is not a user"
         else:
@@ -121,10 +119,15 @@ def authorize(ctx: Ctx, issue: dict) -> dict | None:
             f"has to add `{labels.ready}`. vigia removed the label.\n",
         )
         return None
+    if (since["ready"] or {}).get("id") != added["id"]:
+        detail = f"`{labels.ready}` was added again while vigia read the ticket"
+        ctx.ledger.append("error", issue=n, action="check_ready", detail=detail)
+        ctx.say(f"#{n}: {detail} — retrying next tick")
+        return None
     changed = []
-    if seen["edited"] and _not_before(seen["edited"], added["ts"]):
+    if since["edited"] and _not_before(since["edited"], added["ts"]):
         changed.append(f"the body was edited after `{actor}` added `{labels.ready}`")
-    if any(e["event"] == "renamed" for e in events[at + 1 :]):
+    if since["renamed"]:
         changed.append(f"the title was changed after `{actor}` added `{labels.ready}`")
     if changed:
         refuse(

@@ -63,7 +63,7 @@ class FakeGitHub:
         self.label_events: dict[int, list[tuple[str, str, str, int]]] = {}  # (label, actor, ts, event id)
         self.timeline: dict[
             int, list[dict]
-        ] = {}  # labeled and renamed events, oldest first, as `ticket()` reads them
+        ] = {}  # labeled and renamed events, oldest first, as `approval()` pages through them
         self.edited: dict[int, str] = {}  # issue -> when its body was last edited (GitHub's lastEditedAt)
         self.permissions: dict[str, str] = {login: "write"}  # anyone else reads as `read`, like a public repo
         self.event_ids = 0
@@ -113,6 +113,7 @@ class FakeGitHub:
         self.timeline.setdefault(n, []).append(
             {
                 "event": "labeled",
+                "id": f"LE_{self.event_ids}",
                 "label": label,
                 "actor": actor,
                 "user": not actor.endswith("[bot]"),
@@ -174,11 +175,18 @@ class FakeGitHub:
 
     def ticket(self, n: int) -> dict:
         i = self.issues_[n]
+        return {"title": i["title"], "body": i["body"]}
+
+    def approval(self, n: int, label: str) -> dict:
+        events = self.timeline.get(n, [])
+        at = max(
+            (k for k, e in enumerate(events) if e["event"] == "labeled" and e["label"] == label), default=None
+        )
+        e = events[at] if at is not None else None
         return {
-            "title": i["title"],
-            "body": i["body"],
+            "ready": {k: e[k] for k in ("id", "actor", "user", "ts")} if e else None,
+            "renamed": at is not None and any(x["event"] == "renamed" for x in events[at + 1 :]),
             "edited": self.edited.get(n),
-            "events": [dict(e) for e in self.timeline.get(n, [])][-100:],
         }
 
     def permission(self, login: str) -> str:

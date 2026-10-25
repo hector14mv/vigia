@@ -63,14 +63,22 @@ def _pr(data: dict) -> dict:
 TICKET_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
+    issue(number: $number) { title body }
+  }
+}
+"""
+
+
+APPROVAL_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $before: String) {
+  repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      title
-      body
       lastEditedAt
-      timelineItems(last: 100, itemTypes: [LABELED_EVENT, RENAMED_TITLE_EVENT]) {
+      timelineItems(last: 100, before: $before, itemTypes: [LABELED_EVENT, RENAMED_TITLE_EVENT]) {
+        pageInfo { hasPreviousPage startCursor }
         nodes {
           __typename
-          ... on LabeledEvent { createdAt label { name } actor { __typename login } }
+          ... on LabeledEvent { id createdAt label { name } actor { __typename login } }
           ... on RenamedTitleEvent { createdAt }
         }
       }
@@ -251,41 +259,68 @@ class GitHub:
                 }
         return found
 
-    def ticket(self, number: int) -> dict:
-        """Issue `number` as a build would be given it, with what decides whether it may be: one GraphQL read, so
-        the title, the body, the body's last edit and the label and rename events are a single snapshot.
-
-        {'title', 'body', 'edited' (ISO time on GitHub's clock, None if the body was never edited),
-        'events': [{'event': 'labeled', 'label', 'actor', 'user', 'ts'} | {'event': 'renamed', 'ts'}]}, events
-        oldest first: the latest 100 of those two kinds. `user` is False when the actor is a bot, an app or gone.
-        """
+    def _issue_graphql(self, query: str, number: int, *extra: str) -> dict:
         owner, name = self.repo.split("/", 1)
-        args = ["api", "graphql", "-f", f"query={TICKET_QUERY}", "-f", f"owner={owner}", "-f", f"name={name}"]
+        args = [
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            *extra,
+        ]
         out = self._gh(*args, "-F", f"number={number}")
         issue = (((json.loads(out or "{}").get("data") or {}).get("repository")) or {}).get("issue")
         if not issue:  # a pull request or a deleted issue: nothing a build may be given
             raise CommandError(["gh", *args], 1, out, f"#{number} is not an issue of {self.repo}")
-        events = []
-        for node in (issue.get("timelineItems") or {}).get("nodes") or []:
-            if node.get("__typename") == "LabeledEvent":
-                actor = node.get("actor") or {}
-                events.append(
-                    {
-                        "event": "labeled",
-                        "label": (node.get("label") or {}).get("name"),
+        return issue
+
+    def ticket(self, number: int) -> dict:
+        """{'title', 'body'} of issue `number`, the text a build would be given. Whether it may be is `approval()`'s
+        to say, read before and after this: one GraphQL request does not promise its fields are one snapshot."""
+        issue = self._issue_graphql(TICKET_QUERY, number)
+        return {"title": issue.get("title") or "", "body": issue.get("body") or ""}
+
+    def approval(self, number: int, label: str) -> dict:
+        """The latest time `label` was added to issue `number`, and what changed the ticket since.
+
+        {'ready': {'id', 'actor', 'user', 'ts'} | None, 'renamed': a title change came after it,
+        'edited': when the body was last edited (ISO time on GitHub's clock, None if never)}. The label and rename
+        events are paged backwards from the newest until that label event is found, so any number of other label
+        events cannot hide it. `id` is GitHub's node id of the event; `user` is False when the actor is a bot, an
+        app or gone. `edited` comes from the first page: a body read before this call is covered by it.
+        """
+        ready, renamed, before = None, False, None
+        while True:
+            issue = self._issue_graphql(
+                APPROVAL_QUERY, number, *(["-f", f"before={before}"] if before else [])
+            )
+            if before is None:
+                edited = issue.get("lastEditedAt")
+            items = issue.get("timelineItems") or {}
+            for node in reversed(items.get("nodes") or []):
+                if node.get("__typename") == "RenamedTitleEvent":
+                    renamed = True
+                elif (
+                    node.get("__typename") == "LabeledEvent"
+                    and (node.get("label") or {}).get("name") == label
+                ):
+                    actor = node.get("actor") or {}
+                    ready = {
+                        "id": node.get("id"),
                         "actor": actor.get("login"),
                         "user": actor.get("__typename") == "User",
                         "ts": node.get("createdAt") or "",
                     }
-                )
-            elif node.get("__typename") == "RenamedTitleEvent":
-                events.append({"event": "renamed", "ts": node.get("createdAt") or ""})
-        return {
-            "title": issue.get("title") or "",
-            "body": issue.get("body") or "",
-            "edited": issue.get("lastEditedAt"),
-            "events": events,
-        }
+                    break
+            info = items.get("pageInfo") or {}
+            before = info.get("startCursor")
+            if ready is not None or not info.get("hasPreviousPage") or not before:
+                break
+        return {"ready": ready, "renamed": renamed, "edited": edited}
 
     def permission(self, login: str) -> str:
         """`login`'s permission on the repository: admin, write, read or none (maintain reads as write, triage as
