@@ -57,8 +57,9 @@ What could go wrong; any money, auth, personal data or migration surface.
 | **T2** | money, auth, personal data, migrations, messages to customers, credentials, the process itself |
 
 When two fit, the higher wins. The issue gets exactly one `tier:T0`, `tier:T1` or `tier:T2`
-label. Add `vigia:ready` only when nothing is left open: every question answered, every claim
-in `## Facts`. Otherwise create the issue without `vigia:ready` and say what is missing.
+label. Create the issue without `vigia:ready`: the person reads the ticket and adds that label themselves
+(`gh issue edit N --add-label vigia:ready`), because the label is what lets an engine act on it. Tell them
+what, if anything, is still open.
 
 ## 4. Before you create the issue
 
@@ -75,7 +76,7 @@ Save the body to `body.md`, then:
 
 ```bash
 gh issue create --title "<type>: <outcome in a few words>" \
-  --label tier:T1 --label vigia:ready --body-file body.md
+  --label tier:T1 --body-file body.md
 ```
 
-Use the tier you chose. Leave out `--label vigia:ready` if anything is still open.
+Use the tier you chose. Then give the person the issue's number: they read it and add `vigia:ready`.
