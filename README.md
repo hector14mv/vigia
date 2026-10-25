@@ -11,7 +11,8 @@ append-only ledger.
 > - Agent sessions run as your OS user and can run shell commands: vigia is not a sandbox ([SECURITY.md](SECURITY.md)).
 > - vigia pushes, comments and merges with your own `gh` login. The agent sessions never get that login.
 > - It needs both CLIs logged in to a paid plan or an API key; every pull request uses sessions from both labs.
-> - T2 changes (money, auth, personal data) use the strongest models by default and wait for your label.
+> - The riskiest tier, T2 (money, auth, personal data), adds the strongest reviewer and waits for you to add
+>   `vigia:human-ok`.
 
 ![One issue becomes a merged pull request: Claude builds it, Codex reviews the exact commit, the decision table merges it](docs/demo.gif)
 
@@ -27,7 +28,7 @@ is edited.*
    itself. The tier, not the model that wrote the change, decides how much review it gets.
 2. **The gate is always from the other lab.** A model from the other lab (the other company's model) reviews
    every change on the exact commit, in a read-only checkout: Codex gates Claude's work, and Claude gates
-   Codex's work when a tier's builder is Codex (`vigia init --builder codex`). T1 and T2 add a stronger reviewer
+   Codex's work when a tier's builder is Codex (`vigia init --builder codex`). T1 and T2 add a second reviewer
    after the gate, and T2 waits for a person's label. No verdict means no merge.
 3. **The merge is a decision table, not a judgement.** `rules.decide()` is a pure function (no model, no I/O)
    over CI status, verdicts and labels on the exact head, tested row by row in `tests/test_rules.py`. vigia
@@ -113,9 +114,9 @@ one). In **Settings → Branches**, add a rule for `main` with:
 - **Do not allow bypassing the above settings**: vigia merges with your login, and an admin's merge would
   otherwise skip the rule.
 
-Do not require approving reviews: vigia's reviews are comments, and a T2 approval is a label. vigia v0.1 does
-not re-review a PR whose base moved after its review; with this rule GitHub refuses to merge a stale head, you
-press **Update branch** on the PR, and vigia reviews the new head like any other.
+Do not require approving reviews: vigia's reviews are comments, and a T2 approval is a label. With these rules
+GitHub refuses to merge a PR whose base moved after its review; you press **Update branch** and vigia reviews the
+new head like any other (see [Limitations](#limitations-of-v01)).
 
 ### Your first ticket
 
@@ -176,8 +177,9 @@ into a vigia ticket". `vigia ticket ticket.md` checks a body before you file it.
 **The builder** (`vigia run`, or `vigia watch` when the queue has work) takes the oldest ready issue, creates a
 git worktree from the base branch under the system temp directory, and runs the tier's builder engine headless
 (`claude -p …` or `codex exec …`) with the ticket as its brief. The engine only edits files and runs tests.
-vigia commits, pushes, opens the PR with `Closes #N`, and posts a handoff whose first line is
-`## Handoff <full sha>` and whose second is the `Engine:` line.
+vigia commits, pushes, opens the PR with `Closes #N`, and posts a **handoff**: a comment with what changed, the
+tests run, deviations from the ticket, risks and follow-ups. Its first line is `## Handoff <full sha>` and its
+second is the `Engine:` line.
 
 **The gate** is a fresh, read-only session from the other lab on a checkout of the PR's exact head. It gets the
 ticket, the handoff and the diff, and must answer with a JSON verdict:
@@ -190,14 +192,14 @@ A P1 starts one **fix round**: a new builder session from the same lab, with onl
 The gate then reviews the new head. There are at most two gate rounds per PR; after that the PR is parked for a
 person.
 
-**T1 and T2** add a stronger reviewer on the same exact head (by default Claude Opus 5.5 for T1 and Claude Fable
-5.1 for T2). **T2** also waits for a person to add `vigia:human-ok` on that head. The label counts only if
+**T1 and T2** add a second reviewer on the same exact head, by default from the builder's lab (when Claude builds:
+Claude Opus 5.5 on T1 and Claude Fable 5.1 on T2). **T2** also waits for a person to add `vigia:human-ok` on that head. The label counts only if
 GitHub recorded it after vigia first saw the head, so an approval never carries over to a later push (vigia also
 removes the stale label, as a courtesy).
 
 **The merge** is `rules.decide()`, a pure function tested row by row in
-[`tests/test_rules.py`](tests/test_rules.py). In order: closed, parked or draft PRs are left alone; a PR aimed at
-another branch than the base, a missing tier, an unknown builder, a same-lab gate or a conflict parks; CI must
+[`tests/test_rules.py`](tests/test_rules.py). In order: closed, parked or draft PRs are left alone; a PR that targets
+a branch other than the base, a missing tier, an unknown builder, a same-lab gate or a conflict parks; CI must
 be green on the head before any review; then the gate, the reviewer and the human label, each on the exact head
 and each counted only for the PR's current tier; then `gh pr merge --squash --match-head-commit <sha>`. Right
 before merging, vigia re-reads the PR and decides again. When a PR merges, each follow-up its handoffs list is
@@ -225,10 +227,8 @@ The seven rules behind all of this, and where each one lives in the code, are in
   from it: an interrupted build is parked, a half-enrolled PR is finished, leftover worktrees are removed.
 - **No CI**: with `require_ci = true` (the default) a PR waits for a green CI result on its head, so a
   repository without a CI workflow never merges. `vigia init` and `vigia doctor` say so up front.
-- **The base moves after the review**: v0.1 does not review the PR again
-  ([#39](https://github.com/hector14mv/vigia/issues/39)). With GitHub's "Require branches to be up to date"
-  rule, the stale merge is refused and tried again every tick until someone presses Update branch
-  ([#59](https://github.com/hector14mv/vigia/issues/59)).
+- **The base moves after the review**: v0.1 does not review the PR again; GitHub's "Require branches to be up to
+  date" rule is the guard (see [Limitations](#limitations-of-v01)).
 - **The issue body is the builder's prompt**, so `vigia:ready` is the trust boundary. vigia builds an issue only
   if that label was added by someone with write access, and only if the body and title have not changed since;
   otherwise it refuses the ticket and says why. Anyone who can add the label still decides what an engine is
@@ -311,7 +311,7 @@ vigia plan "Article titles become short, readable URL slugs: a maximum length th
 
 A planner session (Claude Opus by default) reads the base branch, read-only, and writes tickets in the template,
 with what it verified in the code under `## Facts`. vigia files every ticket as `vigia:proposed`, never as
-ready: you read it and swap the label for `vigia:ready`, because what the factory builds next is your call. A
+ready: you read it and swap the label for `vigia:ready`, because what vigia builds next is your call. A
 ticket that needs an earlier one of the plan merged first says which. Work only a person can do (an account, a
 secret, a product decision) becomes a `vigia:human-task` issue. The Mesa shows both under "Your turn". A title
 that is already an open issue's is not filed twice. `--dry-run` prints the plan without filing it.
@@ -326,8 +326,8 @@ laptop or a phone:
 - **Factory**: per repository, the sessions in use and every open PR on its path (build, CI, gate, review,
   human, merge) with its next step, plus the queue.
 - **Feed**: what just happened, one ledger row per line.
-- **Fuel**: what is left to spend. Codex's weekly quota (Claude Code keeps no quota file: read it with `/usage`),
-  merges, P1s caught and engine sessions.
+- **Fuel**: what vigia has spent and has left. Codex's weekly quota (Claude Code keeps no quota file: read
+  it with `/usage`), merges, P1s caught and engine sessions.
 
 It is read-only on purpose: every action is a link to GitHub, where your login decides, because a button that
 labels or approves would let any process on the machine act as you. It listens on 127.0.0.1 only; to open it
@@ -383,7 +383,8 @@ What comes next is in the [roadmap](docs/roadmap.md).
   read [SECURITY.md](SECURITY.md) first, and give vigia its own OS user for real isolation.
 - Parallel sessions share one machine: there are no memory, disk or load gates yet beyond the slot count.
 - A base that conflicts with a PR parks it; vigia does not resolve conflicts.
-- vigia v0.1 does not re-review a PR whose base moved after its review. The guard is GitHub's own rule,
+- vigia v0.1 does not re-review a PR whose base moved after its review
+  ([#39](https://github.com/hector14mv/vigia/issues/39)). The guard is GitHub's own rule,
   **Require branches to be up to date before merging** (with at least one required check): turn it on, as the
   Quickstart says. Without it, a PR can merge onto base changes no reviewer saw together with it. With it, a
   stale PR is not parked yet: vigia's merge is refused, logged as an error and tried again on every tick until

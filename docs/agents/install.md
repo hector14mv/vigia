@@ -40,7 +40,7 @@ this file only orders the work.
 5. **Check.** `vigia doctor` in each clone. Every check should say ok.
 6. **Server only.** Write the two systemd user units from `docs/server.md` §4, enable linger, start them, and
    show the first lines of `journalctl --user -u vigia`. Ask before installing Tailscale; if the person wants
-   the Mesa (`vigia mesa`, a read-only status desk) on their phone, follow §5 and give them the `https://….ts.net` address.
+   the Mesa (`vigia mesa`, a read-only status page) on their phone, follow §5 and give them the `https://….ts.net` address.
 7. **First ticket.** Offer to write one small T0 ticket with the person (the template is
    `.github/ISSUE_TEMPLATE/vigia-ticket.md`) and add `tier:T0` and `vigia:ready`, so they see a full loop.
 

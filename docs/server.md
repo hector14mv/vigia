@@ -4,7 +4,7 @@ vigia works on a laptop, but a factory wants to be always on. On a small Linux s
 
 - the watcher keeps ticking at night and at weekends: in the factory this comes from, 81 of 360 merges landed
   between 00:00 and 08:00, and 97 at weekends ([the article](https://hectormoyanovelez.com/fabrica));
-- you approve T2 changes and read the Mesa (`vigia mesa`, a read-only status desk) from your phone.
+- you approve T2 changes and read the Mesa (`vigia mesa`, a read-only status page) from your phone.
 
 Any always-on Linux machine works: a small cloud VM, a home server, a spare mini PC. Engine sessions are the
 heavy part: plan on about two CPU cores and two GB of RAM per session at once (`vigia init` proposes a slot
@@ -29,7 +29,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 Install the GitHub CLI from its apt repository, exactly as
-[cli.github.com/…/install_linux.md](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) shows (not
+[the GitHub CLI's Linux install guide](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) shows (not
 from snap). Then install vigia:
 
 ```bash
@@ -75,8 +75,8 @@ for d in */; do (cd "$d" && vigia doctor); done   # every check in every clone s
 On GitHub, protect each repository's base branch (**Settings → Branches**, a rule for `main`; branch rules need
 a public repository, or a paid plan for a private one): **Require status
 checks to pass before merging** with your CI check, **Require branches to be up to date before merging**, and
-**Do not allow bypassing the above settings** (vigia merges with your login, which an admin rule would let
-through). vigia v0.1 does not re-review a PR whose base moved after its review; this rule is what stops a stale
+**Do not allow bypassing the above settings** (vigia merges with your login, and an admin's merge would
+otherwise skip the rule). vigia v0.1 does not re-review a PR whose base moved after its review; this rule is what stops a stale
 head from merging. Do not require approving reviews.
 
 Secrets for the service go in a file only you can read, which the unit loads:

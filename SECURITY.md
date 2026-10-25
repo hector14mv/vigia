@@ -29,7 +29,7 @@ One more limit: vigia controls the environment it starts a session with, not you
 `~/.zprofile`, `~/.zshenv`, `~/.bash_profile` or `~/.profile` exports a GitHub token, a login shell that a
 session opens exports it again. `gh` does not need such a line (it keeps its own login); remove it, or keep it
 only in the interactive `~/.zshrc`, which login shells do not read. For that, run vigia under a separate OS
-user or in a container (next section).
+user or in a container (see [Run it safely](#run-it-safely)).
 
 ## Who can start a build
 
@@ -70,8 +70,8 @@ own bad paths. It does not stop a builder from running commands that touch files
 
 - Use a machine or OS account that holds no production credentials, cloud keys or SSH keys you
   would mind losing. A throwaway VM or a dedicated user is best.
-- Protect the base branch on GitHub (required pull request, required status checks, no force
-  pushes), so a bug in any layer cannot push straight to it.
+- Protect the base branch on GitHub (required status checks, require branches to be up to date, no
+  bypassing, no force pushes), so a bug in any layer cannot push straight to it.
 - Keep `require_ci = true` under `[checks]` in `vigia.toml`. It is the default.
 - Run T2 for anything that touches money, auth or personal data, and set `checks.humans` to
   your own GitHub login so only you can add the `vigia:human-ok` label.
