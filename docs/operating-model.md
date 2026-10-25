@@ -116,9 +116,9 @@ the watcher before the session starts, so no two sessions ever work on the same 
 
 ## How the parts fit
 
-1. **Plan.** `vigia plan "<goal>"` turns a goal into tickets in the template. Launchable T0/T1 tickets go to
-   the queue; T2 tickets and anything the template check refuses wait for a person as `vigia:proposed`; work
-   only a person can do becomes a `vigia:human-task` issue.
+1. **Plan.** `vigia plan "<goal>"` turns a goal into tickets in the template, every one filed as
+   `vigia:proposed`: a person ratifies a ticket by swapping that label for the ready one, so what the factory
+   builds next stays a person's call. Work only a person can do becomes a `vigia:human-task` issue.
 2. **Build.** `vigia watch` takes the oldest ready ticket into a free slot: a builder session in its own
    worktree, then vigia commits, pushes, opens the PR and posts the handoff.
 3. **Check.** CI on the head; then the cross-lab gate; a P1 starts a fresh fix round; on T1/T2 the stronger
