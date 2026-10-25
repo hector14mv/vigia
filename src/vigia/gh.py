@@ -105,6 +105,7 @@ class GitHub:
                 "title": r["title"],
                 "url": r.get("html_url", ""),
                 "labels": sorted(x["name"] for x in r.get("labels") or []),
+                "created": r.get("created_at"),
             }
             for r in rows
             if "pull_request" not in r

@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import decisions, fuel, jobs, tickets
+from .config import PROPOSED
 from .context import Ctx
 from .proc import CommandError
 from .rules import decide
@@ -348,7 +349,8 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                 "tier": tickets.tier(i["labels"], labels.tier_prefix) or "?",
                 "since": i.get("created") or None,
             }
-            for i in ctx.gh.issues("vigia:proposed")
+            for i in ctx.gh.open_issues()  # every page: `issues()` stops at 100
+            if PROPOSED in i["labels"]
         ]
     except CommandError:
         proposed = None  # unknown, not none

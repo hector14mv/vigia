@@ -24,13 +24,17 @@ def _issue(ctx: Ctx, pr: dict) -> dict | None:
 
 
 def recover(ctx: Ctx) -> None:
-    """Remove review worktrees an interrupted session left behind. Runs under the tick lock; a worktree whose PR
-    has a live job (vigia.jobs) belongs to a review in progress and is kept."""
+    """Remove worktrees an interrupted session left behind. Runs under the tick lock; a worktree whose PR
+    has a live job (vigia.jobs) belongs to a review in progress and is kept, and so is a planner's while a
+    `vigia plan` holds its lock."""
     for path in sorted(ctx.root.glob("gate-*")) + sorted(ctx.root.glob("review-*")):
         number = path.name.split("-")[1]
         if number.isdigit() and jobs.busy(ctx, jobs.target("gate", int(number))):
             continue
         ctx.git.remove_worktree(path)
+    if not jobs.busy(ctx, jobs.PLANNER):
+        for path in sorted(ctx.root.glob("plan-*")):
+            ctx.git.remove_worktree(path)
 
 
 def review(ctx: Ctx, pr: dict, kind: str, round_no: int) -> str | None:

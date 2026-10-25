@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .context import Ctx
 
 ACTIONS = ("gate", "review", "fix", "build")
+PLANNER = "plan"  # the lock of `vigia plan`: one planner per clone, held for its whole run
 _HELD: set[int] = set()  # file descriptors of the target locks this process holds
 
 
@@ -40,6 +41,10 @@ def target(action: str, number: int) -> str:
 
 
 def _path(ctx: Ctx, name: str) -> Path:
+    if (
+        name == PLANNER
+    ):  # outside locks/: a planner is no PR or issue job, so `live` and the Mesa never list it
+        return ctx.state / "plan.lock"
     return ctx.state / "locks" / f"{name}.lock"
 
 

@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from . import tickets
+from . import jobs, tickets
 from .config import HUMAN_TASK, PROPOSED, TIERS, Seat
 from .context import Ctx
 from .init import label_specs
@@ -238,24 +238,41 @@ def plan(
     seat: Seat = DEFAULT_SEAT,
     dry_run: bool = False,
 ):
-    """Run one planner session on the base branch and file what it proposes. Returns (plan, filed)."""
+    """Run one planner session on the base branch and file what it proposes. Returns (plan, filed).
+
+    The clone's lock is held only while this reads and while it files, never across the session: `vigia watch`
+    keeps ticking meanwhile. The planner lock is held throughout, so two planners on one clone never collide and
+    the tick's recovery leaves the planner's worktree alone."""
     cfg = ctx.cfg
-    base_sha = ctx.git.remote_branch_sha(cfg.base)
-    open_titles = [i["title"] for i in ctx.gh.open_issues()]
-    files = ctx.git.files(base_sha)
-    wt = ctx.git.worktree_detached(ctx.root / f"plan-{base_sha[:8]}", base_sha)
-    try:
-        text = prompt(goal, cfg.repo, cfg.base, _skill(wt), open_titles, files, limit)
-        # the planner only reads: it runs with a reviewer's read-only sandbox, and answers in its own schema
-        outcome = ctx.engines.run(seat, "reviewer", text, wt, name=f"plan-{base_sha[:8]}", schema=PLAN_SCHEMA)
-    finally:
-        ctx.git.remove_worktree(wt)
-    # a session that failed or hit its time cap is not trusted, even when it left parseable JSON behind
-    result = parse(outcome.text) if outcome.ok else None
-    if result is None:
-        ctx.ledger.append("plan_failed", goal=goal[:200], code=outcome.code, timed_out=outcome.timed_out)
-        raise SystemExit(f"the planner returned no plan (exit {outcome.code}; log {outcome.log})")
-    result["tickets"] = result["tickets"][:limit]
-    if dry_run:
-        return result, []
-    return result, file_plan(ctx, result, goal)
+    wait = (
+        cfg.caps.session_minutes * 60
+    )  # a tick may be running a whole session; the plan is worth waiting for
+    with jobs.hold(ctx, jobs.PLANNER) as got:
+        if not got:
+            raise SystemExit("another vigia plan is running in this clone; try again when it ends")
+        with ctx.lock(wait):
+            base_sha = ctx.git.remote_branch_sha(cfg.base)
+            open_titles = [i["title"] for i in ctx.gh.open_issues()]
+            files = ctx.git.files(base_sha)
+            path = ctx.root / f"plan-{base_sha[:8]}"
+            if path.exists():  # a killed planner's: we hold the planner lock, so nothing else uses it
+                ctx.git.remove_worktree(path)
+            wt = ctx.git.worktree_detached(path, base_sha)
+        try:
+            text = prompt(goal, cfg.repo, cfg.base, _skill(wt), open_titles, files, limit)
+            # the planner only reads: it runs with a reviewer's read-only sandbox, and answers in its own schema
+            outcome = ctx.engines.run(
+                seat, "reviewer", text, wt, name=f"plan-{base_sha[:8]}", schema=PLAN_SCHEMA
+            )
+        finally:
+            ctx.git.remove_worktree(wt)
+        # a session that failed or hit its time cap is not trusted, even when it left parseable JSON behind
+        result = parse(outcome.text) if outcome.ok else None
+        if result is None:
+            ctx.ledger.append("plan_failed", goal=goal[:200], code=outcome.code, timed_out=outcome.timed_out)
+            raise SystemExit(f"the planner returned no plan (exit {outcome.code}; log {outcome.log})")
+        result["tickets"] = result["tickets"][:limit]
+        if dry_run:
+            return result, []
+        with ctx.lock(wait):
+            return result, file_plan(ctx, result, goal)
