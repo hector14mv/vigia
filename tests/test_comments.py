@@ -38,14 +38,22 @@ def test_handoffs_keeps_only_the_login_s_handoff_comments():
     assert comments.handoffs(rows, "bot") == [f"## Handoff {SHA}\nx"]
 
 
-def test_title_is_cut_to_70_at_a_word_boundary():
+def test_title_is_cut_to_70_at_a_word_boundary_and_ends_with_an_ellipsis():
     assert comments.follow_up_title("short") == "short"
     exact = "x" * 70
     assert comments.follow_up_title(exact) == exact
-    assert comments.follow_up_title(exact + " tail") == exact  # the cut lands on a boundary
+    assert comments.follow_up_title(exact + " tail") == "x" * 69 + "…"  # no space to cut at
     cut = comments.follow_up_title("word " * 20)
-    assert len(cut) <= 70 and cut == "word " * 13 + "word"
-    assert comments.follow_up_title("y" * 100) == "y" * 70  # no space to cut at
+    assert cut == "word " * 13 + "word…"
+    assert comments.follow_up_title("y" * 100) == "y" * 69 + "…"  # no space to cut at
+    # the cut lands on a word boundary and trailing punctuation goes before the "…"
+    assert comments.follow_up_title("aaaa, " * 12) == "aaaa, " * 10 + "aaaa…"
+
+
+def test_title_is_never_longer_than_the_limit():
+    for n in range(60, 130):
+        for text in ("w" * n, "ab, " * n, "word-" * n):
+            assert len(comments.follow_up_title(text)) <= comments.TITLE_MAX
 
 
 def test_the_issue_body_quotes_links_and_asks_for_a_rewrite():
