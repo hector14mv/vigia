@@ -1096,6 +1096,45 @@ def test_an_unreadable_repo_says_when_it_was_last_read_ok(world, tmp_path):  # n
     assert "has not read GitHub OK since it started" in never_shown["desk"]["turn"]["text"]
 
 
+def test_the_backoff_stays_capped_after_a_thousand_failed_refreshes(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    clock = _Clock()
+    cache = mesa._Cache([ctx], 15, clock=clock)
+    attempts = _unreadable_github(gh)
+    json.loads(cache.get())
+    cache.entries["state"].fails = 1100  # 30 * 2 ** 1099 overflows a float
+    assert cache._wait(cache.entries["state"]) == mesa.BACKOFF_MAX
+    clock.now = mesa.BACKOFF_MAX
+    assert "error" in json.loads(cache.get())["repos"][0]  # still answers, and asks GitHub again
+    assert len(attempts) == 2
+
+
+def test_a_partial_failure_says_when_it_was_last_read_ok(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    clock = _Clock()
+    cache = mesa._Cache([ctx], 15, clock=clock)
+    first = json.loads(cache.get())
+    healthy = gh.issues
+
+    def human_tasks_unreadable(label):
+        if label == "vigia:human-task":
+            raise CommandError(["gh", "issue", "list"], 1, "", "HTTP 403: API rate limit exceeded")
+        return healthy(label)
+
+    gh.issues = human_tasks_unreadable
+    clock.now = 15
+    partial = json.loads(cache.get())
+    assert partial["repos"][0]["unread"] == ["human tasks"] and "error" not in partial["repos"][0]
+    shown = _render(tmp_path, partial, routes=("turn",))
+    stamp = mesa.datetime.fromisoformat(first["generated"].replace("Z", "+00:00")).astimezone()
+    for view in _views(shown, "turn"):
+        assert "Could not read: human tasks" in view["text"]
+        assert "Last read OK at" in view["text"] and f"{stamp:%H:%M}" in view["text"]
+        assert "asks it less often" in view["text"]
+
+
 def test_an_unexpected_error_in_the_server_answers_500_with_the_error_and_backs_off(world, monkeypatch):  # noqa: F811
     gh, build = world
     ctx, _ = build([])

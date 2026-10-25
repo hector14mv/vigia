@@ -940,7 +940,7 @@ a.ev { min-height: 44px; }
   function partialCard(r, names, desk) {
     var kick = "! Not all read · " + short(r.repo), title = "Could not read: " + names.join("; ");
     var hint = h("p", { "class": "note", style: "font-size:14px" }, "This list may be missing things that need you. Check the issues on GitHub, or ",
-      h("code", null, "gh auth status"), " where vigia runs.");
+      h("code", null, "gh auth status"), " where vigia runs. " + lastRead(r) + " While GitHub keeps failing the Mesa asks it less often, up to every 5 min.");
     var btn = ext(repoUrl(r.repo, "/issues?q=is%3Aopen"), "Check the issues on GitHub", "btn btn-secondary");
     if (desk) {
       return h("article", { "class": "card wide-card" },

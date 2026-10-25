@@ -689,7 +689,8 @@ class _Cache:
         """How long the entry stands before a refresh: the cache time, or the backoff after failed refreshes."""
         if not entry.fails:
             return self.seconds
-        return min(max(BACKOFF_START * 2 ** (entry.fails - 1), self.seconds), BACKOFF_MAX)
+        # the exponent is capped: after ~1000 failures in a row 2 ** n overflows a float before the cap could apply
+        return min(max(BACKOFF_START * 2 ** min(entry.fails - 1, 32), self.seconds), BACKOFF_MAX)
 
     def _get(self, key: str, build, degraded=lambda value: False) -> bytes:
         """The body of `build()`, rebuilt at most once per cache time. A refresh that fails (it raised, or `degraded`
