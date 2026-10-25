@@ -62,14 +62,14 @@ no longer covers the PR. The gate runs once per round, and a second round exists
 for an accepted finding has been pushed. After the second round there is no third: the PR is parked
 and a human decides. Repeated review rounds were the factory's single largest waste of quota.
 
-When the base branch moves after the head was reviewed, the merge would produce code nobody reviewed.
-So before a person approves or anything merges, vigia merges the base into the PR and the new head is
-reviewed again, told that the base moved. That head does not use up a round: it repairs nothing, it only
-re-establishes that what was reviewed is what will land.
+A review covers the PR's head, not the base it lands on: when the base moves after the review, the squash
+merge combines reviewed code with base changes nobody reviewed together. In v0.1 the guard is GitHub's own:
+turn on "Require branches to be up to date before merging" with at least one required check, and GitHub
+refuses to merge a stale head; the PR then waits until someone presses "Update branch", and vigia reviews the
+new head like any other. Bringing a moved base in and reviewing again by itself is on the roadmap.
 
 *Where:* every verdict in the ledger is keyed by the full SHA; `rules.decide()` counts gated heads
-against `caps.gate_rounds` (default 2) and parks when they are used; a head recorded as `updated` is
-reviewed again without counting (`builder.update`, `PRState.updated_heads`).
+against `caps.gate_rounds` (default 2) and parks when they are used.
 
 ## 5. A finding blocks only if it fails on this commit
 
@@ -122,7 +122,7 @@ the watcher before the session starts, so no two sessions ever work on the same 
 2. **Build.** `vigia watch` takes the oldest ready ticket into a free slot: a builder session in its own
    worktree, then vigia commits, pushes, opens the PR and posts the handoff.
 3. **Check.** CI on the head; then the cross-lab gate; a P1 starts a fresh fix round; on T1/T2 the stronger
-   reviewer; if the base moved, an update and a second look; on T2, a person's label on the exact head.
+   reviewer; on T2, a person's label on the exact head.
 4. **Merge or park.** The decision table merges with `--match-head-commit`, or parks with the reason written
    on the PR. Nothing loops past a cap.
 5. **See it.** `vigia mesa` shows what needs a person, every PR's path and the last events, on a laptop or a

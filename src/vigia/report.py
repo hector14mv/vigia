@@ -42,7 +42,15 @@ def build(ledgers: dict[str, Ledger], days: int = 7, now: datetime | None = None
     )
     totals = {"merged": 0, "p1_gate": 0, "p1_review": 0, "parks": 0, "fix_rounds": 0, "updates": 0}
     for _repo, ledger in ledgers.items():
-        rows = [r for r in ledger.rows() if (_ts(r.get("ts")) or since) >= since]
+        every = ledger.rows()
+        rows = [r for r in every if (_ts(r.get("ts")) or since) >= since]
+        # A PR merged or parked in the window may have been opened, and gated, before it: its builder and its
+        # rounds come from the whole ledger, while what is counted stays the window's.
+        ever_opened = {r["pr"]: r for r in every if r["event"] == "pr_opened"}
+        ever_gated = defaultdict(set)
+        for r in every:
+            if r["event"] == "verdict" and r.get("kind") == "gate" and r.get("verdict") != "UNAVAILABLE":
+                ever_gated[r.get("pr")].add(r["sha"])
         opened = {r["pr"]: r for r in rows if r["event"] == "pr_opened"}
         verdicts = defaultdict(list)
         for r in rows:
@@ -59,8 +67,8 @@ def build(ledgers: dict[str, Ledger], days: int = 7, now: datetime | None = None
                     totals["p1_gate" if r.get("kind") == "gate" else "p1_review"] += r.get("p1", 0)
             elif r["event"] == "parked":
                 totals["parks"] += 1
-                if r.get("pr") in opened:
-                    o = opened[r["pr"]]
+                if r.get("pr") in ever_opened:
+                    o = ever_opened[r["pr"]]
                     builders[f"{o['engine']} · {o['model']}"]["parked"] += 1
             elif r["event"] == "fix_started":
                 totals["fix_rounds"] += 1
@@ -78,20 +86,13 @@ def build(ledgers: dict[str, Ledger], days: int = 7, now: datetime | None = None
             if r["event"] != "merged":
                 continue
             totals["merged"] += 1
-            o = opened.get(r.get("pr"))
+            o = ever_opened.get(r.get("pr"))
             if not o:
                 continue
             b = builders[f"{o['engine']} · {o['model']}"]
             b["merged"] += 1
-            b["rounds"].append(
-                len(
-                    {
-                        v["sha"]
-                        for v in verdicts[r["pr"]]
-                        if v.get("kind") == "gate" and v.get("verdict") != "UNAVAILABLE"
-                    }
-                )
-            )
+            b["tiers"].add(o.get("tier"))
+            b["rounds"].append(len(ever_gated[r["pr"]]))
             start, end = _ts(o["ts"]), _ts(r["ts"])
             if start and end:
                 b["minutes"].append((end - start).total_seconds() / 60)
