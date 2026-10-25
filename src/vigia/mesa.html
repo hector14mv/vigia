@@ -1,386 +1,2014 @@
+<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>vigia Mesa</title>
-<meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<script>
+/* Theme before first paint: a stored choice wins; otherwise desktop is dark and the phone follows the system. */
+(function () {
+  var t = null;
+  try { t = window.localStorage.getItem("mesa.theme"); } catch (e) {}
+  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  else if (window.matchMedia && window.matchMedia("(min-width: 1024px)").matches) document.documentElement.setAttribute("data-theme", "dark");
+})();
+</script>
 <style>
-/* Layout: a control desk. Phones: one column with a bottom tab bar. Wide screens: "Your turn" stays on the left,
-   the factory, the feed and the fuel share the right column. Every color is a token; both themes are designed. */
+/* The Mesa, v2. Every colour is a --mesa-* token; the private Mesa renames them to --mm-* one for one.
+   Amber (turn) only for "needs a human"; blue running; green done; red stopped; grey waiting or skipped.
+   Colour is never alone: every state also has a glyph and a word. */
 :root {
-  --bg: #eef1f5; --surface: #ffffff; --surface-2: #f6f8fb; --ink: #121a24; --muted: #5b6878; --rule: #d8dee7;
-  --beam: #b4540a; --beam-soft: #fbe7d3; --beam-ink: #7a3606;
-  --ok: #17663f; --ok-bg: #dcefe4; --warn: #8a5a00; --warn-bg: #f7ebcc; --stop: #a3261b; --stop-bg: #f8dedb;
-  --idle: #64748b; --idle-bg: #e6eaf0; --run: #1d4ed8; --run-bg: #dde7fb;
-  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
-  --body: "IBM Plex Sans", "Helvetica Neue", Arial, system-ui, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --radius: 10px;
+  --mesa-font: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mesa-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+  --mesa-bg: oklch(0.972 0.006 80); --mesa-surface: oklch(0.995 0.003 80); --mesa-surface-2: oklch(0.948 0.008 80);
+  --mesa-line: oklch(0.885 0.010 80); --mesa-line-strong: oklch(0.780 0.012 80);
+  --mesa-ink: oklch(0.230 0.015 255); --mesa-ink-2: oklch(0.420 0.015 255); --mesa-ink-3: oklch(0.520 0.012 255); --mesa-on-ink: oklch(0.980 0.004 80);
+  --mesa-turn: oklch(0.680 0.150 58); --mesa-turn-ink: oklch(0.480 0.120 52); --mesa-turn-bg: oklch(0.955 0.040 72);
+  --mesa-live: oklch(0.560 0.150 255); --mesa-live-ink: oklch(0.460 0.140 255); --mesa-live-bg: oklch(0.950 0.030 255);
+  --mesa-ok: oklch(0.600 0.120 155); --mesa-ok-ink: oklch(0.440 0.100 155); --mesa-ok-bg: oklch(0.950 0.035 155);
+  --mesa-danger: oklch(0.560 0.170 28); --mesa-danger-ink: oklch(0.470 0.150 28); --mesa-danger-bg: oklch(0.955 0.025 28);
+  --mesa-scrim: oklch(0.200 0.015 255 / 0.40);
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #0c1117; --surface: #141b24; --surface-2: #19222d; --ink: #e5eaf0; --muted: #98a4b3; --rule: #253141;
-  --beam: #f0a050; --beam-soft: #33230f; --beam-ink: #f7c48e;
-  --ok: #7bd3a0; --ok-bg: #11301f; --warn: #e8c46a; --warn-bg: #30270c; --stop: #f39a90; --stop-bg: #3a1714;
-  --idle: #a3afbe; --idle-bg: #222c38; --run: #93b4ff; --run-bg: #17264a; color-scheme: dark; } }
+  color-scheme: dark;
+  --mesa-bg: oklch(0.165 0.010 255); --mesa-surface: oklch(0.205 0.012 255); --mesa-surface-2: oklch(0.245 0.014 255);
+  --mesa-line: oklch(0.300 0.014 255); --mesa-line-strong: oklch(0.420 0.016 255);
+  --mesa-ink: oklch(0.950 0.005 80); --mesa-ink-2: oklch(0.800 0.010 80); --mesa-ink-3: oklch(0.680 0.010 80); --mesa-on-ink: oklch(0.170 0.010 255);
+  --mesa-turn: oklch(0.780 0.140 65); --mesa-turn-ink: oklch(0.850 0.110 70); --mesa-turn-bg: oklch(0.300 0.060 60);
+  --mesa-live: oklch(0.720 0.130 255); --mesa-live-ink: oklch(0.800 0.110 255); --mesa-live-bg: oklch(0.280 0.060 255);
+  --mesa-ok: oklch(0.740 0.130 155); --mesa-ok-ink: oklch(0.820 0.120 155); --mesa-ok-bg: oklch(0.280 0.050 155);
+  --mesa-danger: oklch(0.700 0.160 28); --mesa-danger-ink: oklch(0.800 0.130 28); --mesa-danger-bg: oklch(0.270 0.050 28);
+  --mesa-scrim: oklch(0.080 0.010 255 / 0.60);
+} }
 :root[data-theme="dark"] {
-  --bg: #0c1117; --surface: #141b24; --surface-2: #19222d; --ink: #e5eaf0; --muted: #98a4b3; --rule: #253141;
-  --beam: #f0a050; --beam-soft: #33230f; --beam-ink: #f7c48e;
-  --ok: #7bd3a0; --ok-bg: #11301f; --warn: #e8c46a; --warn-bg: #30270c; --stop: #f39a90; --stop-bg: #3a1714;
-  --idle: #a3afbe; --idle-bg: #222c38; --run: #93b4ff; --run-bg: #17264a; color-scheme: dark; }
+  color-scheme: dark;
+  --mesa-bg: oklch(0.165 0.010 255); --mesa-surface: oklch(0.205 0.012 255); --mesa-surface-2: oklch(0.245 0.014 255);
+  --mesa-line: oklch(0.300 0.014 255); --mesa-line-strong: oklch(0.420 0.016 255);
+  --mesa-ink: oklch(0.950 0.005 80); --mesa-ink-2: oklch(0.800 0.010 80); --mesa-ink-3: oklch(0.680 0.010 80); --mesa-on-ink: oklch(0.170 0.010 255);
+  --mesa-turn: oklch(0.780 0.140 65); --mesa-turn-ink: oklch(0.850 0.110 70); --mesa-turn-bg: oklch(0.300 0.060 60);
+  --mesa-live: oklch(0.720 0.130 255); --mesa-live-ink: oklch(0.800 0.110 255); --mesa-live-bg: oklch(0.280 0.060 255);
+  --mesa-ok: oklch(0.740 0.130 155); --mesa-ok-ink: oklch(0.820 0.120 155); --mesa-ok-bg: oklch(0.280 0.050 155);
+  --mesa-danger: oklch(0.700 0.160 28); --mesa-danger-ink: oklch(0.800 0.130 28); --mesa-danger-bg: oklch(0.270 0.050 28);
+  --mesa-scrim: oklch(0.080 0.010 255 / 0.60);
+}
+
 * { box-sizing: border-box; }
-body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
-a { color: inherit; }
-.shell { max-width: 1240px; margin: 0 auto; padding-block: 16px 96px; grid-template-columns: minmax(0, 1fr);
-  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
-  display: grid; gap: 16px; }
-.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; justify-content: space-between; }
-.brand { display: flex; align-items: baseline; gap: 10px; }
-.brand b { font: 750 24px/1 var(--display); letter-spacing: -0.02em; }
-.brand span { font: 500 12px/1 var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-.pulse { display: flex; flex-wrap: wrap; gap: 8px; }
-.pill { display: inline-flex; align-items: center; gap: 6px; font: 500 12.5px/1 var(--mono); padding: 7px 10px;
-  border-radius: 999px; background: var(--surface); border: 1px solid var(--rule); color: var(--muted); white-space: nowrap; }
-.pill b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
-.dot.late { background: var(--warn); } .dot.dead { background: var(--stop); }
-.sample { overflow-wrap: anywhere; font: 500 12px/1.4 var(--mono); color: var(--beam-ink); background: var(--beam-soft); padding: 8px 12px; border-radius: 8px; }
-.grid { display: grid; gap: 16px; align-items: start; grid-template-columns: minmax(0, 1fr); }
-@media (min-width: 960px) { .grid { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); } .tabbar { display: none; }
-  .panel[data-tab="turn"] { display: grid !important; } }
-.panel { display: grid; gap: 12px; min-width: 0; }
-.panel h2 { font: 650 18px/1.2 var(--display); margin: 0; display: flex; align-items: center; gap: 8px; }
-.count { font: 600 12px/1 var(--mono); background: var(--beam); color: var(--surface); border-radius: 999px; padding: 4px 7px; }
-.hint { color: var(--muted); font-size: 13.5px; margin: 0; }
-.card { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px 16px;
-  display: grid; gap: 10px; min-width: 0; }
-.card.t2 { border-left: 4px solid var(--beam); }
-.card.parked { border-left: 4px solid var(--stop); }
-.card.refused { border-left: 4px solid var(--warn); }
-.card.unavailable { border-left: 4px solid var(--stop); }
-.kicker { font: 500 11.5px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-.title { font-weight: 600; overflow-wrap: anywhere; }
-.meta { font: 400 12.5px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
-.evidence { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-.evidence li { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; }
-.evidence li::before { content: "✓"; color: var(--ok); font-weight: 600; flex: none; }
-.evidence li.no::before { content: "•"; color: var(--muted); }
-.why { font-size: 14px; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; overflow-wrap: anywhere; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font: 600 13.5px/1 var(--body);
-  padding: 10px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); }
-.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.btn:focus-visible { outline: 2px solid var(--beam); outline-offset: 2px; }
-.empty { background: var(--surface); border: 1px dashed var(--rule); border-radius: var(--radius); padding: 18px; color: var(--muted); }
-.repo { display: grid; gap: 10px; }
-.repo-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
-.repo-head h3 { font: 650 16px/1.2 var(--display); margin: 0; }
-.slots { display: flex; gap: 4px; align-items: center; font: 500 12px/1 var(--mono); color: var(--muted); }
-.slot { width: 18px; height: 8px; border-radius: 3px; background: var(--idle-bg); }
-.slot.busy { background: var(--run); }
-.pr { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 10px; min-width: 0; }
-.pr-top { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; }
-.pr-top .title { font-size: 14.5px; }
-.tier { flex: none; font: 600 11.5px/1 var(--mono); padding: 5px 7px; border-radius: 6px; background: var(--idle-bg); color: var(--idle); }
-.tier.T1 { background: var(--run-bg); color: var(--run); } .tier.T2 { background: var(--beam-soft); color: var(--beam-ink); }
-.steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
-.step { font: 500 11px/1.2 var(--mono); text-align: center; padding: 6px 2px 5px; border-radius: 6px; background: var(--idle-bg);
-  color: var(--idle); border-top: 3px solid transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.step.done { background: var(--ok-bg); color: var(--ok); border-top-color: var(--ok); }
-.step.now { background: var(--run-bg); color: var(--run); border-top-color: var(--run); }
-.step.wait { background: var(--beam-soft); color: var(--beam-ink); border-top-color: var(--beam); }
-.step.stop { background: var(--stop-bg); color: var(--stop); border-top-color: var(--stop); }
-.step.skip { opacity: 0.45; }
-.next { font-size: 13.5px; color: var(--muted); overflow-wrap: anywhere; }
-.next b { color: var(--ink); font-weight: 600; }
-.running { display: inline-flex; align-items: center; gap: 6px; color: var(--run); font-weight: 600; }
-.running::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--run); }
-@media (prefers-reduced-motion: no-preference) { .running::before { animation: beat 1.6s ease-in-out infinite; } }
-@keyframes beat { 50% { opacity: 0.25; } }
-.queue { display: flex; flex-wrap: wrap; gap: 6px; }
-.queue a { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; text-decoration: none; background: var(--surface);
-  border: 1px solid var(--rule); border-radius: 999px; padding: 6px 10px; max-width: 100%; }
-.queue a span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.feed { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); margin: 0; padding: 0; list-style: none; }
-.feed li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 10px 14px; align-items: baseline; }
-.feed li + li { border-top: 1px solid var(--rule); }
-.feed time { font: 500 12px/1.4 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
-.feed .ev { min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
-.tag { font: 600 11px/1 var(--mono); padding: 3px 6px; border-radius: 5px; margin-right: 6px; }
-.tag.merged { background: var(--ok-bg); color: var(--ok); } .tag.parked { background: var(--stop-bg); color: var(--stop); }
-.tag.verdict { background: var(--run-bg); color: var(--run); } .tag.built { background: var(--idle-bg); color: var(--idle); }
-.tag.p1 { background: var(--stop-bg); color: var(--stop); }
-.fuel { display: grid; gap: 12px; }
-.tank { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 8px; }
-.tank-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.tank-head b { font: 600 15px/1 var(--display); }
-.tank-head span { font: 500 13px/1 var(--mono); font-variant-numeric: tabular-nums; }
-.bar { height: 10px; border-radius: 5px; background: var(--idle-bg); overflow: hidden; }
-.bar i { display: block; height: 100%; background: var(--ok); border-radius: 5px; }
-.bar i.mid { background: var(--warn); } .bar i.low { background: var(--stop); }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--rule);
-  border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
-.stat { background: var(--surface); padding: 12px 14px; display: grid; gap: 2px; }
-.stat b { font: 600 22px/1.1 var(--display); font-variant-numeric: tabular-nums; }
-.stat span { font-size: 12.5px; color: var(--muted); }
-.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: grid; grid-template-columns: repeat(4, 1fr);
-  background: var(--surface); border-top: 1px solid var(--rule);
-  padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
-.tabbar button { font: 600 12.5px/1 var(--body); background: none; border: 0; color: var(--muted); padding: 14px 4px; cursor: pointer;
-  display: grid; justify-items: center; gap: 4px; }
-.tabbar button[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 3px 0 var(--beam); }
-.tabbar .badge { font: 600 11px/1 var(--mono); color: var(--beam); }
-.deskTabs { display: none; gap: 6px; }
-@media (min-width: 960px) { .deskTabs { display: flex; } }
-.deskTabs button { font: 600 13px/1 var(--body); border: 1px solid var(--rule); background: var(--surface); color: var(--muted);
-  padding: 8px 12px; border-radius: 999px; cursor: pointer; }
-.deskTabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.panel[hidden] { display: none !important; }
-footer { color: var(--muted); font-size: 12.5px; }
-.panel, .repo, .pr, .card, .fuel, .tank { grid-template-columns: minmax(0, 1fr); }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; min-height: 100vh; background: var(--mesa-bg); color: var(--mesa-ink); font: 400 15px/1.45 var(--mesa-font); }
+body.locked { overflow: hidden; }
+a { color: var(--mesa-ink); }
+a:hover { color: var(--mesa-ink-2); }
+button { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+code { font: 500 12.5px var(--mesa-mono); padding: 1px 5px; border-radius: 5px; background: var(--mesa-surface-2); }
+:focus-visible { outline: 2px solid var(--mesa-live); outline-offset: 2px; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mono { font-family: var(--mesa-mono); }
+.grow { flex: 1; }
+.wrap-any { overflow-wrap: anywhere; }
+.lg-a { fill: var(--mesa-ink); } .lg-b { fill: var(--mesa-turn); } .lg-c { fill: var(--mesa-on-ink); }
+
+/* type */
+.t-display { font: 700 34px/1.05 var(--mesa-font); letter-spacing: -0.025em; }
+.t-title { font: 700 30px/1.05 var(--mesa-font); letter-spacing: -0.025em; }
+.t-section { font: 650 20px/1.2 var(--mesa-font); letter-spacing: -0.01em; }
+.t-card { font: 600 17px/1.3 var(--mesa-font); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.t-sub { color: var(--mesa-ink-2); font-size: 15px; }
+.kicker { font: 600 11px/1.2 var(--mesa-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.k-turn { color: var(--mesa-turn-ink); } .k-danger { color: var(--mesa-danger-ink); } .k-live { color: var(--mesa-live-ink); } .k-ok { color: var(--mesa-ok-ink); }
+.meta { font: 400 12px/1.5 var(--mesa-mono); color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.age { font: 500 12px/1 var(--mesa-mono); color: var(--mesa-ink-3); white-space: nowrap; }
+.note { font-size: 13px; color: var(--mesa-ink-2); overflow-wrap: anywhere; }
+.foot { font-size: 12.5px; line-height: 1.5; color: var(--mesa-ink-3); }
+.c-ok { color: var(--mesa-ok-ink); } .c-danger { color: var(--mesa-danger-ink); } .c-live { color: var(--mesa-live-ink); } .c-turn { color: var(--mesa-turn-ink); } .c-3 { color: var(--mesa-ink-3); } .c-2 { color: var(--mesa-ink-2); }
+
+/* chips and badges */
+.chip { flex: none; display: inline-block; font: 600 11px/1 var(--mesa-mono); padding: 5px 7px; border-radius: 6px; white-space: nowrap; }
+.tier-T2 { background: var(--mesa-ink); color: var(--mesa-on-ink); }
+.tier-T1 { background: var(--mesa-surface-2); color: var(--mesa-ink); box-shadow: inset 0 0 0 1px var(--mesa-line-strong); }
+.tier-T0, .tier-x { color: var(--mesa-ink-2); box-shadow: inset 0 0 0 1px var(--mesa-line); }
+.chip.s-danger { background: var(--mesa-danger-bg); color: var(--mesa-danger-ink); }
+.chip.s-live { background: var(--mesa-live-bg); color: var(--mesa-live-ink); }
+.chip.s-turn { background: var(--mesa-turn-bg); color: var(--mesa-turn-ink); }
+.chip.s-ok { background: var(--mesa-ok-bg); color: var(--mesa-ok-ink); }
+.fact { flex: none; display: inline-block; font: 500 12px/1 var(--mesa-mono); padding: 5px 7px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--mesa-line); color: var(--mesa-ink-2); white-space: nowrap; }
+.fact.strong { box-shadow: inset 0 0 0 1px var(--mesa-line-strong); }
+.badge { display: inline-block; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--mesa-turn-ink); color: var(--mesa-on-ink); font: 600 11px/18px var(--mesa-mono); text-align: center; }
+.badge.md { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; font-size: 12px; line-height: 22px; }
+.badge.lg { min-width: 28px; height: 28px; padding: 0 8px; border-radius: 14px; font-size: 15px; line-height: 28px; }
+.badge.xl { min-width: 32px; height: 32px; padding: 0 9px; border-radius: 16px; font-size: 16px; line-height: 32px; }
+
+/* buttons: ↗ = leaves the Mesa; no ↗ = changes only this device's view */
+.btn { display: inline-flex; align-items: center; justify-content: center; text-align: center; gap: 6px; min-height: 44px; padding: 0 16px;
+  border-radius: 10px; font: 600 14px/1.15 var(--mesa-font); text-decoration: none; cursor: pointer; border: 1px solid transparent; }
+.btn-primary { background: var(--mesa-ink); color: var(--mesa-on-ink); border-color: var(--mesa-ink); }
+.btn-primary:hover { color: var(--mesa-on-ink); opacity: 0.92; }
+.btn-secondary { background: var(--mesa-surface-2); color: var(--mesa-ink); border-color: var(--mesa-line-strong); }
+.btn-ghost { background: transparent; color: var(--mesa-ink-2); border-color: var(--mesa-line); }
+.btn-quiet { background: transparent; color: var(--mesa-ink-2); padding: 0 4px; }
+.btn-main { min-height: 48px; font-size: 15px; gap: 8px; }
+.btn-big { min-height: 52px; border-radius: 12px; font-size: 16px; gap: 8px; }
+.btn-tall { min-height: 46px; border-radius: 12px; font-size: 15px; }
+.btn-ok { background: var(--mesa-ok-bg); color: var(--mesa-ok-ink); border-color: var(--mesa-ok); }
+.btn.is-off, .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn-row > * { flex: 1 1 auto; white-space: nowrap; }
+.icon-btn { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; text-align: center; border: 0; border-radius: 10px;
+  background: transparent; color: var(--mesa-ink-2); cursor: pointer; text-decoration: none; flex: none; }
+.icon-btn.boxed { border: 1px solid var(--mesa-line); }
+
+/* segmented and toggles */
+.seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--mesa-surface-2); border: 1px solid var(--mesa-line); }
+.seg button { flex: 1; min-height: 44px; padding: 0 12px; border: 0; border-radius: 7px; cursor: pointer; background: transparent; color: var(--mesa-ink-2);
+  font: 500 13px/1 var(--mesa-font); text-align: center; }
+.seg button[aria-pressed="true"] { background: var(--mesa-surface); color: var(--mesa-ink); box-shadow: 0 0 0 1px var(--mesa-line-strong); font-weight: 600; }
+.seg.inline { display: inline-flex; }
+.seg.inline button { flex: none; }
+
+/* status: is it live? */
+.pill { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--mesa-line);
+  background: var(--mesa-surface); font: 500 12px/1 var(--mesa-mono); color: var(--mesa-ink-2); white-space: nowrap; }
+.pill b { font-weight: 500; color: var(--mesa-ink); }
+.pill b.c-live { color: var(--mesa-live-ink); font-weight: 600; } .pill b.c-ok { color: var(--mesa-ok-ink); font-weight: 600; } .pill b.c-3 { color: var(--mesa-ink-3); }
+.pill.quiet { background: var(--mesa-danger-bg); border-color: transparent; color: var(--mesa-danger-ink); font-weight: 600; }
+.pill.ro { background: var(--mesa-surface-2); border-color: transparent; font: 600 12.5px/1 var(--mesa-font); gap: 6px; }
+.dot { flex: none; width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.dot.ok { background: var(--mesa-ok); } .dot.live { background: var(--mesa-live); } .dot.danger { background: var(--mesa-danger); }
+.dot.hollow { box-shadow: inset 0 0 0 1.5px var(--mesa-ink-3); } .dot.free { box-shadow: inset 0 0 0 1.5px var(--mesa-line-strong); }
+.dot.big { width: 8px; height: 8px; }
+@keyframes mesa-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: no-preference) { .pulse { animation: mesa-pulse 1.8s ease-in-out infinite; } }
+
+/* the six-step track: done | now | wait (you) | stop | skip | todo */
+.track { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; align-items: end; }
+.cell { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cell-l { font: 500 11px/1 var(--mesa-mono); color: var(--mesa-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-b { display: block; height: 4px; border-radius: 2px; }
+.cell.done .cell-b { background: var(--mesa-ink-3); }
+.cell.now .cell-b { height: 8px; background: var(--mesa-live); }
+.cell.wait .cell-b { height: 8px; background: var(--mesa-turn); }
+.cell.stop .cell-b { height: 8px; background: var(--mesa-danger); }
+.cell.todo .cell-b { box-shadow: inset 0 0 0 1px var(--mesa-line-strong); }
+.cell.skip .cell-b { height: 0; border-top: 2px dotted var(--mesa-line-strong); margin-bottom: 1px; border-radius: 0; }
+.cell.now .cell-l { color: var(--mesa-live-ink); font-weight: 600; }
+.cell.wait .cell-l { color: var(--mesa-turn-ink); font-weight: 600; }
+.cell.stop .cell-l { color: var(--mesa-danger-ink); font-weight: 600; }
+.track.lg { gap: 6px; max-width: 760px; }
+.track.lg .cell { gap: 7px; }
+.track.lg .cell-l { font-size: 12px; }
+.track.lg .cell.now .cell-b, .track.lg .cell.wait .cell-b, .track.lg .cell.stop .cell-b { height: 10px; }
+
+/* cards */
+.card { background: var(--mesa-surface); border: 1px solid var(--mesa-line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card.tight { gap: 4px; }
+.card.dashed { background: transparent; border-style: dashed; border-color: var(--mesa-line-strong); }
+.card.dashed .btn-quiet { align-self: flex-start; }
+.k-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.k-row .kicker { min-width: 0; }
+.why-box { background: var(--mesa-danger-bg); border-radius: 10px; padding: 12px 14px; font-size: 14.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.evidence { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.evidence li { display: flex; gap: 8px; overflow-wrap: anywhere; min-width: 0; }
+.evidence li > span:first-child { font-weight: 600; flex: none; }
+.rows > .row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--mesa-line); text-decoration: none; color: var(--mesa-ink); min-height: 44px; }
+.row .stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.row .ref { font: 500 12px/1.3 var(--mesa-mono); color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.row .q { font: 500 15px/1.35 var(--mesa-font); overflow-wrap: anywhere; }
+.wide-card { display: flex; flex-direction: row; flex-wrap: wrap; gap: 16px 24px; padding: 20px; }
+.wide-card > .l { flex: 999 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.wide-card > .r { flex: 1 1 220px; display: flex; flex-direction: column; gap: 8px; justify-content: flex-end; }
+.desk-rows > .row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 16px; align-items: baseline; }
+
+/* group labels and empty states */
+.group-h { font: 600 11px/1 var(--mesa-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mesa-ink-3); }
+.empty { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px; border-radius: 12px; border: 1px solid var(--mesa-line); background: var(--mesa-bg); }
+.empty.on-surface { background: var(--mesa-surface); }
+.empty .ic { width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font: 600 15px/1 var(--mesa-mono); }
+.empty .ic.ok { background: var(--mesa-ok-bg); color: var(--mesa-ok-ink); }
+.empty .ic.idle { background: var(--mesa-surface-2); color: var(--mesa-ink-3); }
+.empty .ic.danger { background: var(--mesa-danger); color: var(--mesa-on-ink); }
+.empty .ic.warn { background: var(--mesa-surface-2); color: var(--mesa-danger-ink); }
+.empty .tx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.empty .tx b { font: 600 14.5px/1.3 var(--mesa-font); }
+.empty .tx span { font-size: 13px; line-height: 1.45; color: var(--mesa-ink-2); overflow-wrap: anywhere; }
+.empty.watcher { border-color: var(--mesa-danger); background: var(--mesa-danger-bg); }
+.empty.github { border-color: var(--mesa-line-strong); }
+.err-detail { font: 400 11.5px/1.4 var(--mesa-mono); color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.sample { font: 500 12px/1.4 var(--mesa-mono); color: var(--mesa-turn-ink); background: var(--mesa-turn-bg); padding: 8px 12px; border-radius: 8px; overflow-wrap: anywhere; }
+
+/* tiles */
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; border-radius: 12px; overflow: hidden; border: 1px solid var(--mesa-line); background: var(--mesa-line); }
+.tile { background: var(--mesa-surface); padding: 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tile b { font: 650 22px/1.1 var(--mesa-font); font-variant-numeric: tabular-nums; }
+.tile span { font-size: 12px; color: var(--mesa-ink-2); }
+.tiles.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tiles.two .tile { padding: 12px 14px; }
+.tiles.two .tile b { font-size: 26px; }
+.tiles.two .tile span { font-size: 13px; }
+
+/* sessions */
+.sess { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--mesa-line); }
+.sess .top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sess .what { font: 600 15px/1.2 var(--mesa-font); min-width: 0; overflow-wrap: anywhere; }
+.sess .sage { font: 600 13px/1 var(--mesa-mono); color: var(--mesa-live-ink); white-space: nowrap; }
+.sess .eng { font: 400 12px/1.3 var(--mesa-mono); color: var(--mesa-ink-3); padding-left: 16px; overflow-wrap: anywhere; }
+.sess .bar { margin-left: 16px; height: 4px; border-radius: 2px; background: var(--mesa-surface-2); overflow: hidden; display: flex; }
+.sess .bar i { display: block; height: 100%; background: var(--mesa-live); }
+.sess.over .sage { color: var(--mesa-danger-ink); }
+.sess.over .bar i { background: var(--mesa-danger); }
+.slotgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 10px; }
+.slot { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 12px; background: var(--mesa-surface); border: 1px solid var(--mesa-line); min-width: 0; }
+.slot .top { display: flex; align-items: center; gap: 8px; }
+.slot .what { flex: 1; font: 600 14px/1.2 var(--mesa-font); min-width: 0; overflow-wrap: anywhere; }
+.slot .sage { font: 600 12.5px/1 var(--mesa-mono); color: var(--mesa-live-ink); white-space: nowrap; }
+.slot .eng { font: 400 12px/1.3 var(--mesa-mono); color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.slot .bar { height: 4px; border-radius: 2px; background: var(--mesa-surface-2); overflow: hidden; display: flex; }
+.slot .bar i { display: block; height: 100%; background: var(--mesa-live); }
+.slot.free { background: transparent; border-style: dashed; border-color: var(--mesa-line-strong); color: var(--mesa-ink-3); }
+.slot.over { border-color: var(--mesa-danger); }
+.slot.over .sage { color: var(--mesa-danger-ink); }
+.slot.over .bar i { background: var(--mesa-danger); }
+.strip { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 14px; border-radius: 12px; background: var(--mesa-surface); border: 1px solid var(--mesa-line); text-decoration: none; color: var(--mesa-ink); }
+.strip .bars { display: flex; gap: 3px; flex: none; }
+.strip .bars i { width: 6px; height: 18px; border-radius: 2px; box-shadow: inset 0 0 0 1px var(--mesa-line-strong); display: block; }
+.strip .bars i.on { background: var(--mesa-live); box-shadow: none; }
+.strip .tx { flex: 1; font-size: 13.5px; color: var(--mesa-ink-2); min-width: 0; }
+.strip .tx b { color: var(--mesa-ink); font-weight: 600; }
+.mini-slots { display: flex; gap: 3px; }
+.mini-slots i { width: 14px; height: 8px; border-radius: 2px; box-shadow: inset 0 0 0 1px var(--mesa-line-strong); display: block; }
+
+/* factory: PR cards and the desktop board */
+.prcard { display: flex; flex-direction: column; gap: 10px; background: var(--mesa-surface); border: 1px solid var(--mesa-line); border-radius: 14px; padding: 14px; text-decoration: none; color: var(--mesa-ink); min-width: 0; }
+.prcard .hd { display: flex; align-items: flex-start; gap: 10px; }
+.prcard .hd .stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.prcard .ref { font: 500 12px/1 var(--mesa-mono); color: var(--mesa-ink-3); }
+.prcard .ttl { font: 600 15px/1.3 var(--mesa-font); overflow-wrap: anywhere; }
+.prcard .nx { display: flex; align-items: baseline; gap: 8px; }
+.prcard .nx .st { font: 500 13.5px/1.35 var(--mesa-font); min-width: 0; overflow-wrap: anywhere; flex: 1; }
+.st.t-now { color: var(--mesa-live-ink); } .st.t-wait { color: var(--mesa-turn-ink); } .st.t-stop { color: var(--mesa-danger-ink); } .st.t-idle { color: var(--mesa-ink-2); } .st.t-done { color: var(--mesa-ok-ink); }
+.queue-box { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; border: 1px dashed var(--mesa-line-strong); }
+.queue-box .qi { font-size: 14px; color: var(--mesa-ink-2); overflow-wrap: anywhere; }
+.queue-box a.qi { text-decoration: none; display: flex; gap: 8px; align-items: center; min-height: 44px; }
+.merged-list { margin: 0; padding: 0 14px; list-style: none; background: var(--mesa-surface); border: 1px solid var(--mesa-line); border-radius: 14px; }
+.merged-list li { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+.merged-list li + li { border-top: 1px solid var(--mesa-line); }
+.merged-list .tx { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.merged-list a.tx { text-decoration: none; display: block; line-height: 44px; }
+.board-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid var(--mesa-line); background: var(--mesa-surface); }
+.board { min-width: 1080px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.col { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px; min-height: 220px; min-width: 0; }
+.col + .col { border-left: 1px solid var(--mesa-line); }
+.col.you { background: var(--mesa-turn-bg); }
+.col-h { display: flex; align-items: baseline; gap: 6px; font: 600 11px/1 var(--mesa-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mesa-ink-3); }
+.col-h span { font-weight: 500; letter-spacing: 0; }
+.col-empty { font: 400 12px/1.4 var(--mesa-mono); color: var(--mesa-ink-3); }
+.col-skip { font: 500 11px/1.4 var(--mesa-mono); color: var(--mesa-ink-3); }
+.kcard { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 10px; text-decoration: none; color: var(--mesa-ink); background: var(--mesa-bg); box-shadow: inset 0 0 0 1px var(--mesa-line); min-width: 0; }
+.kcard.you { box-shadow: inset 0 0 0 1.5px var(--mesa-turn); }
+.kcard.stop { box-shadow: inset 0 0 0 1.5px var(--mesa-danger); }
+.kcard.done { background: transparent; }
+.kcard .hd { display: flex; align-items: center; gap: 6px; }
+.kcard .ref { flex: 1; font: 500 12px/1 var(--mesa-mono); color: var(--mesa-ink-3); }
+.kcard .ttl { font: 600 13.5px/1.3 var(--mesa-font); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.kcard .st { font: 600 12px/1.35 var(--mesa-font); overflow-wrap: anywhere; }
+.kcard .chip { font-size: 10.5px; padding: 4px 6px; border-radius: 5px; }
+
+/* feed */
+.feed { margin: 0; padding: 0 14px; list-style: none; background: var(--mesa-surface); border: 1px solid var(--mesa-line); border-radius: 14px; }
+.feed > li + li { border-top: 1px solid var(--mesa-line); }
+.ev { display: grid; grid-template-columns: 42px 24px minmax(0, 1fr); gap: 10px; align-items: start; padding: 11px 0; text-decoration: none; color: var(--mesa-ink); }
+a.ev { min-height: 44px; }
+.ev time { font: 500 12px/1.6 var(--mesa-mono); color: var(--mesa-ink-3); font-variant-numeric: tabular-nums; }
+.ev .tag { width: 24px; height: 24px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font: 600 12px/1 var(--mesa-mono); }
+.ev .stack { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ev .tt { font: 500 14px/1.4 var(--mesa-font); overflow-wrap: anywhere; }
+.ev .mt { font: 400 12px/1.4 var(--mesa-mono); color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.g-ok { background: var(--mesa-surface-2); color: var(--mesa-ok-ink); }
+.g-merged { background: var(--mesa-ok-bg); color: var(--mesa-ok-ink); }
+.g-changes { background: var(--mesa-surface-2); color: var(--mesa-danger-ink); }
+.g-park { background: var(--mesa-danger-bg); color: var(--mesa-danger-ink); }
+.g-live { background: var(--mesa-live-bg); color: var(--mesa-live-ink); }
+.g-turn { background: var(--mesa-turn-bg); color: var(--mesa-turn-ink); }
+.g-plain { background: var(--mesa-surface-2); color: var(--mesa-ink-2); }
+.g-wait { background: var(--mesa-surface); color: var(--mesa-ink-3); box-shadow: inset 0 0 0 1px var(--mesa-line-strong); }
+
+/* timeline */
+.tl { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.tl > li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; }
+.tl .rail { display: flex; flex-direction: column; align-items: center; }
+.tl .node { flex: none; width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font: 600 13px/1 var(--mesa-mono); box-shadow: inset 0 0 0 1px var(--mesa-line-strong); }
+.tl .line { flex: 1; width: 2px; min-height: 12px; background: var(--mesa-line); }
+.tl > li:last-child .line { background: transparent; }
+.tl .body { padding-bottom: 18px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tl .hdr { display: flex; align-items: baseline; gap: 8px; }
+.tl .ttl { flex: 1; font: 600 15px/1.35 var(--mesa-font); overflow-wrap: anywhere; }
+.tl .mt { font: 400 12px/1.45 var(--mesa-mono); color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.n-park { background: var(--mesa-danger-bg); color: var(--mesa-danger-ink); }
+.n-changes { background: var(--mesa-surface); color: var(--mesa-danger-ink); }
+.n-ok { background: var(--mesa-ok-bg); color: var(--mesa-ok-ink); }
+.n-plain { background: var(--mesa-surface); color: var(--mesa-ink-2); }
+.n-live { background: var(--mesa-live-bg); color: var(--mesa-live-ink); }
+.n-fail { background: var(--mesa-surface); color: var(--mesa-danger-ink); }
+.n-wait { background: var(--mesa-surface); color: var(--mesa-ink-3); }
+.findings { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.findings li { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--mesa-surface); border: 1px solid var(--mesa-line); min-width: 0; }
+.findings li.open { border-color: transparent; box-shadow: inset 0 0 0 1.5px var(--mesa-danger); }
+.findings li.fixed { opacity: 0.85; }
+.findings .wh { font: 500 11.5px/1.3 var(--mesa-mono); color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.findings li.open .wh { color: var(--mesa-danger-ink); }
+.findings .ft { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.tl.desk > li { grid-template-columns: 76px 30px minmax(0, 1fr); }
+.tl.desk time { font: 500 12.5px/30px var(--mesa-mono); color: var(--mesa-ink-3); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tl.desk .node { width: 30px; height: 30px; }
+.tl.desk .body { padding: 4px 0 18px; gap: 6px; }
+.tl.desk .ttl { font-size: 15.5px; }
+.tl.desk .findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); margin-top: 2px; }
+.tl.desk .findings li { padding: 10px 12px; border-radius: 10px; }
+.ask { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--mesa-line); }
+.ask b { font: 600 15px/1.3 var(--mesa-font); }
+.ask p { font-size: 14px; color: var(--mesa-ink-2); overflow-wrap: anywhere; }
+.facts > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-top: 1px solid var(--mesa-line); }
+.facts .k { font-size: 13px; color: var(--mesa-ink-3); }
+.facts .v { font: 500 13px/1.4 var(--mesa-mono); overflow-wrap: anywhere; }
+.stand { border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; background: var(--mesa-surface-2); }
+.stand.danger { background: var(--mesa-danger-bg); }
+.stand.turn { background: var(--mesa-turn-bg); }
+.stand p { font: 500 16px/1.4 var(--mesa-font); overflow-wrap: anywhere; }
+
+/* decision mode */
+.dm-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; font: 500 12px/1.4 var(--mesa-mono); color: var(--mesa-ink-3); }
+.dm-meta .lead { color: var(--mesa-turn-ink); font-weight: 600; }
+.dm-q { font: 650 24px/1.2 var(--mesa-font); letter-spacing: -0.02em; text-wrap: pretty; overflow-wrap: anywhere; }
+.opts { margin: 4px 0 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.opts legend { padding: 0 0 8px; }
+.opt { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; padding: 14px; border-radius: 12px; background: var(--mesa-surface);
+  color: var(--mesa-ink); cursor: pointer; border: 1px solid var(--mesa-line); min-height: 44px; }
+.opt[aria-pressed="true"] { border-color: var(--mesa-ink); box-shadow: inset 0 0 0 1px var(--mesa-ink); }
+.opt .key { flex: none; width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font: 600 14px/1 var(--mesa-mono);
+  background: var(--mesa-surface-2); color: var(--mesa-ink); box-shadow: inset 0 0 0 1px var(--mesa-line-strong); }
+.opt[aria-pressed="true"] .key { background: var(--mesa-ink); color: var(--mesa-on-ink); box-shadow: none; }
+.opt .stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.opt .ot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.opt .ot b { font: 600 16px/1.3 var(--mesa-font); overflow-wrap: anywhere; }
+.opt .ob { font-size: 14px; line-height: 1.45; color: var(--mesa-ink-2); white-space: pre-line; overflow-wrap: anywhere; }
+.rec-chip { font: 600 11px/1 var(--mesa-mono); padding: 4px 7px; border-radius: 6px; background: var(--mesa-turn-bg); color: var(--mesa-turn-ink); white-space: nowrap; }
+.whybox { background: var(--mesa-surface-2); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.whybox .wt { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.dots { display: grid; gap: 4px; }
+.dots i { display: block; height: 4px; border-radius: 2px; background: var(--mesa-line); }
+.dots i.past { background: var(--mesa-ink-3); } .dots i.cur { background: var(--mesa-ink); }
+.dm-actions { position: sticky; bottom: 0; margin-top: 18px; padding: 12px 16px max(16px, env(safe-area-inset-bottom)); background: var(--mesa-bg); border-top: 1px solid var(--mesa-line); display: flex; flex-direction: column; gap: 8px; z-index: 5; }
+.brief { margin: 0; max-height: 300px; overflow: auto; padding: 14px; border-radius: 10px; background: var(--mesa-surface-2); border: 1px solid var(--mesa-line); font: 400 12.5px/1.55 var(--mesa-mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--mesa-ink); user-select: text; -webkit-user-select: text; }
+.check { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; font-size: 14px; color: var(--mesa-ink-2); cursor: pointer; }
+.check input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--mesa-ink); flex: none; }
+
+/* sheets (phone bottom sheet; centred dialog on desktop) */
+.scrim { position: fixed; inset: 0; z-index: 40; background: var(--mesa-scrim); display: flex; flex-direction: column; justify-content: flex-end; }
+.sheet { background: var(--mesa-surface); border-radius: 20px 20px 0 0; padding: 10px 16px max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 14px; max-height: 92vh; overflow: auto; }
+.sheet .grab { align-self: center; width: 40px; height: 5px; border-radius: 3px; background: var(--mesa-line-strong); flex: none; }
+.sheet h2 { flex: 1; font: 650 20px/1.2 var(--mesa-font); letter-spacing: -0.01em; }
+@media (min-width: 1024px) {
+  .scrim { justify-content: center; align-items: center; padding: 24px; }
+  .sheet { border-radius: 16px; max-width: 600px; width: 100%; padding: 20px 22px; }
+  .sheet .grab { display: none; }
+}
+
+/* phone shell */
+.ph { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+.ph.sub { padding-bottom: 0; }
+.ph-in { max-width: 720px; margin: 0 auto; }
+.gut { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.ph-head { display: flex; align-items: center; gap: 10px; padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: 10px; }
+.brand { font: 700 18px/1 var(--mesa-font); letter-spacing: -0.02em; }
+.brand-k { font: 500 11px/1 var(--mesa-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mesa-ink-3); }
+.stackv { display: flex; flex-direction: column; }
+.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); background: var(--mesa-surface);
+  border-top: 1px solid var(--mesa-line); padding: 4px max(4px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left)); }
+.tab { position: relative; min-height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 4px;
+  text-decoration: none; color: var(--mesa-ink-3); font: 500 11px/1 var(--mesa-font); }
+.tab[aria-current="page"] { color: var(--mesa-ink); font-weight: 600; }
+.tab:hover { color: var(--mesa-ink); }
+.tab .badge { position: absolute; top: 3px; left: calc(50% + 5px); }
+.sub-head { display: flex; align-items: center; gap: 4px; padding: max(12px, env(safe-area-inset-top)) 8px 4px; }
+.back { display: inline-flex; align-items: center; gap: 2px; min-height: 44px; padding: 0 10px 0 4px; border-radius: 10px; text-decoration: none; color: var(--mesa-ink); font: 600 15px/1 var(--mesa-font); }
+.gh-ref { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border-radius: 10px; text-decoration: none; color: var(--mesa-ink-2); font: 500 13px/1 var(--mesa-mono); }
+
+/* desktop shell */
+.dk-top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; min-height: 64px; padding: 10px 24px; border-bottom: 1px solid var(--mesa-line); background: var(--mesa-surface); }
+.dk-top .brand { font-size: 19px; }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.dk-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; padding: 24px; max-width: 1440px; width: 100%; margin: 0 auto; }
+.dk-body.focus { gap: 32px; max-width: 1320px; padding: 28px 24px; }
+.dk-body.focus.dm { max-width: 1240px; padding: 40px 24px; }
+.rail { flex: 0 0 216px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 16px; }
+.ri { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; border-radius: 10px; text-decoration: none; color: var(--mesa-ink-2); font: 500 14.5px/1 var(--mesa-font); }
+.ri[aria-current="page"] { background: var(--mesa-surface); box-shadow: inset 0 0 0 1px var(--mesa-line); color: var(--mesa-ink); font-weight: 600; }
+.ri.sub { padding-left: 41px; font-size: 14px; }
+.ri.repo { font: 500 14px/1 var(--mesa-mono); }
+.ri .n { font: 500 12px/1 var(--mesa-mono); }
+.rail-h { margin: 22px 12px 6px; }
+.dk-main { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px; max-width: 780px; }
+.dk-main.wide { max-width: none; flex-basis: 760px; gap: 22px; }
+.dk-main.focus { flex: 999 1 640px; max-width: none; gap: 18px; }
+.dk-aside { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.side-card { background: var(--mesa-surface); border: 1px solid var(--mesa-line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.side-card h2 { font: 600 16px/1.2 var(--mesa-font); }
+.side-card .hrow { display: flex; align-items: baseline; gap: 8px; padding-bottom: 6px; }
+.side-card .sess .eng { padding-left: 15px; }
+.mini-tank { display: flex; flex-direction: column; gap: 6px; }
+.mini-tank .hr { display: flex; align-items: baseline; gap: 8px; }
+.mini-tank .hr span:first-child { flex: 1; font-weight: 600; }
+.mini-tank .hr span:last-child { font: 600 14px/1 var(--mesa-mono); }
+.meter { height: 10px; border-radius: 5px; background: var(--mesa-surface-2); box-shadow: inset 0 0 0 1px var(--mesa-line); overflow: hidden; display: flex; }
+.meter i { display: block; height: 100%; border-radius: 5px; background: var(--mesa-ok); }
+.meter i.low { background: var(--mesa-danger); }
+.meter.unknown { background: transparent; box-shadow: none; border: 1px dashed var(--mesa-line-strong); }
+.meter.sm { height: 8px; border-radius: 4px; box-shadow: none; }
+.big-num { font: 650 44px/1 var(--mesa-font); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.tierbar { display: grid; grid-template-columns: 34px minmax(0, 1fr) 44px; align-items: center; gap: 10px; }
+.tierbar .chip { text-align: center; padding: 5px 0; }
+.tierbar .tb { height: 8px; border-radius: 4px; background: var(--mesa-surface-2); overflow: hidden; display: flex; }
+.tierbar .tb i { display: block; background: var(--mesa-ink-2); border-radius: 4px; }
+.tierbar .v { font: 600 14px/1 var(--mesa-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.theme-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.theme-row .seg button { min-width: 64px; }
 </style>
-
-<div class="shell">
-  <div class="top">
-    <div class="brand"><b>vigia</b><span>Mesa</span></div>
-    <div class="pulse" id="pulse"></div>
-  </div>
-  <div class="sample" id="sample" hidden></div>
-
-  <div class="grid">
-    <section class="panel" data-tab="turn" id="panel-turn" aria-labelledby="h-turn"></section>
-    <div class="panel" style="gap:12px">
-      <div class="deskTabs" role="tablist" aria-label="Views">
-        <button type="button" role="tab" id="d-factory" data-go="factory" aria-selected="true">Factory</button>
-        <button type="button" role="tab" id="d-feed" data-go="feed" aria-selected="false">Feed</button>
-        <button type="button" role="tab" id="d-fuel" data-go="fuel" aria-selected="false">Fuel</button>
-      </div>
-      <section class="panel" data-tab="factory" id="panel-factory"></section>
-      <section class="panel" data-tab="feed" id="panel-feed" hidden></section>
-      <section class="panel" data-tab="fuel" id="panel-fuel" hidden></section>
-    </div>
-  </div>
-  <footer id="foot"></footer>
-</div>
-
-<nav class="tabbar" role="tablist" aria-label="Views">
-  <button type="button" role="tab" id="m-turn" data-go="turn" aria-selected="true">Your turn<span class="badge" id="badge"></span></button>
-  <button type="button" role="tab" id="m-factory" data-go="factory" aria-selected="false">Factory</button>
-  <button type="button" role="tab" id="m-feed" data-go="feed" aria-selected="false">Feed</button>
-  <button type="button" role="tab" id="m-fuel" data-go="fuel" aria-selected="false">Fuel</button>
-</nav>
-
+</head>
+<body>
+<div id="app" aria-live="off"></div>
+<noscript><p style="padding:16px">The Mesa needs JavaScript to read vigia's state.</p></noscript>
 <script id="mesa-sample" type="application/json">{{SAMPLE}}</script>
 <script>
 (function () {
   "use strict";
+
+  /* ---------- constants ---------- */
   var STEPS = ["build", "ci", "gate", "review", "human", "merge"];
   var STEP_LABEL = { build: "Build", ci: "CI", gate: "Gate", review: "Review", human: "Human", merge: "Merge" };
-
-  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-  function ago(iso, now) {
-    if (!iso) return "never";
-    var s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-    if (s < 90) return s + " s ago"; if (s < 5400) return Math.round(s / 60) + " min ago";
-    if (s < 129600) return Math.round(s / 3600) + " h ago"; return Math.round(s / 86400) + " d ago";
-  }
-  function hhmm(iso) { var d = new Date(iso); return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
-  function until(iso, now) {
-    if (!iso) return ""; var h = Math.round((Date.parse(iso) - now) / 3600000);
-    return h > 36 ? "resets in " + Math.round(h / 24) + " days" : "resets in " + Math.max(h, 0) + " h";
-  }
-
+  var STEP_GLYPH = { now: " ●", wait: " ◆", stop: " ■" };
+  // The five places, the same on both layouts. Phone tab order; the desktop rail puts Captures before Factory.
+  var PLACES = [
+    { id: "turn", label: "Your turn", icon: "turn" },
+    { id: "factory", label: "Factory", icon: "factory" },
+    { id: "captures", label: "Captures", icon: "captures" },
+    { id: "feed", label: "Feed", icon: "feed" },
+    { id: "fuel", label: "Fuel", icon: "fuel" }
+  ];
+  var PLACE_IDS = PLACES.map(function (p) { return p.id; });
+  var NB = " ";
+  var POLL_MS = 15000;
+  var CLAUDE_NEW = "https://claude.ai/new";
+  var NAME = /^[A-Za-z0-9_.-]+$/;
+  var REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+  // The only external links the page builds: GitHub pages of a repo, an issue or a PR, and a new Claude chat.
+  var GH = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\/(pull|issues)\/\d{1,9}(\/files)?)?(\/issues\?q=[A-Za-z0-9%._+:-]*)?(#new_comment_field)?$/;
+  var DESK = window.matchMedia("(min-width: 1024px)");
+  // The labels a person adds or removes. vigia.toml can rename them, so every instruction names the repo's own
+  // (r.labels); these defaults are only for a state that does not say.
   var LABELS = { ready: "vigia:ready", parked: "vigia:parked", human_ok: "vigia:human-ok" };
-  // The repo's own label names: vigia.toml can rename them, and a card must name the label that works
-  function label(c, name) { return (c.labels || {})[name] || LABELS[name]; }
+  // The lists read from GitHub, and what each is called when it could not be read (null: unknown, never empty).
+  var GH_LISTS = [["prs", "pull requests"], ["queue", "the queue"], ["parked_issues", "parked tickets"], ["refused", "refused tickets"],
+    ["human_tasks", "human tasks"], ["proposed", "proposed tickets"], ["decisions", "decisions"]];
 
-  function turnCards(state) {
-    var cards = [];
-    state.repos.forEach(function (r) {
-      // A repo vigia could not read has unknown work, not none: say so instead of "Nothing needs you"
-      if (r.error) cards.push({ kind: "unavailable", repo: r.repo, error: r.error });
-      // Part of a repo could not be read: those lists are incomplete, so this is a card too, never "Nothing needs you"
-      if (r.unread && r.unread.length) cards.push({ kind: "partial", repo: r.repo, unread: r.unread });
-      (r.prs || []).forEach(function (p) {
-        if (p.next === "wait" && p.waiting_for === "human") {
-          cards.push({ kind: "t2", repo: r.repo, labels: r.labels, pr: p });
-        } else if (p.parked) {
-          cards.push({ kind: "parked", repo: r.repo, labels: r.labels, pr: p });
-        }
-      });
-      (r.parked_issues || []).forEach(function (i) { cards.push({ kind: "parked-issue", repo: r.repo, labels: r.labels, issue: i }); });
-      (r.refused || []).forEach(function (i) { cards.push({ kind: "refused", repo: r.repo, issue: i }); });
-      (r.human_tasks || []).forEach(function (i) { cards.push({ kind: "task", repo: r.repo, issue: i }); });
-      (r.proposed || []).forEach(function (i) { cards.push({ kind: "proposed", repo: r.repo, labels: r.labels, issue: i }); });
-    });
-    return cards;
+  /* ---------- this device: every storage access may fail, and the page works without it ---------- */
+  var store = {
+    get: function (k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { window.localStorage.setItem(k, v); } catch (e) {} },
+    del: function (k) { try { window.localStorage.removeItem(k); } catch (e) {} }
+  };
+
+  /* ---------- in-memory view state (never sent anywhere) ---------- */
+  var S = {
+    state: null, error: null, lastOk: null, sample: false,
+    route: null, lastPlace: "turn",
+    picks: {}, sheet: null, flash: null, manual: null,
+    pr: {}, openFindings: {}, feedFilter: "all", dirty: false
+  };
+
+  /* ---------- DOM building: text always goes in as text nodes, never as markup ---------- */
+  function okHref(v) {
+    return typeof v === "string" && (/^#\/[A-Za-z0-9_.\/-]*$/.test(v) || GH.test(v) || v === CLAUDE_NEW);
   }
-
-  function renderTurn(state) {
-    var cards = turnCards(state), html = ['<h2 id="h-turn">Your turn' + (cards.length ? ' <span class="count">' + cards.length + "</span>" : "") + "</h2>"];
-    html.push('<p class="hint">Only what needs a person. Everything else runs without you.</p>');
-    if (!cards.length) html.push('<div class="empty">Nothing needs you. The factory is working through its queue.</div>');
-    cards.forEach(function (c) {
-      if (c.kind === "unavailable") {
-        html.push('<article class="card unavailable"><span class="kicker">Cannot read · ' + esc(c.repo) + "</span>" +
-          '<div class="why">' + esc(c.error) + "</div>" +
-          '<p class="hint">Its pull requests and tickets are unknown until vigia can read GitHub again: check <code>gh auth status</code> where vigia runs.</p></article>');
-      } else if (c.kind === "partial") {
-        var parts = c.unread.slice();
-        html.push('<article class="card unavailable"><span class="kicker">Not all read · ' + esc(c.repo) + "</span>" +
-          '<div class="why">Could not read: ' + esc(parts.join("; ")) + "</div>" +
-          '<p class="hint">This list may be missing things that need you. Check the issues on GitHub, or <code>gh auth status</code> where vigia runs.</p></article>');
-      } else if (c.kind === "parked-issue") {
-        html.push('<article class="card parked"><span class="kicker">Build failed · ' + esc(c.repo) + "</span>" +
-          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
-          '<div class="why">' + esc(c.issue.reason) + "</div>" +
-          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Open the ticket</a></div>' +
-          '<p class="hint">To resume: deal with the cause, remove <code>' + esc(label(c, "parked")) + '</code> and add <code>' + esc(label(c, "ready")) + '</code>.</p></article>');
-      } else if (c.kind === "t2") {
-        var p = c.pr, ev = (p.evidence || []).map(function (e) { return "<li>" + esc(e) + "</li>"; }).join("");
-        html.push('<article class="card t2"><span class="kicker">Approve a T2 change · ' + esc(c.repo) + "</span>" +
-          '<span class="title">#' + p.number + " " + esc(p.title) + "</span>" +
-          '<span class="meta">head ' + esc(p.head.slice(0, 8)) + " · built by " + esc(p.built_by || "?") + "</span>" +
-          '<ul class="evidence">' + ev + "</ul>" +
-          '<p class="hint">Adding <code>' + esc(label(c, "human_ok")) + '</code> approves this exact head. Any new push needs a new label.</p>' +
-          '<div class="actions"><a class="btn primary" href="' + esc(p.url) + '/files" target="_blank" rel="noopener">Read the diff</a>' +
-          '<a class="btn" href="' + esc(p.url) + '" target="_blank" rel="noopener">Add the label on GitHub</a></div></article>');
-      } else if (c.kind === "parked") {
-        var q = c.pr;
-        html.push('<article class="card parked"><span class="kicker">Parked · ' + esc(c.repo) + "</span>" +
-          '<span class="title">#' + q.number + " " + esc(q.title) + "</span>" +
-          '<div class="why">' + esc(q.reason) + "</div>" +
-          '<p class="hint">' + esc(q.tried || "") + "</p>" +
-          '<div class="actions"><a class="btn primary" href="' + esc(q.url) + '" target="_blank" rel="noopener">Open the PR</a>' +
-          (q.issue_url ? '<a class="btn" href="' + esc(q.issue_url) + '" target="_blank" rel="noopener">Edit the ticket</a>' : "") +
-          "</div><p class=\"hint\">To resume: deal with the cause, then remove <code>" + esc(label(c, "parked")) + "</code>. The counters start again.</p></article>");
-      } else if (c.kind === "refused") {
-        html.push('<article class="card refused"><span class="kicker">Ticket not launchable · ' + esc(c.repo) + "</span>" +
-          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
-          '<div class="why">Missing: ' + esc((c.issue.missing || []).join("; ")) + "</div>" +
-          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Complete the ticket</a></div></article>');
-      } else if (c.kind === "proposed") {
-        html.push('<article class="card refused"><span class="kicker">Planned ticket to ratify · ' + esc(c.repo) + "</span>" +
-          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + ' <span class="tier ' + esc(c.issue.tier) + '">' + esc(c.issue.tier) + "</span></span>" +
-          '<p class="hint">Read it; if it says the right thing, swap <code>vigia:proposed</code> for <code>' + esc(label(c, "ready")) + '</code>.</p>' +
-          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Read the ticket</a></div></article>');
-      } else {
-        html.push('<article class="card"><span class="kicker">Only you can do this · ' + esc(c.repo) + "</span>" +
-          '<span class="title">#' + c.issue.number + " " + esc(c.issue.title) + "</span>" +
-          '<div class="actions"><a class="btn primary" href="' + esc(c.issue.url) + '" target="_blank" rel="noopener">Open</a></div></article>');
+  function h(tag, a) {
+    var el = document.createElement(tag), k, v;
+    if (a) {
+      for (k in a) {
+        if (!Object.prototype.hasOwnProperty.call(a, k)) continue;
+        v = a[k];
+        if (v == null || v === false) continue;
+        if (k === "class") el.className = v;
+        else if (k === "on") { for (var ev in v) el.addEventListener(ev, v[ev]); }
+        else if (k === "href") { if (okHref(v)) el.setAttribute("href", v); }
+        else el.setAttribute(k, v === true ? "" : String(v));
       }
-    });
-    document.getElementById("panel-turn").innerHTML = html.join("");
-    var badge = document.getElementById("badge"); badge.textContent = cards.length ? String(cards.length) : "";
-  }
-
-  function stepClass(p, step) {
-    var s = (p.pipeline || {})[step] || "todo";
-    return { done: "done", now: "now", wait: "wait", stop: "stop", skip: "skip", todo: "" }[s] || "";
-  }
-  function renderFactory(state, now) {
-    var html = ["<h2>Factory</h2>"];
-    state.repos.forEach(function (r) {
-      // `vigia watch --slots N` can run more sessions than vigia.toml says: never show more busy than total
-      var busy = r.jobs.length, total = Math.max(r.slots, busy), slots = "";
-      for (var i = 0; i < total; i++) slots += '<i class="slot' + (i < busy ? " busy" : "") + '"></i>';
-      html.push('<div class="repo"><div class="repo-head"><h3>' + esc(r.repo) + '</h3><span class="slots" title="engine sessions">' +
-        slots + "&nbsp;" + busy + "/" + total + " sessions</span></div>");
-      if (r.prs === null) html.push('<div class="empty">Pull requests unknown: vigia cannot read this repo.</div>');
-      else if (!r.prs.length) html.push('<div class="empty">No open pull requests.</div>');
-      (r.prs || []).forEach(function (p) {
-        var steps = STEPS.map(function (s) { return '<span class="step ' + stepClass(p, s) + '">' + STEP_LABEL[s] + "</span>"; }).join("");
-        var job = r.jobs.filter(function (j) { return j.number === p.number; })[0];
-        var next = job ? '<span class="running">' + esc(job.action) + " running · " + esc(ago(job.since, now).replace(" ago", "")) + "</span>"
-          : "<b>" + esc(p.next) + "</b> · " + esc(p.reason);
-        html.push('<article class="pr"><div class="pr-top"><a class="title" href="' + esc(p.url) + '" target="_blank" rel="noopener">#' +
-          p.number + " " + esc(p.title) + '</a><span class="tier ' + esc(p.tier) + '">' + esc(p.tier) + "</span></div>" +
-          '<div class="steps">' + steps + '</div><div class="next">' + next + "</div></article>");
-      });
-      if (r.queue && r.queue.length) {
-        html.push('<p class="hint">Queue · ' + r.queue.length + ' ready</p><div class="queue">' + r.queue.map(function (i) {
-          return '<a href="' + esc(i.url) + '" target="_blank" rel="noopener"><span class="tier ' + esc(i.tier) + '">' + esc(i.tier) +
-            "</span><span>#" + i.number + " " + esc(i.title) + "</span></a>"; }).join("") + "</div>");
-      }
-      html.push("</div>");
-    });
-    document.getElementById("panel-factory").innerHTML = html.join("");
-  }
-
-  function renderFeed(state) {
-    var html = ['<h2>Feed</h2><ul class="feed">'];
-    state.feed.forEach(function (e) {
-      var tag = { merged: "merged", parked: "parked", build_failed: "parked", verdict: "verdict", pr_opened: "built", pushed: "built" }[e.event] || "built";
-      var label = { merged: "merged", parked: "parked", build_failed: "build failed", verdict: e.verdict, pr_opened: "built", pushed: "fix" }[e.event] || e.event;
-      var p1 = e.p1 ? '<span class="tag p1">' + e.p1 + " P1</span>" : "";
-      html.push('<li><time datetime="' + esc(e.ts) + '">' + esc(hhmm(e.ts)) + '</time><span class="ev"><span class="tag ' + tag + '">' +
-        esc(label) + "</span>" + p1 + esc(e.text) + "</span></li>");
-    });
-    html.push("</ul>");
-    document.getElementById("panel-feed").innerHTML = html.join("");
-  }
-
-  function renderFuel(state, now) {
-    var f = state.fuel || {}, html = ['<h2>Fuel</h2><div class="fuel">'];
-    function tank(name, t) {
-      if (!t) return '<div class="tank"><div class="tank-head"><b>' + name + '</b><span>unknown</span></div>' +
-        '<p class="hint">Claude Code keeps no quota file; read it with <code>/usage</code> in Claude Code.</p></div>';
-      var left = Math.max(0, 100 - t.used_percent), cls = left < 20 ? "low" : left < 45 ? "mid" : "";
-      return '<div class="tank"><div class="tank-head"><b>' + name + '</b><span>' + left.toFixed(0) + "% left this week</span></div>" +
-        '<div class="bar"><i class="' + cls + '" style="width:' + left + '%"></i></div><p class="hint">' + esc(until(t.resets_at, now)) +
-        " · read " + esc(ago(t.observed, now)) + "</p></div>";
     }
-    html.push(tank("Codex", f.codex), tank("Claude", f.claude));
-    var s = state.stats || {};
-    html.push('<div class="stats">' +
-      '<div class="stat"><b>' + (s.merged_7d || 0) + "</b><span>merged in 7 days</span></div>" +
-      '<div class="stat"><b>' + (s.p1_7d || 0) + "</b><span>P1 caught by the gate</span></div>" +
-      '<div class="stat"><b>' + (s.median_minutes || "–") + "</b><span>median minutes, PR opened to merged</span></div>" +
-      '<div class="stat"><b>' + (s.sessions_today || 0) + "</b><span>engine sessions today</span></div></div></div>");
-    document.getElementById("panel-fuel").innerHTML = html.join("");
+    for (var i = 2; i < arguments.length; i++) add(el, arguments[i]);
+    return el;
   }
-
-  function renderPulse(state, now) {
-    var h = state.health || {}, age = h.last_tick ? (now - Date.parse(h.last_tick)) / 1000 : Infinity;
-    var dot = age < 600 ? "" : age < 3600 ? " late" : " dead";
-    var busy = state.repos.reduce(function (n, r) { return n + r.jobs.length; }, 0);
-    // A workspace shares one limit between its repos; on its own, a repo has its own watch.slots
-    var slots = state.slots != null ? Math.max(state.slots, busy)
-      : state.repos.reduce(function (n, r) { return n + Math.max(r.slots, r.jobs.length); }, 0);
-    document.getElementById("pulse").innerHTML =
-      '<span class="pill"><i class="dot' + dot + '"></i>watcher <b>' + esc(ago(h.last_tick, now)) + "</b></span>" +
-      '<span class="pill">sessions <b>' + busy + "/" + slots + "</b></span>" +
-      '<span class="pill">errors 24 h <b>' + (h.errors_24h || 0) + "</b></span>";
-    document.getElementById("foot").textContent = "Read-only. Every action links to GitHub, where your login decides. Generated " + hhmm(state.generated) + ".";
+  function add(el, c) {
+    if (c == null || c === false || c === "") return;
+    if (Array.isArray(c)) { for (var i = 0; i < c.length; i++) add(el, c[i]); return; }
+    el.appendChild(typeof c === "object" ? c : document.createTextNode(String(c)));
   }
-
-  function render(state) {
-    var now = state.sample ? Date.parse(state.generated) : Date.now();
-    renderPulse(state, now); renderTurn(state); renderFactory(state, now); renderFeed(state); renderFuel(state, now);
-    var note = document.getElementById("sample");
-    if (state.sample) { note.hidden = false; note.textContent = state.sample; }
-  }
-
-  var tabs = document.querySelectorAll("[data-go]");
-  function go(name) {
-    var wide = window.matchMedia("(min-width: 960px)").matches;
-    if (wide && name === "turn") name = "factory";
-    document.querySelectorAll(".panel[data-tab]").forEach(function (p) {
-      p.hidden = p.dataset.tab !== name && !(wide && p.dataset.tab === "turn");
+  var SVG = "http://www.w3.org/2000/svg";
+  var ICONS = {
+    ne: [["path", { d: "M7 17 17 7M9 7h8v8" }]],
+    right: [["path", { d: "M5 12h14M13 6l6 6-6 6" }]],
+    chevR: [["path", { d: "m9 6 6 6-6 6" }]],
+    chevL: [["path", { d: "m15 6-6 6 6 6" }]],
+    close: [["path", { d: "M6 6l12 12M18 6 6 18" }]],
+    turn: [["path", { d: "M4 13h4.5l1.5 2.5h4l1.5-2.5H20" }], ["path", { d: "M5.5 5h13L20 13v6H4v-6z" }]],
+    factory: [["circle", { cx: 5, cy: 12, r: 2.2 }], ["circle", { cx: 12, cy: 12, r: 2.2 }], ["circle", { cx: 19, cy: 12, r: 2.2 }], ["path", { d: "M7.2 12h2.6M14.2 12h2.6" }]],
+    captures: [["rect", { x: 3.5, y: 5, width: 17, height: 14, rx: 2 }], ["path", { d: "M12 5v14" }]],
+    feed: [["path", { d: "M5 7h14M5 12h14M5 17h9" }]],
+    fuel: [["path", { d: "M4.5 16a7.5 7.5 0 1 1 15 0" }], ["path", { d: "m12 16 3.5-4.5" }]],
+    chat: [["path", { d: "M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z" }]],
+    lock: [["rect", { x: 5, y: 11, width: 14, height: 9, rx: 2 }], ["path", { d: "M8 11V8a4 4 0 0 1 8 0v3" }]]
+  };
+  function icon(name, size, width) {
+    var s = document.createElementNS(SVG, "svg");
+    var attrs = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": width || 2,
+      "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", focusable: "false" };
+    for (var k in attrs) s.setAttribute(k, attrs[k]);
+    ICONS[name].forEach(function (p) {
+      var e = document.createElementNS(SVG, p[0]);
+      for (var a in p[1]) e.setAttribute(a, p[1][a]);
+      s.appendChild(e);
     });
-    tabs.forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.go === name || (!wide && b.dataset.go === name))); });
-    try { localStorage.setItem("mesa-tab", name); } catch (e) {}
+    return s;
   }
-  tabs.forEach(function (b) { b.addEventListener("click", function () { go(b.dataset.go); }); });
+  function logo(size) {
+    var s = document.createElementNS(SVG, "svg");
+    s.setAttribute("width", size); s.setAttribute("height", size); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("aria-hidden", "true");
+    [["rect", { width: 24, height: 24, rx: 7, "class": "lg-a" }], ["path", { d: "M7 17.5 20 6.5v7z", "class": "lg-b" }], ["circle", { cx: 7, cy: 17.5, r: 2.6, "class": "lg-c" }]]
+      .forEach(function (p) { var e = document.createElementNS(SVG, p[0]); for (var a in p[1]) e.setAttribute(a, p[1][a]); s.appendChild(e); });
+    return s;
+  }
+  // A link that leaves the Mesa. Anything that is not a GitHub (or claude.ai/new) URL is shown, but not linked.
+  function ext(url, label, cls, on, key) {
+    if (!okHref(url)) return h("span", { "class": (cls || "") + " is-off", "aria-disabled": "true", title: "No GitHub link for this" }, label);
+    return h("a", { "class": cls, href: url, target: "_blank", rel: "noopener noreferrer", on: on, "data-k": key }, label, icon("ne", 14));
+  }
+  function nav(route, label, cls, key) { return h("a", { "class": cls, href: route, "data-k": key }, label); }
 
-  function load() {
-    var embedded = document.getElementById("mesa-sample").textContent.trim();
-    if (embedded && embedded.charAt(0) === "{") { render(JSON.parse(embedded)); return; }
-    fetch("/api/state", { cache: "no-store" }).then(function (r) { return r.json(); }).then(render)
-      .catch(function () { document.getElementById("pulse").innerHTML = '<span class="pill"><i class="dot dead"></i>Mesa cannot reach vigia</span>'; });
+  /* ---------- small data helpers ---------- */
+  function isInt(n) { return typeof n === "number" && isFinite(n) && n >= 0 && Math.floor(n) === n; }
+  function short(repo) { return String(repo || "").split("/").pop(); }
+  function sha7(s) { return String(s || "").slice(0, 7); }
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")); }
+  function repoUrl(repo, path) { return REPO.test(repo || "") ? "https://github.com/" + repo + (path || "") : null; }
+  function issueUrl(repo, n) { return isInt(n) ? repoUrl(repo, "/issues/" + n) : null; }
+  function pullUrl(repo, n) { return isInt(n) ? repoUrl(repo, "/pull/" + n) : null; }
+  function filesUrl(url) { return okHref(url) && /\/pull\/\d+$/.test(url) ? url + "/files" : null; }
+  function commentUrl(url) { return okHref(url) && /\/issues\/\d+$/.test(url) ? url + "#new_comment_field" : null; }
+  function numFromUrl(url) { var m = /\/(\d+)$/.exec(url || ""); return m ? Number(m[1]) : null; }
+  function prRoute(repo, n) { return REPO.test(repo || "") && isInt(n) ? "#/pr/" + repo + "/" + n : null; }
+  function decideRoute(repo, n) { return REPO.test(repo || "") && isInt(n) ? "#/decide/" + repo + "/" + n : "#/decide"; }
+  function tierCls(t) { return "chip " + (/^T[012]$/.test(t || "") ? "tier-" + t : "tier-x"); }
+  function tierChip(t) { return h("span", { "class": tierCls(t) }, t || "?"); }
+  function diffText(d) {
+    if (!d || !isInt(d.additions)) return null;
+    return "+" + d.additions + " −" + d.deletions + " · " + plural(d.files, "file");
   }
-  var saved = "turn"; try { saved = localStorage.getItem("mesa-tab") || "turn"; } catch (e) {}
-  go(saved); load();
-  if (!document.getElementById("mesa-sample").textContent.trim().startsWith("{")) setInterval(load, 15000);
+  function cap(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); }
+  function shortReason(r) { r = String(r || "").split(";")[0].trim(); return r.length > 110 ? r.slice(0, 107) + "…" : r; }
+  function model(builtBy) { return builtBy ? String(builtBy).split(" · ").pop() : null; }
+  function pct(n) { return Math.round(n) + NB + "%"; }
+
+  /* ---------- time: this device's clock and time zone ---------- */
+  function now() { return S.sample && S.state ? Date.parse(S.state.generated) : Date.now(); }
+  function ms(iso) { var t = Date.parse(iso || ""); return isNaN(t) ? null : t; }
+  function dur(d) {
+    var s = Math.max(0, Math.round(d / 1000));
+    if (s < 60) return s + " s";
+    var m = Math.round(s / 60);
+    if (m < 60) return m + " min";
+    var hh = Math.floor(m / 60), mm = m % 60;
+    if (hh < 24) return hh + " h" + (mm ? " " + mm + " min" : "");
+    var dd = Math.floor(hh / 24), rh = hh % 24;
+    return dd + " d" + (rh ? " " + rh + " h" : "");
+  }
+  function since(iso) { var t = ms(iso); return t == null ? null : dur(now() - t); }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  var DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function hhmm(iso) { var t = ms(iso); if (t == null) return ""; var d = new Date(t); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+  function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+  function dayTime(iso) {
+    var t = ms(iso); if (t == null) return "";
+    var d = new Date(t);
+    return sameDay(d, new Date(now())) ? hhmm(iso) : DAYS[d.getDay()] + " " + hhmm(iso);
+  }
+  function dayLong(t) { var d = new Date(t); return DAYS[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()]; }
+  function dueText(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || "").trim());
+    if (!m) return s ? "due " + s : null;
+    var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return "due " + DAYS[d.getDay()] + " " + d.getDate();
+  }
+  function resetsText(iso) {
+    var t = ms(iso); if (t == null) return null;
+    var d = new Date(t);
+    return "resets " + dayLong(t) + ", " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  function seconds(n) { var m = Math.round((n || 0) / 60); return m < 60 ? m + " min" : Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : ""); }
+  function bySince(a, b) { var x = ms(a.since), y = ms(b.since); if (x == null) return y == null ? 0 : 1; if (y == null) return -1; return x - y; }
+
+  /* ---------- reading the state ---------- */
+  function repos() { return (S.state && S.state.repos) || []; }
+  function repoOf(name) { return repos().filter(function (r) { return r.repo === name || short(r.repo) === name; })[0] || null; }
+  function prIn(r, n) { return r ? (r.prs || []).filter(function (p) { return p.number === n; })[0] || null : null; }
+  function queueIn(r, n) { return r ? (r.queue || []).filter(function (q) { return q.number === n; })[0] || null : null; }
+  function jobFor(r, n) { return r ? (r.jobs || []).filter(function (j) { return j.number === n && !j.issue; })[0] || null : null; }
+  function label(r, name) { return (r && r.labels && r.labels[name]) || LABELS[name]; }
+  function labelCode(r, name) { return h("code", null, label(r, name)); }
+  // What could not be read for a repo: the server's own list, plus any list that came back null without being named.
+  function unreadOf(r) {
+    var names = (r.unread || []).slice();
+    GH_LISTS.forEach(function (x) { if (r[x[0]] === null && !r.error && names.indexOf(x[1]) < 0) names.push(x[1]); });
+    return names;
+  }
+  function unknownRepos(key) { return repos().filter(function (r) { return r[key] === null; }); }
+  // A workspace shares one limit between its repos (state.slots); on its own, a repo has its own watch.slots.
+  function slotsTotal() {
+    var busy = busyTotal();
+    if (S.state && isInt(S.state.slots)) return Math.max(S.state.slots, busy);
+    return repos().reduce(function (n, r) { return n + Math.max(r.slots || 0, (r.jobs || []).length); }, 0);
+  }
+  function busyTotal() { return repos().reduce(function (n, r) { return n + (r.jobs || []).length; }, 0); }
+  function mergedToday() { var s = (S.state && S.state.stats) || {}; return isInt(s.merged_today) ? s.merged_today : null; }
+  function codexLeft() {
+    var c = S.state && S.state.fuel && S.state.fuel.codex;
+    if (!c || typeof c.used_percent !== "number") return null;
+    return Math.max(0, Math.min(100, 100 - c.used_percent));
+  }
+  function openDecisions() {
+    var out = [];
+    repos().forEach(function (r) {
+      (r.decisions || []).forEach(function (d) { if (!d.answered && !d.malformed) out.push({ r: r, d: d }); });
+    });
+    return out.sort(function (a, b) { return bySince(a.d, b.d); });
+  }
+  function talkingKey(r, d) { return "mesa.talking." + r.repo + "#" + d.number; }
+  // The issue's own Blocks: line, quoted as its text. vigia holds nothing back because of it.
+  function blocksText(d) {
+    var b = d.blocks || [];
+    return b.length ? "the issue says it blocks " + b.map(function (n) { return "#" + n; }).join(", ") : null;
+  }
+  function firstStep(p) {
+    var pl = p.pipeline || {};
+    for (var i = 0; i < STEPS.length; i++) if (pl[STEPS[i]] !== "done" && pl[STEPS[i]] !== "skip") return STEPS[i];
+    return "merge";
+  }
+  function actionLabel(a, tier) {
+    return { gate: "Gate", review: (tier && tier !== "?" ? tier + " review" : "Review"), fix: "Fix", build: "Build", update: "Base update", merge: "Merge", wait: "Wait", park: "Park" }[a] || cap(a);
+  }
+  function roleOf(job, tier) {
+    return { build: "builder", gate: "gate", review: (tier ? tier + " reviewer" : "reviewer"), fix: "fixer" }[job.action] || job.action;
+  }
+
+  /* ---------- the watcher: fresh < 1 min, slow < 5 min, then quiet ---------- */
+  function watcher() {
+    if (S.error && !S.state) return { kind: "down" };
+    if (S.error && !S.sample) return { kind: "down", at: S.lastOk };
+    var t = ms(S.state && S.state.health && S.state.health.last_tick);
+    if (t == null) return { kind: "quiet", never: true };
+    var age = now() - t;
+    if (age >= 60000) {
+      // With one slot the watcher runs each session inside its tick: a stale tick with a live session means busy, not gone.
+      // In a workspace, its shared limit decides that for every repo.
+      var ws = S.state && isInt(S.state.slots) ? S.state.slots : null, list = repos(), i, r;
+      for (i = 0; i < list.length; i++) {
+        r = list[i];
+        if ((ws != null ? ws : r.slots || 1) <= 1 && r.jobs && r.jobs.length) return { kind: "busy", age: age, at: t, job: r.jobs[0] };
+      }
+    }
+    return { kind: age < 60000 ? "fresh" : age < 300000 ? "slow" : "quiet", age: age, at: t };
+  }
+  function livePill(desk) {
+    var w = watcher();
+    if (w.kind === "down") return h("span", { "class": "pill quiet" }, "■ Mesa offline");
+    if (w.kind === "quiet") return h("span", { "class": "pill quiet" }, "■ watcher quiet · " + (w.never ? "no tick yet" : dur(w.age)));
+    if (w.kind === "busy") {
+      var what = w.job.action + (w.job.number != null ? " #" + w.job.number : "");
+      return h("span", { "class": "pill" }, h("span", { "class": "dot live pulse" }), (desk ? "watcher busy · " : "busy · ") + what);
+    }
+    var dot = h("span", { "class": "dot " + (w.kind === "fresh" ? "ok pulse" : "hollow") });
+    if (desk) return h("span", { "class": "pill" }, dot, "watcher ", h("b", null, dur(w.age) + " ago"));
+    return h("span", { "class": "pill" }, dot, (w.kind === "fresh" ? "live · " : "slow · ") + dur(w.age));
+  }
+  function banner() {
+    var w = watcher();
+    if (w.kind === "down") {
+      return h("div", { "class": "empty watcher", role: "alert" }, h("span", { "class": "ic danger", "aria-hidden": "true" }, "■"),
+        h("span", { "class": "tx" }, h("b", null, "The Mesa cannot reach vigia"),
+          h("span", null, (S.lastOk ? "Last answer at " + hhmm(new Date(S.lastOk).toISOString()) + ". " : "") + "What you see may be old. Is vigia mesa still running?")));
+    }
+    if (w.kind !== "quiet") return null;
+    return h("div", { "class": "empty watcher", role: "alert" }, h("span", { "class": "ic danger", "aria-hidden": "true" }, "■"),
+      h("span", { "class": "tx" },
+        h("b", null, w.never ? "The watcher has not written yet" : "The watcher has not written for " + dur(w.age)),
+        h("span", null, (w.never ? "" : "Last tick at " + dayTime(new Date(w.at).toISOString()) + ". ") + "What you see may be old. Is vigia watch still running?")));
+  }
+  function sampleNote() { return S.state && typeof S.state.sample === "string" ? h("div", { "class": "sample" }, S.state.sample) : null; }
+
+  /* ---------- clipboard: secure contexts only; otherwise the text is shown to copy by hand ---------- */
+  function copy(text, done) {
+    var cb = navigator.clipboard;
+    if (cb && window.isSecureContext && typeof cb.writeText === "function") {
+      try {
+        cb.writeText(text).then(function () { done(true); }, function () { done(false); });
+        return true;
+      } catch (e) { /* fall through */ }
+    }
+    done(false);
+    return false;
+  }
+  function manual(text, url, label) { S.manual = { text: text, url: url, label: label }; S.focusSheet = true; renderNow(); }
+  // A "copy, then open" link: the copy starts inside the click, the link opens normally. Without a clipboard the
+  // link does not open; the text is shown instead, with the same link under it.
+  function copyLink(url, label, text, flashKey, cls, doneLabel) {
+    var shown = S.flash === flashKey ? doneLabel : label;
+    return ext(url, shown, cls, {
+      click: function (e) {
+        var t = typeof text === "function" ? text() : text;
+        var started = copy(t, function (ok) {
+          if (ok) { S.flash = flashKey; renderNow(); } else { manual(t, url, label); }
+        });
+        if (!started) e.preventDefault();
+      }
+    }, flashKey);
+  }
+  function copyButton(label, doneLabel, text, flashKey, cls) {
+    return h("button", { type: "button", "class": cls, "data-k": flashKey, on: { click: function () {
+      var t = typeof text === "function" ? text() : text;
+      copy(t, function (ok) { if (ok) { S.flash = flashKey; renderNow(); } else manual(t, null, null); });
+    } } }, S.flash === flashKey ? doneLabel : label);
+  }
+
+  /* ---------- theme: Auto (phone follows the system, desktop is dark), Light, Dark ---------- */
+  function applyTheme() {
+    var t = store.get("mesa.theme"), root = document.documentElement;
+    if (t === "light" || t === "dark") root.setAttribute("data-theme", t);
+    else if (DESK.matches) root.setAttribute("data-theme", "dark");
+    else root.removeAttribute("data-theme");
+  }
+  function themeControl() {
+    var cur = store.get("mesa.theme") || "auto";
+    return h("div", { "class": "theme-row" }, h("span", { "class": "group-h" }, "Theme on this device"),
+      h("div", { "class": "seg inline", role: "group", "aria-label": "Theme" }, [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(function (o) {
+        return h("button", { type: "button", "aria-pressed": String(cur === o[0]), "data-k": "theme-" + o[0], on: { click: function () {
+          if (o[0] === "auto") store.del("mesa.theme"); else store.set("mesa.theme", o[0]);
+          applyTheme(); renderNow();
+        } } }, o[1]);
+      })));
+  }
+
+  /* ---------- the track ---------- */
+  function track(p, large) {
+    var pl = p.pipeline || {};
+    return h("div", { "class": "track" + (large ? " lg" : ""), role: "img", "aria-label": STEPS.map(function (s) { return STEP_LABEL[s] + " " + stateWord(pl[s]); }).join(", ") },
+      STEPS.map(function (s) {
+        var st = pl[s] || "todo";
+        return h("span", { "class": "cell " + st, "aria-hidden": "true" }, h("span", { "class": "cell-l" }, STEP_LABEL[s] + (STEP_GLYPH[st] || "")), h("span", { "class": "cell-b" }));
+      }));
+  }
+  function stateWord(s) { return { done: "done", now: "running now", wait: "waits for you", stop: "stopped", skip: "skipped by tier", todo: "not yet" }[s] || "not yet"; }
+
+  /* ---------- what each PR is doing, in words ---------- */
+  function prStatus(r, p) {
+    var job = jobFor(r, p.number), tt = p.tried_total || {};
+    if (job) return { tone: "now", text: "● " + (job.action === "build" ? "Building" : job.action === "fix" ? "Fixing" : actionLabel(job.action, p.tier)) + (job.model ? " · " + job.model : ""), age: since(job.since) };
+    if (p.waiting_for === "human") return { tone: "wait", text: "◆ Waiting for your label on " + sha7(p.head), age: since(p.since) };
+    if (p.parked) return { tone: "stop", text: "■ Parked after " + plural(tt.gate_rounds || 0, "gate round") + " · " + (tt.p1 || 0) + " P1", age: since(p.since) };
+    var step = firstStep(p), st = (p.pipeline || {})[step];
+    if (p.next === "merge") return { tone: "now", text: "● Merging · " + shortReason(p.reason) };
+    if (st === "now") return { tone: "now", text: "● " + STEP_LABEL[step] + " running" };
+    if (st === "stop") return { tone: "stop", text: "■ " + cap(shortReason(p.reason)) };
+    return { tone: "idle", text: "○ " + (p.next && p.next !== "wait" ? "Next: " + actionLabel(p.next, p.tier).toLowerCase() + " · " : "") + shortReason(p.reason) };
+  }
+  function evidenceGlyph(e) {
+    if (/APPROVE/.test(e) || /^CI green/.test(e)) return ["✓", "c-ok"];
+    if (/CHANGES/.test(e)) return ["✕", "c-danger"];
+    return ["○", "c-3"];
+  }
+
+  /* ---------- Your turn ---------- */
+  function turnModel() {
+    var unknown = [], blocking = [], only = [], decs = [], proposed = [], oldest = null, nB = 0, nO = 0;
+    function seen(s) { var t = ms(s); if (t != null && (oldest == null || t < oldest)) oldest = t; }
+    repos().forEach(function (r) {
+      // What could not be read is unknown, not empty: it gets a card, so "Nothing needs you" never covers it.
+      if (r.error) unknown.push({ kind: "unavailable", r: r });
+      else if (unreadOf(r).length) unknown.push({ kind: "partial", r: r, names: unreadOf(r) });
+      (r.prs || []).forEach(function (p) {
+        if (p.waiting_for === "human") { blocking.push({ kind: "approve", r: r, p: p, since: p.since }); nB++; seen(p.since); }
+        else if (p.parked) { blocking.push({ kind: "parked", r: r, p: p, since: p.since }); nB++; seen(p.since); }
+      });
+      // A build that failed before it opened a PR parks the ticket itself: no PR shows it, only a person resumes it.
+      (r.parked_issues || []).forEach(function (i) { blocking.push({ kind: "parked-issue", r: r, i: i, since: i.since }); nB++; seen(i.since); });
+      // A decision holds nothing back in this vigia: it is yours to answer, never "blocking the factory".
+      (r.decisions || []).forEach(function (d) {
+        if (d.answered) return;
+        seen(d.since);
+        if (d.malformed) only.push({ kind: "malformed", r: r, d: d, since: d.since });
+        else decs.push({ r: r, d: d, since: d.since });
+        nO++;
+      });
+      (r.human_tasks || []).forEach(function (i) { only.push({ kind: "task", r: r, i: i, since: i.since }); nO++; seen(i.since); });
+      (r.refused || []).forEach(function (i) { only.push({ kind: "refused", r: r, i: i, since: i.since }); nO++; seen(i.since); });
+      (r.proposed || []).forEach(function (i) { proposed.push({ r: r, i: i, since: i.since }); nO++; seen(i.since); });
+    });
+    if (decs.length) only.push({ kind: "decide", list: decs.sort(bySince), since: decs[0].since });
+    if (proposed.length) only.push({ kind: "proposed", list: proposed.sort(bySince), since: proposed.slice().sort(bySince)[0].since });
+    blocking.sort(bySince); only.sort(bySince);
+    unknown.sort(function (a, b) { return (a.kind === "unavailable" ? 0 : 1) - (b.kind === "unavailable" ? 0 : 1); });  // a whole repo first
+    var nU = unknown.length;
+    return { unknown: unknown, blocking: blocking, only: only, nU: nU, nB: nB, nO: nO, count: nU + nB + nO, oldest: oldest };
+  }
+  function turnLine(m, desk) {
+    if (!m.count) return null;
+    var s = (m.count === 1 ? "1 thing needs you." : m.count + " things need you.");
+    if (m.oldest != null) s += (m.count === 1 ? " It has waited " : " The oldest has waited ") + dur(now() - m.oldest) + ".";
+    if (desk) s += " Everything else runs without you.";
+    return s;
+  }
+  function cardFor(c, desk) {
+    switch (c.kind) {
+      case "approve": return approveCard(c.r, c.p, desk);
+      case "parked": return parkedCard(c.r, c.p, desk);
+      case "decide": return decideCard(c, desk);
+      case "task": return taskCard(c.r, c.i, desk);
+      case "refused": return refusedCard(c.r, c.i);
+      case "proposed": return proposedCard(c);
+      case "malformed": return malformedCard(c.r, c.d);
+      case "unavailable": return unavailableCard(c.r, desk);
+      case "partial": return partialCard(c.r, c.names, desk);
+      case "parked-issue": return parkedIssueCard(c.r, c.i, desk);
+    }
+    return null;
+  }
+  function kickerRow(text, tone, age, tier, desk) {
+    var k = h("span", { "class": "kicker " + tone }, text);
+    if (desk) return h("div", { "class": "k-row" }, k, tier ? tierChip(tier) : null, age ? h("span", { "class": "age" }, age) : null);
+    return h("div", { "class": "k-row" }, k, h("span", { "class": "grow" }), age ? h("span", { "class": "age" }, age) : null, tier ? tierChip(tier) : null);
+  }
+  function approveCard(r, p, desk) {
+    var meta = ["head " + sha7(p.head), diffText(p.diff), p.built_by ? "built by " + model(p.built_by) : null].filter(Boolean).join(" · ");
+    var ev = h("ul", { "class": "evidence" }, (p.evidence || []).map(function (e) {
+      var g = evidenceGlyph(e);
+      return h("li", null, h("span", { "class": g[1] }, g[0]), h("span", null, e));
+    }));
+    var kick = "◆ Approve · " + short(r.repo) + " #" + p.number;
+    var diffBtn = ext(filesUrl(p.url), "Read the diff", "btn btn-secondary");
+    var okBtn = ext(p.url, "Approve on GitHub", "btn btn-primary");
+    if (desk) {
+      return h("article", { "class": "card wide-card" },
+        h("div", { "class": "l" }, kickerRow(kick, "k-turn", "waiting " + (since(p.since) || "—"), p.tier, true),
+          h("h2", { "class": "t-card", style: "font-size:19px" }, p.title), h("p", { "class": "meta", style: "font-size:12.5px" }, meta), ev),
+        h("div", { "class": "r" }, okBtn, diffBtn,
+          h("span", { "class": "foot" }, "Adds ", labelCode(r, "human_ok"), " for " + sha7(p.head) + " only.")));
+    }
+    return h("article", { "class": "card" }, kickerRow(kick, "k-turn", since(p.since), p.tier),
+      h("h3", { "class": "t-card" }, p.title), h("p", { "class": "meta" }, meta), ev,
+      h("p", { "class": "note" }, "Approving adds ", labelCode(r, "human_ok"), " on GitHub. It counts for " + sha7(p.head) + " only."),
+      h("div", { "class": "btn-row" }, diffBtn, okBtn));
+  }
+  function triedLine(p) {
+    var tt = p.tried_total || {};
+    var s = plural(tt.gate_rounds || 0, "gate round") + " on " + plural(tt.heads || 0, "head") + ", " + (tt.p1 || 0) + " P1 found.";
+    if ((tt.parks || 0) > 1) s += " Parked " + tt.parks + " times.";
+    return s;
+  }
+  function parkedCard(r, p, desk) {
+    var issueN = numFromUrl(p.issue_url);
+    var tried = h("p", { "class": "note", style: "font-size:14px" }, h("strong", { style: "color:var(--mesa-ink);font-weight:600" }, "Tried: "), triedLine(p));
+    var what = nav(prRoute(r.repo, p.number), "What was tried", "btn btn-primary");
+    var edit = p.issue_url ? ext(p.issue_url, "Edit ticket" + (issueN ? " #" + issueN : ""), "btn btn-secondary") : ext(p.url, "Open PR #" + p.number, "btn btn-secondary");
+    var kick = "■ Parked · " + short(r.repo) + " #" + p.number;
+    var resume = h("span", { "class": "foot" }, "To resume: deal with the cause, then remove ", labelCode(r, "parked"), ". The counters start again.");
+    if (desk) {
+      return h("article", { "class": "card wide-card" },
+        h("div", { "class": "l" }, kickerRow(kick, "k-danger", since(p.since), p.tier, true),
+          h("h2", { "class": "t-card", style: "font-size:19px" }, p.title), h("div", { "class": "why-box", style: "font-size:15px" }, p.reason), tried),
+        h("div", { "class": "r" }, what, edit, resume));
+    }
+    return h("article", { "class": "card" }, kickerRow(kick, "k-danger", since(p.since), p.tier),
+      h("h3", { "class": "t-card" }, p.title), h("div", { "class": "why-box" }, p.reason), tried, h("div", { "class": "btn-row" }, what, edit), resume);
+  }
+  // A build that failed before it opened a PR: the ticket itself is parked, and only a person resumes it.
+  function parkedIssueCard(r, i, desk) {
+    var kick = "■ Build failed · " + short(r.repo) + " #" + i.number;
+    var resume = h("p", { "class": "note", style: "font-size:14px" }, "No pull request was opened. To resume: deal with the cause, remove ",
+      labelCode(r, "parked"), " and add ", labelCode(r, "ready"), ".");
+    var btn = ext(okHref(i.url) ? i.url : issueUrl(r.repo, i.number), "Edit ticket #" + i.number, "btn btn-primary");
+    if (desk) {
+      return h("article", { "class": "card wide-card" },
+        h("div", { "class": "l" }, kickerRow(kick, "k-danger", since(i.since), null, true),
+          h("h2", { "class": "t-card", style: "font-size:19px" }, i.title), h("div", { "class": "why-box", style: "font-size:15px" }, i.reason), resume),
+        h("div", { "class": "r" }, btn));
+    }
+    return h("article", { "class": "card" }, kickerRow(kick, "k-danger", since(i.since)),
+      h("h3", { "class": "t-card" }, i.title), h("div", { "class": "why-box" }, i.reason), resume, btn);
+  }
+  // A repo GitHub did not answer for: its work is unknown, not none, so it is a card and never "Nothing needs you".
+  function unavailableCard(r, desk) {
+    var kick = "! Cannot read · " + short(r.repo), title = "GitHub did not answer for " + short(r.repo);
+    var why = h("div", { "class": "why-box" }, h("span", { "class": "err-detail", style: "color:var(--mesa-ink-2)" }, r.error));
+    var hint = h("p", { "class": "note", style: "font-size:14px" }, "Its pull requests and tickets are unknown until vigia can read GitHub again: check ",
+      h("code", null, "gh auth status"), " where vigia runs. Running sessions and today's merges still show: they come from this machine.");
+    var btn = ext(repoUrl(r.repo), "Open " + short(r.repo) + " on GitHub", "btn btn-secondary");
+    if (desk) {
+      return h("article", { "class": "card wide-card" },
+        h("div", { "class": "l" }, kickerRow(kick, "k-danger", null, null, true), h("h2", { "class": "t-card", style: "font-size:19px" }, title), why, hint),
+        h("div", { "class": "r" }, btn));
+    }
+    return h("article", { "class": "card" }, kickerRow(kick, "k-danger"), h("h3", { "class": "t-card" }, title), why, hint, btn);
+  }
+  // Part of a repo could not be read: those lists may be missing things that need you.
+  function partialCard(r, names, desk) {
+    var kick = "! Not all read · " + short(r.repo), title = "Could not read: " + names.join("; ");
+    var hint = h("p", { "class": "note", style: "font-size:14px" }, "This list may be missing things that need you. Check the issues on GitHub, or ",
+      h("code", null, "gh auth status"), " where vigia runs.");
+    var btn = ext(repoUrl(r.repo, "/issues?q=is%3Aopen"), "Check the issues on GitHub", "btn btn-secondary");
+    if (desk) {
+      return h("article", { "class": "card wide-card" },
+        h("div", { "class": "l" }, kickerRow(kick, "k-danger", null, null, true), h("h2", { "class": "t-card", style: "font-size:19px" }, title), hint),
+        h("div", { "class": "r" }, btn));
+    }
+    return h("article", { "class": "card" }, kickerRow(kick, "k-danger"), h("h3", { "class": "t-card" }, title), hint, btn);
+  }
+  function decideCard(c, desk) {
+    var rows = c.list.map(function (x) {
+      var talking = store.get(talkingKey(x.r, x.d));
+      var ref = short(x.r.repo) + " #" + x.d.number + (blocksText(x.d) ? " · " + blocksText(x.d) : "");
+      var chips = h("span", { style: "display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none" },
+        x.d.rec ? h("span", { "class": "chip s-turn" }, "rec. " + x.d.rec) : null,
+        talking ? h("span", { "class": "fact" }, "talking it over") : null);
+      if (desk) return h("a", { "class": "row", href: decideRoute(x.r.repo, x.d.number), "data-k": "drow-" + x.r.repo + x.d.number },
+        h("span", { "class": "ref" }, ref), h("span", { "class": "q" }, x.d.question), chips);
+      return h("a", { "class": "row", href: decideRoute(x.r.repo, x.d.number), "data-k": "drow-" + x.r.repo + x.d.number },
+        h("span", { "class": "stack" }, h("span", { "class": "ref" }, ref), h("span", { "class": "q" }, x.d.question)), chips);
+    });
+    var first = c.list[0];
+    var go = h("a", { "class": "btn btn-primary " + (desk ? "" : "btn-main"), href: decideRoute(first.r.repo, first.d.number), "data-k": "decide-go" },
+      "Decide one by one", icon("right", desk ? 15 : 16));
+    var kick = "◆ Decide · " + c.list.length + " open";
+    if (desk) {
+      return h("article", { "class": "card tight", style: "padding:20px" },
+        h("div", { "class": "k-row", style: "padding-bottom:8px" }, h("span", { "class": "kicker k-turn" }, kick), h("span", { "class": "grow" }), go),
+        h("div", { "class": "rows desk-rows" }, rows));
+    }
+    return h("article", { "class": "card tight", style: "padding-bottom:14px" },
+      h("div", { "class": "k-row", style: "padding-bottom:6px" }, h("span", { "class": "kicker k-turn" }, kick), h("span", { "class": "grow" }), h("span", { "class": "age" }, since(c.since))),
+      h("div", { "class": "rows" }, rows), h("div", { style: "margin-top:4px;display:flex;flex-direction:column" }, go));
+  }
+  function taskCard(r, i, desk) {
+    var meta = [i.time ? "about " + i.time : null, dueText(i.due), i.origin ? "from " + i.origin : null].filter(Boolean).join(" · ");
+    var btn = ext(i.url, "Open the steps", "btn btn-secondary");
+    if (desk) {
+      return h("article", { "class": "card wide-card", style: "padding:16px 20px;align-items:center" },
+        h("div", { "class": "l", style: "gap:4px" }, kickerRow("◆ Task · " + short(r.repo) + " #" + i.number, "k-turn", since(i.since), null, true),
+          h("span", { "class": "t-card" }, i.title), meta ? h("span", { "class": "meta", style: "font-size:12.5px" }, meta) : null),
+        h("div", { "class": "r", style: "justify-content:center" }, btn));
+    }
+    return h("article", { "class": "card", style: "gap:10px" }, kickerRow("◆ Task · " + short(r.repo) + " #" + i.number, "k-turn", since(i.since)),
+      h("h3", { "class": "t-card" }, i.title), meta ? h("p", { "class": "meta" }, meta) : null, btn);
+  }
+  function refusedCard(r, i) {
+    var gaps = (i.missing || []).filter(Boolean);
+    var parts = [];
+    gaps.forEach(function (g, k) { if (k) parts.push(", "); parts.push(h("strong", { style: "color:var(--mesa-ink);font-weight:600" }, g)); });
+    return h("article", { "class": "card", style: "gap:10px" }, kickerRow("◆ Fix the ticket · " + short(r.repo) + " #" + i.number, "k-turn", since(i.since)),
+      h("h3", { "class": "t-card" }, i.title),
+      h("p", { "class": "note", style: "font-size:13.5px" }, "vigia will not build it yet.", gaps.length ? [" Missing: ", parts, "."] : null),
+      ext(i.url, "Edit ticket #" + i.number, "btn btn-secondary"),
+      h("span", { "class": "foot" }, "vigia tries again when the issue changes."));
+  }
+  function proposedCard(c) {
+    var repoNames = {};
+    c.list.forEach(function (x) { repoNames[x.r.repo] = 1; });
+    var names = Object.keys(repoNames);
+    var listUrl = names.length === 1 ? repoUrl(names[0], "/issues?q=" + encodeURIComponent("is:open label:vigia:proposed").replace(/%20/g, "+")) : null;
+    var ready = [];  // each repo's own ready label; repos may name it differently
+    c.list.forEach(function (x) { var l = label(x.r, "ready"); if (ready.indexOf(l) < 0) ready.push(l); });
+    var readyCodes = [];
+    ready.forEach(function (l, k) { if (k) readyCodes.push(" or "); readyCodes.push(h("code", null, l)); });
+    return h("article", { "class": "card tight" },
+      h("div", { "class": "k-row", style: "padding-bottom:6px" }, h("span", { "class": "kicker k-turn" }, "◆ Proposed · " + c.list.length + " from vigia plan"), h("span", { "class": "grow" }), h("span", { "class": "age" }, since(c.since))),
+      h("div", { "class": "rows" }, c.list.map(function (x) {
+        return h("a", { "class": "row", href: okHref(x.i.url) ? x.i.url : null, target: "_blank", rel: "noopener noreferrer", style: "align-items:center;gap:10px", "data-k": "prop-" + x.r.repo + x.i.number },
+          h("span", { "class": "ref", style: "flex:none" }, (names.length > 1 ? short(x.r.repo) + " " : "") + "#" + x.i.number),
+          h("span", { "class": "q grow", style: "font-size:14px" }, x.i.title), tierChip(x.i.tier));
+      })),
+      h("p", { "class": "note", style: "margin:2px 0 6px" }, "Read each one; swapping ", h("code", null, "vigia:proposed"), " for ", readyCodes, " on GitHub lets the factory build it."),
+      ext(listUrl || (c.list[0] && c.list[0].i.url), "Review on GitHub", "btn btn-secondary"));
+  }
+  function malformedCard(r, d) {
+    return h("article", { "class": "card", style: "gap:10px" }, kickerRow("! Unreadable decision · " + short(r.repo) + " #" + d.number, "k-danger", since(d.since)),
+      h("h3", { "class": "t-card" }, d.title || d.question),
+      h("p", { "class": "note", style: "font-size:13.5px" }, "The issue has the vigia:decision label but not the decision shape: a Question: line and at least two ### options. The Mesa shows it as it is and guesses nothing."),
+      ext(d.url, "Fix it on GitHub", "btn btn-secondary"));
+  }
+  function emptyTurn() {
+    var n = busyTotal();
+    return h("div", { "class": "empty on-surface" }, h("span", { "class": "ic ok", "aria-hidden": "true" }, "✓"),
+      h("span", { "class": "tx" }, h("b", null, "Nothing needs you"),
+        h("span", null, (n ? "The factory is running " + plural(n, "session") + ". " : "The factory is idle. ") + "This page lights up when it stops for you.")));
+  }
+  function emptyCaptures() {
+    return h("div", { "class": "empty on-surface" }, h("span", { "class": "ic idle", "aria-hidden": "true" }, "○"),
+      h("span", { "class": "tx" }, h("b", null, "No UI changes to look at"),
+        h("span", null, "Captures appear when a ticket has vigia:ui and the repo has a capture command. This vigia does not shoot them yet.")));
+  }
+  function repoErrors() {
+    return repos().filter(function (r) { return r.error; }).map(function (r) {
+      return h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
+        h("span", { "class": "tx" }, h("b", null, "GitHub did not answer for " + short(r.repo)),
+          h("span", null, "Its PRs, queue, decisions and tasks are unknown, not empty; the ledger parts still show. Check ", h("code", null, "gh auth status"),
+            " where vigia runs. The Mesa asks again in 15 s."),
+          h("span", { "class": "err-detail" }, r.error)));
+    });
+  }
+  function turnGroups(m, desk) {
+    var out = [];
+    // "Nothing needs you" only when every list was read and all of them are empty
+    if (!m.count && !m.nU) out.push(emptyTurn());
+    if (m.unknown.length) out.push(groupHead("Could not read · " + m.nU, desk, true), m.unknown.map(function (c) { return cardFor(c, desk); }));
+    if (m.blocking.length) out.push(groupHead("Blocking the factory · " + m.nB, desk, !m.unknown.length), m.blocking.map(function (c) { return cardFor(c, desk); }));
+    if (m.only.length) out.push(groupHead("Only you · " + m.nO, desk, !m.unknown.length && !m.blocking.length), m.only.map(function (c) { return cardFor(c, desk); }));
+    out.push(groupHead("Look when you can · 0", desk, !m.count), emptyCaptures());
+    return out;
+  }
+  function groupHead(text, desk, first) {
+    return h("h2", { "class": "group-h", style: desk ? "margin-top:" + (first ? 6 : 10) + "px" : "margin:" + (first ? 6 : 14) + "px 0 -2px" }, text);
+  }
+
+  /* ---------- phone: Your turn ---------- */
+  function strip() {
+    var total = slotsTotal(), busy = busyTotal(), left = codexLeft(), bars = [];
+    for (var i = 0; i < Math.min(Math.max(total, busy), 12); i++) bars.push(h("i", { "class": i < busy ? "on" : null }));
+    var parts = [mergedToday() != null ? mergedToday() + " merged today" : null, left != null ? "Codex " + pct(left) : "Codex —"].filter(Boolean);
+    return h("a", { "class": "strip", href: "#/factory", "aria-label": busy + " running, open the Factory" },
+      h("span", { "class": "bars", "aria-hidden": "true" }, bars),
+      h("span", { "class": "tx" }, h("b", null, busy + " running"), " · " + parts.join(" · ")),
+      h("span", { "class": "c-3", style: "display:inline-flex" }, icon("chevR", 16)));
+  }
+  function phoneTurn() {
+    var m = turnModel();
+    return [
+      h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:10px" }, strip()),
+      h("div", { "class": "gut", style: "padding-top:22px;display:flex;flex-direction:column;gap:6px" },
+        h("h1", { "class": "t-title", style: "display:flex;align-items:center;gap:10px" }, "Your turn", m.count ? h("span", { "class": "badge lg" }, String(m.count)) : null),
+        turnLine(m) ? h("p", { "class": "t-sub" }, turnLine(m)) : null),
+      h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:12px;padding-top:12px" }, turnGroups(m, false)),
+      h("p", { "class": "foot gut", style: "margin:28px 0 12px" }, "The Mesa never writes as you. Buttons with ↗ open GitHub, where your login decides.")
+    ];
+  }
+
+  /* ---------- sessions ---------- */
+  function sessions() {
+    var out = [];
+    repos().forEach(function (r) {
+      (r.jobs || []).forEach(function (j) {
+        var p = j.issue ? null : prIn(r, j.number);
+        var tier = j.tier || (p && p.tier) || null;
+        var t = ms(j.since), capMin = r.session_minutes || 30;
+        var mins = t == null ? null : (now() - t) / 60000;
+        var over = mins != null && mins > capMin;
+        out.push({
+          r: r, j: j, over: over, cap: capMin,
+          what: actionLabel(j.action, tier) + " · " + short(r.repo) + (j.issue ? " issue #" : " #") + j.number,
+          eng: [j.engine, j.model, roleOf(j, tier)].filter(Boolean).join(" · ") + (over ? " · over the " + capMin + " min cap" : ""),
+          age: t == null ? "" : dur(now() - t),
+          pct: mins == null ? 0 : Math.min(100, Math.round(mins / capMin * 100)),
+          route: j.issue ? null : prRoute(r.repo, j.number)
+        });
+      });
+    });
+    return out;
+  }
+  function freeLine() {
+    var free = Math.max(0, slotsTotal() - busyTotal());
+    var ready = repos().reduce(function (n, r) { return n + (r.queue || []).length; }, 0);
+    var unknownQ = unknownRepos("queue").map(function (r) { return short(r.repo); });
+    if (!free) return "every slot is busy";
+    // a queue that could not be read is unknown: never "nothing ready"
+    var known = ready ? plural(ready, "ticket") + " ready" : unknownQ.length ? null : "nothing ready to build";
+    return free + " free · " + [known, unknownQ.length ? "queue unknown for " + unknownQ.join(", ") : null].filter(Boolean).join(" · ");
+  }
+  function sessionRow(s) {
+    return h("div", { "class": "sess" + (s.over ? " over" : "") },
+      h("div", { "class": "top" }, h("span", { "class": "dot big " + (s.over ? "danger" : "live pulse") }), h("span", { "class": "what" }, s.what), h("span", { "class": "grow" }), h("span", { "class": "sage" }, s.age)),
+      h("span", { "class": "eng" }, s.eng),
+      h("span", { "class": "bar", "aria-hidden": "true" }, h("i", { style: "width:" + s.pct + "%" })));
+  }
+
+  /* ---------- phone: Factory ---------- */
+  function repoCounts(r) {
+    var prs = (r.prs || []).length, builds = (r.jobs || []).filter(function (j) { return j.issue; }).length;
+    var merged = (r.merged_today || []).length;
+    return [r.prs === null ? "PRs unknown" : plural(prs, "open PR"), builds ? builds + " building" : null,
+      r.queue === null ? "queue unknown" : r.queue.length ? null : "queue empty", merged ? merged + " merged today" : null].filter(Boolean).join(" · ");
+  }
+  function prCard(r, p) {
+    var s = prStatus(r, p);
+    return h("a", { "class": "prcard", href: prRoute(r.repo, p.number), "data-k": "pr-" + r.repo + p.number },
+      h("span", { "class": "hd" }, h("span", { "class": "stack" }, h("span", { "class": "ref" }, short(r.repo) + " #" + p.number), h("span", { "class": "ttl" }, p.title)), tierChip(p.tier)),
+      track(p),
+      h("span", { "class": "nx" }, h("span", { "class": "st t-" + s.tone }, s.text), s.age ? h("span", { "class": "age" }, s.age) : null));
+  }
+  function buildCard(r, j) {
+    var pseudo = { pipeline: { build: "now", ci: "todo", gate: "todo", review: "todo", human: "todo", merge: "todo" } };
+    return h("a", { "class": "prcard", href: issueUrl(r.repo, j.number), target: "_blank", rel: "noopener noreferrer", "data-k": "build-" + r.repo + j.number },
+      h("span", { "class": "hd" }, h("span", { "class": "stack" }, h("span", { "class": "ref" }, short(r.repo) + " issue #" + j.number + " ↗"),
+        h("span", { "class": "ttl" }, "Building issue #" + j.number), j.branch ? h("span", { "class": "meta" }, j.branch) : null), j.tier ? tierChip(j.tier) : null),
+      track(pseudo),
+      h("span", { "class": "nx" }, h("span", { "class": "st t-now" }, "● Building" + (j.model ? " · " + j.model : "")), h("span", { "class": "age" }, since(j.since))));
+  }
+  function queueBox(r) {
+    var q = r.queue || [];
+    var body = q.length ? q.map(function (i) {
+      return h("a", { "class": "qi", href: okHref(i.url) ? i.url : null, target: "_blank", rel: "noopener noreferrer", "data-k": "q-" + r.repo + i.number },
+        h("span", { "class": "mono c-3", style: "font-size:12px;flex:none" }, "#" + i.number), h("span", { "class": "grow" }, i.title), tierChip(i.tier),
+        h("span", { "class": "vh" }, "ready"), h("span", { "class": "age", "aria-hidden": "true" }, "○ ready"));
+    }) : r.queue === null ? h("span", { "class": "qi" }, "Unknown: vigia cannot read this repo's issues right now.")
+      : h("span", { "class": "qi" }, "Empty. Open an issue from the vigia ticket template and add ", labelCode(r, "ready"), ".");
+    return h("div", { "class": "queue-box" }, h("span", { "class": "group-h" }, "Queue" + (q.length ? " · " + q.length : r.queue === null ? " · unknown" : "")), body);
+  }
+  function mergedRows() {
+    var rows = [];
+    repos().forEach(function (r) { (r.merged_today || []).forEach(function (m) { rows.push({ r: r, m: m }); }); });
+    rows.sort(function (a, b) { return (ms(b.m.ts) || 0) - (ms(a.m.ts) || 0); });
+    return rows;
+  }
+  function mergedList(compact) {
+    var rows = mergedRows();
+    if (!rows.length) return h("p", { "class": "note" }, "Nothing merged today yet.");
+    return h("ul", { "class": "merged-list" }, rows.map(function (x) {
+      return h("li", { style: compact ? "min-height:40px" : null }, h("span", { "class": "c-ok", style: "font-weight:600" }, "✓"),
+        h("a", { "class": "tx", href: pullUrl(x.r.repo, x.m.pr), target: "_blank", rel: "noopener noreferrer", style: compact ? "font-size:13.5px" : null },
+          short(x.r.repo) + " #" + x.m.pr + (x.m.title ? " · " + x.m.title : "")),
+        h("span", { "class": "age" }, (x.m.tier || "") + (compact ? " " : " · ") + hhmm(x.m.ts)));
+    }));
+  }
+  function phoneFactory() {
+    var ss = sessions(), total = slotsTotal(), freeN = Math.max(0, total - ss.length), mini = [];
+    for (var i = 0; i < Math.min(freeN, 12); i++) mini.push(h("i"));
+    var capMin = repos().length ? repos()[0].session_minutes || 30 : 30;
+    var out = [
+      h("div", { "class": "gut", style: "padding-top:14px;display:flex;flex-direction:column;gap:6px" },
+        h("h1", { "class": "t-title" }, "Factory"),
+        h("p", { "class": "t-sub" }, plural(repos().length, "repo") + " on this machine. Every PR runs Build → CI → Gate → Review → Human → Merge.")),
+      h("div", { "class": "gut", style: "padding-top:16px" }, h("section", { "class": "card tight", "aria-labelledby": "slots-h", style: "padding:14px 16px" },
+        h("div", { style: "display:flex;align-items:baseline;gap:8px;padding-bottom:6px;flex-wrap:wrap" }, h("h2", { id: "slots-h", style: "font:600 17px/1.2 var(--mesa-font)" }, "Sessions"),
+          h("span", { "class": "mono", style: "font-weight:600;font-size:13px;color:var(--mesa-ink-2)" }, ss.length + " of " + plural(total, "slot")), h("span", { "class": "grow" }),
+          h("span", { "class": "age" }, "cap " + capMin + " min each")),
+        ss.map(sessionRow),
+        h("div", { style: "display:flex;align-items:center;gap:8px;padding-top:10px;border-top:1px solid var(--mesa-line);font-size:13.5px;color:var(--mesa-ink-3)" },
+          mini.length ? h("span", { "class": "mini-slots", "aria-hidden": "true" }, mini) : null, freeLine())))
+    ];
+    out.push(repoErrors().map(function (e) { return h("div", { "class": "gut", style: "margin-top:16px" }, e); }));
+    repos().forEach(function (r) {
+      var cards = (r.jobs || []).filter(function (j) { return j.issue; }).map(function (j) { return buildCard(r, j); })
+        .concat((r.prs || []).map(function (p) { return prCard(r, p); }));
+      out.push(h("section", { "class": "gut", style: "margin-top:26px;display:flex;flex-direction:column;gap:10px" },
+        h("div", { style: "display:flex;align-items:baseline;gap:10px;flex-wrap:wrap" }, h("h2", { "class": "t-section" }, short(r.repo)), h("span", { "class": "meta" }, repoCounts(r))),
+        r.prs === null ? h("p", { "class": "note c-danger" }, "! Pull requests unknown: vigia cannot read this repo.") : null,
+        cards.length ? cards : r.prs === null ? null : h("p", { "class": "note" }, "No open pull requests."), queueBox(r)));
+    });
+    var mt = mergedToday();
+    out.push(h("section", { "class": "gut", style: "margin-top:26px;display:flex;flex-direction:column;gap:8px" },
+      h("div", { style: "display:flex;align-items:baseline;gap:10px" }, h("h2", { "class": "t-section" }, "Merged today"),
+        mt != null ? h("span", { "class": "mono c-ok", style: "font-weight:600;font-size:13px" }, String(mt)) : null, h("span", { "class": "grow" }),
+        h("a", { href: "#/feed", style: "font:600 13.5px/1 var(--mesa-font);color:var(--mesa-ink-2);min-height:44px;display:inline-flex;align-items:center" }, "Feed")),
+      mergedList(false)));
+    out.push(h("p", { "class": "foot gut", style: "margin:24px 0 12px" }, "Shapes carry the state without colour: ● running · ◆ waiting for you · ■ parked · ✓ done."));
+    return out;
+  }
+
+  /* ---------- desktop: Factory board ---------- */
+  var COLS = ["Queue", "Build", "CI", "Gate", "Review", "Human", "Merged today"];
+  function kcard(href, ref, tier, title, kind, status, external) {
+    return h("a", { "class": "kcard " + kind, href: href, target: external ? "_blank" : null, rel: external ? "noopener noreferrer" : null, "data-k": "k-" + ref + title },
+      h("span", { "class": "hd" }, h("span", { "class": "ref" }, ref + (external ? " ↗" : "")), tier ? tierChip(tier) : null),
+      h("span", { "class": "ttl" }, title),
+      h("span", { "class": "st t-" + kind }, status));
+  }
+  function board(r) {
+    var cols = COLS.map(function () { return []; });
+    (r.queue || []).forEach(function (q) {
+      cols[0].push(kcard(q.url, "#" + q.number, q.tier, q.title, "idle", "○ ready · next free slot", true));
+    });
+    (r.jobs || []).filter(function (j) { return j.issue; }).forEach(function (j) {
+      cols[1].push(kcard(issueUrl(r.repo, j.number), "issue #" + j.number, j.tier, j.branch || "Building issue #" + j.number, "now", "● " + (j.model || "building") + " · " + since(j.since), true));
+    });
+    (r.prs || []).forEach(function (p) {
+      var step = firstStep(p), idx = Math.max(1, STEPS.indexOf(step) + 1), s = prStatus(r, p);
+      var kind = { now: "now", wait: "you", stop: "stop", idle: "idle" }[s.tone];
+      var text = s.text + (s.age && s.tone !== "stop" ? " · " + s.age : "");
+      if (s.tone === "stop" && p.parked) text = "■ parked · " + ((p.tried_total || {}).p1 || 0) + " P1";
+      if (s.tone === "wait") text = "◆ your label on " + sha7(p.head) + (s.age ? " · " + s.age : "");
+      cols[Math.min(idx, 6)].push(kcard(prRoute(r.repo, p.number), "#" + p.number, p.tier, p.title, kind, text));
+    });
+    (r.merged_today || []).forEach(function (m) {
+      cols[6].push(kcard(pullUrl(r.repo, m.pr), "#" + m.pr, m.tier, m.title || "PR #" + m.pr, "done", "✓ " + hhmm(m.ts), true));
+    });
+    var allSkipHuman = (r.prs || []).length > 0 && (r.prs || []).every(function (p) { return (p.pipeline || {}).human === "skip"; });
+    return h("div", { "class": "board-wrap" }, h("div", { "class": "board" }, COLS.map(function (name, i) {
+      var cards = cols[i];
+      // a column fed by a list that could not be read is unknown, not empty
+      var unknown = i === 0 ? r.queue === null : i < 6 && r.prs === null;
+      var empty = !cards.length ? (unknown ? h("span", { "class": "col-empty c-danger" }, "unknown")
+        : i === 5 && allSkipHuman ? h("span", { "class": "col-skip" }, "skip") : h("span", { "class": "col-empty" }, "—")) : null;
+      return h("div", { "class": "col" + (i === 5 && cards.length ? " you" : "") },
+        h("span", { "class": "col-h" }, name, h("span", null, cards.length ? String(cards.length) : "")), cards, empty);
+    })));
+  }
+  function deskFactory() {
+    var ss = sessions(), total = slotsTotal(), cells = ss.map(function (s) {
+      return h("div", { "class": "slot" + (s.over ? " over" : "") },
+        h("span", { "class": "top" }, h("span", { "class": "dot " + (s.over ? "danger" : "live pulse") }), h("span", { "class": "what" }, s.what), h("span", { "class": "sage" }, s.age)),
+        h("span", { "class": "eng" }, s.eng), h("span", { "class": "bar", "aria-hidden": "true" }, h("i", { style: "width:" + s.pct + "%" })));
+    });
+    for (var i = ss.length; i < Math.min(total, 12); i++) {
+      cells.push(h("div", { "class": "slot free" }, h("span", { "class": "top" }, h("span", { "class": "dot free" }), h("span", { "class": "what" }, "Free")),
+        h("span", { "class": "eng" }, "waiting for ready work"), h("span", { "class": "bar", "aria-hidden": "true" })));
+    }
+    var capMin = repos().length ? repos()[0].session_minutes || 30 : 30;
+    return [
+      h("div", { style: "display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px" }, h("h1", { "class": "t-display" }, "Factory"),
+        h("span", { style: "font-size:16px;color:var(--mesa-ink-2)" }, plural(repos().length, "repo") + " · every PR runs Build → CI → Gate → Review → Human → Merge")),
+      repoErrors(),
+      h("section", { "aria-labelledby": "slots-h", style: "display:flex;flex-direction:column;gap:10px" },
+        h("div", { style: "display:flex;align-items:baseline;gap:10px;flex-wrap:wrap" }, h("h2", { id: "slots-h", style: "font:600 17px/1.2 var(--mesa-font)" }, "Sessions"),
+          h("span", { "class": "mono c-live", style: "font-weight:600;font-size:13px" }, ss.length + " of " + total),
+          h("span", { "class": "age" }, "one per PR or issue · " + capMin + " min cap · " + freeLine())),
+        h("div", { "class": "slotgrid" }, cells)),
+      repos().map(function (r) {
+        return h("section", { style: "display:flex;flex-direction:column;gap:10px" },
+          h("div", { style: "display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px" }, h("h2", { "class": "t-section mono" }, short(r.repo)), h("span", { "class": "meta", style: "font-size:12.5px" }, repoCounts(r))),
+          r.prs === null ? h("p", { "class": "note c-danger" }, "! Pull requests unknown: vigia cannot read this repo.") : null,
+          board(r));
+      }),
+      h("p", { "class": "foot", style: "font-size:13px" }, "● running · ◆ waiting for you · ■ parked · ○ waiting · ✓ merged. T0 skips Review and Human; T1 skips Human. A card sits in the column of its next step.")
+    ];
+  }
+
+  /* ---------- Feed ---------- */
+  function feedLook(e) {
+    var ref = e.repo + " #" + (e.pr != null ? e.pr : e.issue), issueRef = e.repo + " issue #" + e.issue;
+    var who = e.model || e.engine || "";
+    switch (e.event) {
+      case "merged": return ["✓", "g-merged", "Merged · " + ref, [e.tier, e.sha, e.title].filter(Boolean).join(" · ")];
+      case "verdict": {
+        var kind = e.kind === "review" ? (e.tier ? e.tier + " review" : "Review") : "Gate";
+        if (e.verdict === "UNAVAILABLE") return ["○", "g-wait", kind + " unavailable · " + ref, "no verdict from the other lab on this head" + (e.sha ? " · " + e.sha : "")];
+        var bad = e.verdict !== "APPROVE";
+        return [bad ? "✕" : "✓", bad ? "g-changes" : "g-ok", kind + " " + e.verdict + " · " + ref + (e.p1 ? " · " + e.p1 + " P1" : ""), [who, (e.p1 || 0) + " P1", e.sha ? "on " + e.sha : null].filter(Boolean).join(" · ")];
+      }
+      case "parked": return ["■", "g-park", "Parked · " + ref, e.reason || ""];
+      case "unparked": return ["↺", "g-live", "Unparked · " + ref, (e.sha ? "at " + e.sha + " · " : "") + "counters restart"];
+      case "pr_opened": return ["+", "g-plain", "Opened · " + e.repo + " #" + e.pr + (e.issue ? " from #" + e.issue : ""), [who, e.tier].filter(Boolean).join(" · ")];
+      case "pushed": return ["↑", "g-plain", "Fix pushed · " + ref, [e.stage ? e.stage + " stage" : null, e.sha].filter(Boolean).join(" · ")];
+      case "updated": return ["↑", "g-plain", "Base brought in · " + ref, e.sha ? "new head " + e.sha : ""];
+      case "engine_failed": return ["!", "g-changes", "Session failed · " + ref, e.reason || ""];
+      case "build_started": return ["●", "g-live", "Build started · " + issueRef, [who, e.tier].filter(Boolean).join(" · ")];
+      case "build_failed": return ["!", "g-changes", "Build failed · " + issueRef, e.reason || ""];
+      case "refused": return ["◆", "g-turn", "Ticket refused · " + issueRef, String(e.text || "").split(" — ").slice(1).join(" — ")];
+      case "decided": return ["✓", "g-ok", "Decided " + (e.key || "") + " · " + e.repo + " #" + e.issue, "answered on GitHub"];
+      case "captured": return ["○", "g-plain", "Captured · " + ref, e.sha || ""];
+      case "error": return ["!", "g-changes", "Error · " + e.repo, e.reason || String(e.text || "")];
+    }
+    return ["·", "g-plain", e.text || e.event, ""];
+  }
+  var FILTERS = [["all", "All"], ["merged", "Merged"], ["verdict", "Verdicts"], ["parked", "Parked"]];
+  function feedBody(desk) {
+    var st = S.state || {}, t = (st.stats && st.stats.today) || {}, f = S.feedFilter;
+    var rows = (st.feed || []).filter(function (e) { return f === "all" || e.event === f; });
+    var errs = st.health && st.health.errors_24h;
+    function tile(v, label, cls) { return h("span", { "class": "tile" }, h("b", { "class": cls }, v == null ? "—" : String(v)), h("span", null, label)); }
+    return [
+      h("section", { "aria-label": "Today", style: "display:flex;flex-direction:column;gap:8px;margin-top:" + (desk ? 0 : 16) + "px" },
+        h("span", { "class": "group-h" }, "Today · " + dayLong(now())),
+        h("div", { "class": "tiles" }, tile(t.merged, "merged", "c-ok"), tile(t.p1, "P1 caught"), tile(t.parks, "parks"), tile(t.sessions, "sessions"))),
+      errs ? h("p", { "class": "note c-danger" }, "! " + plural(errs, "error") + " in the last 24 h. They are the Error lines below.") : null,
+      h("div", { "class": "seg", role: "group", "aria-label": "Filter", style: "margin-top:" + (desk ? 0 : 16) + "px" }, FILTERS.map(function (x) {
+        return h("button", { type: "button", "aria-pressed": String(f === x[0]), "data-k": "filter-" + x[0], on: { click: function () { S.feedFilter = x[0]; renderNow(); } } }, x[1]);
+      })),
+      rows.length ? h("ol", { "class": "feed", style: "margin-top:" + (desk ? 0 : 12) + "px" }, rows.map(function (e, i) {
+        var look = feedLook(e), r = repoOf(e.repo), route = e.pr != null && r ? prRoute(r.repo, e.pr) : null;
+        var inner = [h("time", { datetime: e.ts }, hhmm(e.ts)), h("span", { "class": "tag " + look[1], "aria-hidden": "true" }, look[0]),
+          h("span", { "class": "stack" }, h("span", { "class": "tt" }, look[2]), look[3] ? h("span", { "class": "mt" }, look[3]) : null)];
+        return h("li", null, route ? h("a", { "class": "ev", href: route, "data-k": "ev-" + i }, inner) : h("div", { "class": "ev" }, inner));
+      })) : h("p", { "class": "note", style: "margin-top:12px" }, f === "all" ? "The ledger has no events yet." : "No such events among the newest 40."),
+      h("p", { "class": "foot", style: "margin-top:" + (desk ? 4 : 22) + "px" }, "The 40 newest ledger lines. Times are this device's time zone. Tap a row to open its PR.")
+    ];
+  }
+  function phoneFeed() {
+    return [
+      h("div", { "class": "gut", style: "padding-top:14px;display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-title" }, "Feed"),
+        h("p", { "class": "t-sub" }, "What vigia did, newest first. Every line is one ledger row.")),
+      h("div", { "class": "gut", style: "display:flex;flex-direction:column" }, feedBody(false))
+    ];
+  }
+
+  /* ---------- Fuel ---------- */
+  function fuelBody(desk) {
+    var st = S.state || {}, f = st.fuel || {}, s = st.stats || {}, left = codexLeft(), c = f.codex;
+    var gates = f.gates_7d || {}, cu = f.claude_usage || {};
+    var low = left != null && left < 30;
+    var codex = h("section", { "class": "card", "aria-labelledby": "codex-h", style: "gap:10px" },
+      h("div", { style: "display:flex;align-items:baseline;gap:8px;flex-wrap:wrap" }, h("h2", { id: "codex-h", style: "font:600 17px/1.2 var(--mesa-font)" }, "Codex"), h("span", { "class": "age" }, "OpenAI's plan")),
+      h("div", { style: "display:flex;align-items:baseline;gap:8px" },
+        h("strong", { "class": "big-num" + (left == null ? " c-3" : low ? " c-danger" : "") }, left == null ? "—" : pct(left)),
+        h("span", { "class": "t-sub" }, left == null ? "unknown" : "left this week")),
+      left == null ? h("span", { "class": "meter unknown", "aria-hidden": "true" }) :
+        h("span", { "class": "meter", role: "img", "aria-label": Math.round(left) + " percent left" }, h("i", { "class": low ? "low" : null, style: "width:" + left + "%" })),
+      c ? h("span", { "class": "meta" }, [resetsText(c.resets_at), c.observed ? "read " + since(c.observed) + " ago from the Codex CLI" : null].filter(Boolean).join(" · ")) :
+        h("span", { "class": "note", style: "font-size:14px" }, "vigia found no Codex session file that reports the weekly window, so it does not guess."),
+      low ? h("span", { "class": "note", style: "font-size:14px" }, "Under 30 % left. Every PR spends a gate, so fewer slots make the week last; vigia init recommends half as many above 70 % used.") : null,
+      h("span", { "class": "note", style: "font-size:14px;padding-top:8px;border-top:1px solid var(--mesa-line)" }, "This week: " + plural(gates.codex || 0, "gate session") + "."));
+    var otherGates = Object.keys(gates).filter(function (k) { return k !== "codex"; }).map(function (k) { return plural(gates[k], "gate") + " by " + k; });
+    var claude = h("section", { "class": "card", "aria-labelledby": "claude-h", style: "gap:10px" },
+      h("div", { style: "display:flex;align-items:baseline;gap:8px;flex-wrap:wrap" }, h("h2", { id: "claude-h", style: "font:600 17px/1.2 var(--mesa-font)" }, "Claude"), h("span", { "class": "age" }, "Anthropic's plan")),
+      h("div", { style: "display:flex;align-items:baseline;gap:8px" }, h("strong", { "class": "big-num c-3" }, "—"), h("span", { "class": "t-sub" }, "unknown")),
+      h("span", { "class": "meter unknown", "aria-hidden": "true" }),
+      h("span", { "class": "note", style: "font-size:14px" }, "Claude Code keeps no quota file, so vigia never guesses. Check it with ", h("code", null, "/usage"), " in Claude Code."),
+      h("span", { "class": "note", style: "font-size:14px;padding-top:8px;border-top:1px solid var(--mesa-line)" },
+        "This week: " + plural(cu.sessions_7d || 0, "session") + ", " + seconds(cu.seconds_7d) + " of engine time" + (otherGates.length ? " · " + otherGates.join(", ") : "") + "."));
+    var total = slotsTotal(), busy = busyTotal();
+    var slots = h("section", { "class": "card", "aria-labelledby": "fslots-h", style: "gap:8px" },
+      h("div", { style: "display:flex;align-items:baseline;gap:8px" }, h("h2", { id: "fslots-h", style: "font:600 17px/1.2 var(--mesa-font)" }, "Slots"),
+        h("span", { "class": "mono", style: "font-weight:600;font-size:13px;color:var(--mesa-ink-2)" }, total + " · " + busy + " busy")),
+      h("span", { "class": "note", style: "font-size:14px" }, "Engine sessions at once, from watch.slots or vigia.workspace.toml. vigia init recommends about two cores and 2 GB per session, at most six, and half as many when Codex is more than 70 % used, because every PR also spends a gate."));
+    function tile(v, label) { return h("span", { "class": "tile" }, h("b", null, v), h("span", null, label)); }
+    var week = h("section", { "aria-labelledby": "week-h", style: "display:flex;flex-direction:column;gap:8px;padding-top:10px" },
+      h("h2", { id: "week-h", "class": "group-h" }, "Last 7 days"),
+      h("div", { "class": "tiles two" },
+        tile(String(s.merged_7d != null ? s.merged_7d : "—"), "PRs merged by vigia"),
+        tile(String(s.p1_7d != null ? s.p1_7d : "—"), "P1 caught by the gate"),
+        tile(s.median_minutes != null ? s.median_minutes + " min" : "—", "median, PR to merge"),
+        tile(String(s.parked_7d != null ? s.parked_7d : "—"), "times a PR was parked")));
+    var spm = s.sessions_per_merge || {}, tiers = Object.keys(spm).sort();
+    var maxV = tiers.reduce(function (m, k) { return Math.max(m, spm[k]); }, 8);
+    var perTier = h("section", { "class": "card", "aria-labelledby": "tier-h" },
+      h("div", { style: "display:flex;flex-direction:column;gap:2px" }, h("h2", { id: "tier-h", style: "font:600 17px/1.2 var(--mesa-font)" }, "Sessions per merged PR"),
+        h("span", { "class": "note", style: "font-size:13.5px" }, "What one merge costs, by damage tier, over the last 7 days.")),
+      tiers.length ? tiers.map(function (k) {
+        return h("div", { "class": "tierbar" }, tierChip(k), h("span", { "class": "tb", "aria-hidden": "true" }, h("i", { style: "width:" + Math.round(spm[k] / maxV * 100) + "%" })),
+          h("span", { "class": "v" }, Number(spm[k]).toFixed(1)));
+      }) : h("span", { "class": "note" }, "No merges in the last 7 days."));
+    return [codex, claude, slots, week, perTier,
+      h("p", { "class": "foot", style: "margin-top:" + (desk ? 4 : 10) + "px" }, "vigia never asks for a token. Fuel comes from files the CLIs already write and from the ledger.")];
+  }
+  function phoneFuel() {
+    return [
+      h("div", { "class": "gut", style: "padding-top:14px;display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-title" }, "Fuel"),
+        h("p", { "class": "t-sub" }, "What each lab's plan has left this week, and what vigia spent from it.")),
+      h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:12px;padding-top:16px" }, fuelBody(false))
+    ];
+  }
+
+  /* ---------- Captures (not shot yet in this vigia: the empty state) ---------- */
+  function capturesBody() {
+    return [emptyCaptures(), h("p", { "class": "foot" }, "When it lands, vigia shoots both heads with your repo's capture command when the ticket has vigia:ui. “Looks right” is remembered on this device only; looking never blocks a merge.")];
+  }
+  function phoneCaptures() {
+    return [
+      h("div", { "class": "gut", style: "padding-top:14px;display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-title" }, "Captures"),
+        h("p", { "class": "t-sub" }, "UI changes, before and after, on the exact head. Looking never blocks a merge.")),
+      h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:14px;padding-top:16px" }, capturesBody())
+    ];
+  }
+
+  /* ---------- Decision mode ---------- */
+  function currentDecision() {
+    var list = openDecisions(), rt = S.route, i = 0;
+    if (rt && rt.repo) {
+      for (var k = 0; k < list.length; k++) if (list[k].r.repo === rt.repo && list[k].d.number === rt.n) { i = k; break; }
+    }
+    return { list: list, i: i, x: list[i] || null };
+  }
+  function pickOf(x) { var k = x.r.repo + "#" + x.d.number; return S.picks[k] || x.d.rec || null; }
+  function decKey(x) { return x.r.repo + "#" + x.d.number; }
+  function blockedFacts(x) {
+    return (x.d.blocks || []).map(function (n) {
+      var p = prIn(x.r, n), q = queueIn(x.r, n);
+      return { n: n, p: p, q: q };
+    });
+  }
+  function brief(x) {
+    var d = x.d, lines = [];
+    lines.push("Decision " + short(x.r.repo) + " #" + d.number + (blocksText(d) ? " · " + blocksText(d) : "") + (dueText(d.due) ? " · " + dueText(d.due) : ""));
+    lines.push(d.question, "");
+    (d.options || []).forEach(function (o) {
+      var body = String(o.body || "").replace(/\s+/g, " ").trim();
+      lines.push(o.key + "  " + o.title + (body ? ". " + body : ""));
+    });
+    if (d.rec) lines.push("   Recommended: " + d.rec + (d.rec_why ? " — " + d.rec_why : ""));
+    if (d.origin) lines.push("", "Origin: " + d.origin);
+    blockedFacts(x).forEach(function (b) {
+      if (b.p) {
+        var tt = b.p.tried_total || {};
+        lines.push("", "#" + b.n + " " + b.p.title + " (" + b.p.tier + (b.p.parked ? ", parked" : "") + ")");
+        lines.push("What was tried: " + (tt.gate_rounds || 0) + " gate rounds on " + (tt.heads || 0) + " heads, " + (tt.p1 || 0) + " P1, " + (tt.fix_rounds || 0) + " fix rounds, parked " + (tt.parks || 0) + " times.");
+        lines.push((b.p.parked ? "Why it is parked: " : "Where it stands: ") + b.p.reason);
+        lines.push("PR: " + b.p.url);
+      } else if (b.q) {
+        lines.push("", "#" + b.n + " " + b.q.title + " (" + b.q.tier + ", a ready ticket: vigia picks it up whatever this decision says)");
+        lines.push("Ticket: " + b.q.url);
+      }
+    });
+    lines.push("", "Issue: " + d.url, "When we agree, I answer on the issue.");
+    return lines.join("\n");
+  }
+  function optionCards(x, desk) {
+    var picked = pickOf(x);
+    return (x.d.options || []).map(function (o) {
+      var on = o.key === picked;
+      var head = desk ? [h("span", { style: "display:flex;align-items:center;gap:10px" }, h("span", { "class": "key" }, o.key), o.key === x.d.rec ? h("span", { "class": "rec-chip" }, "◆ Recommended") : null),
+        h("b", { style: "font:600 17px/1.3 var(--mesa-font);overflow-wrap:anywhere" }, o.title), o.body ? h("span", { "class": "ob", style: "font-size:14.5px;line-height:1.5" }, o.body) : null] :
+        [h("span", { "class": "key" }, o.key), h("span", { "class": "stack" }, h("span", { "class": "ot" }, h("b", null, o.title), o.key === x.d.rec ? h("span", { "class": "rec-chip" }, "◆ Recommended") : null),
+          o.body ? h("span", { "class": "ob" }, o.body) : null)];
+      return h("button", { type: "button", "class": "opt", "aria-pressed": String(on), "data-k": "opt-" + decKey(x) + o.key,
+        style: desk ? "flex-direction:column;gap:10px;padding:18px;border-radius:14px" : null,
+        on: { click: function () { S.picks[decKey(x)] = o.key; S.flash = null; renderNow(); } } }, head);
+    });
+  }
+  function whyBox(x, desk) {
+    if (!x.d.rec) return null;
+    return h("div", { "class": "whybox", style: desk ? "padding:14px 16px;max-width:820px" : null },
+      h("span", { "class": "kicker k-turn" }, "Why " + x.d.rec),
+      h("span", { "class": "wt", style: desk ? "font-size:15px;line-height:1.55" : null }, x.d.rec_why || "The decision does not say why."),
+      !desk && x.d.origin ? h("span", { "class": "meta" }, x.d.origin) : null);
+  }
+  function decMeta(x, desk) {
+    return h("p", { "class": "dm-meta", style: desk ? "font-size:13px;gap:6px 12px" : null },
+      h("span", { "class": "lead" }, "◆ " + short(x.r.repo) + " #" + x.d.number), blocksText(x.d) ? h("span", null, blocksText(x.d)) : null,
+      dueText(x.d.due) ? h("span", null, dueText(x.d.due)) : null, x.d.since ? h("span", null, "open " + since(x.d.since)) : null);
+  }
+  function goDecision(list, i) { var y = list[(i + list.length) % list.length]; location.hash = decideRoute(y.r.repo, y.d.number); }
+  // Answering is a comment you write on the issue itself. This vigia does not read it: it records nothing, holds
+  // nothing back and releases nothing, so the page says what is left to you.
+  function answerLink(x, cls) {
+    return ext(commentUrl(x.d.url) || commentUrl(issueUrl(x.r.repo, x.d.number)), "Answer on GitHub", cls, null, "answer-gh");
+  }
+  function answerNote(x, desk) {
+    return h("p", { "class": "note", style: desk ? "font-size:14px;max-width:820px" : "font-size:14px" },
+      "vigia does not read the answer yet. Once it is decided, update the tickets it touches yourself, or ratify them with ", labelCode(x.r, "ready"), ".");
+  }
+  function talkParts(x) {
+    var text = brief(x), ref = short(x.r.repo) + " #" + x.d.number, key = talkingKey(x.r, x.d);
+    var cb = h("input", { type: "checkbox", "data-k": "talking-" + decKey(x), on: { change: function (e) { if (e.target.checked) store.set(key, "1"); else store.del(key); } } });
+    cb.checked = !!store.get(key);
+    return [
+      h("p", { "class": "note", style: "font-size:14.5px" }, "Take " + ref + " into a chat with everything the Mesa knows about it. Nothing is decided until you answer on the issue."),
+      h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("span", { "class": "group-h" }, "The brief · " + text.length.toLocaleString("en-US") + " characters"), h("pre", { "class": "brief" }, text)),
+      copyLink(CLAUDE_NEW, "Copy brief and open Claude", text, "talk-open-" + decKey(x), "btn btn-primary btn-big", "Copied · opening Claude"),
+      h("div", { "class": "btn-row" }, copyButton("Copy brief", "Copied", text, "talk-copy-" + decKey(x), "btn btn-ghost btn-tall"), ext(x.d.url, "Discuss on #" + x.d.number, "btn btn-ghost btn-tall")),
+      h("label", { "class": "check" }, cb, h("span", null, "Mark it “talking it over” in Your turn, on this device")),
+      h("p", { "class": "foot" }, "The brief travels by your clipboard, never inside a link.")
+    ];
+  }
+  function modal(labelId, title, body) {
+    function close() { S.sheet = null; S.flash = null; renderNow(); }
+    var sheet = h("section", { "class": "sheet", role: "dialog", "aria-modal": "true", "aria-labelledby": labelId, on: { click: function (e) { e.stopPropagation(); } } },
+      h("span", { "class": "grab", "aria-hidden": "true" }),
+      h("div", { style: "display:flex;align-items:center;gap:8px" }, h("h2", { id: labelId }, title),
+        h("button", { type: "button", "class": "icon-btn", "aria-label": "Close", "data-k": "sheet-close", on: { click: close } }, icon("close", 20))),
+      body);
+    return h("div", { "class": "scrim", on: { click: close } }, sheet);
+  }
+  function noDecisions(desk) {
+    var unknown = unknownRepos("decisions").map(function (r) { return short(r.repo); });
+    // decisions that could not be read are unknown: never "No open decisions"
+    var box = unknown.length ? h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
+      h("span", { "class": "tx" }, h("b", null, "Decisions unknown for " + unknown.join(", ")),
+        h("span", null, "vigia could not read the vigia:decision issues there. Check the issues on GitHub, or ", h("code", null, "gh auth status"), " where vigia runs."))) :
+      h("div", { "class": "empty on-surface" }, h("span", { "class": "ic ok", "aria-hidden": "true" }, "✓"),
+      h("span", { "class": "tx" }, h("b", null, "No open decisions"), h("span", null, "No issue with the vigia:decision label is open. New ones arrive with that label.")));
+    return desk ? box : h("div", { "class": "gut", style: "padding-top:20px" }, box);
+  }
+  function phoneDecision() {
+    var c = currentDecision(), x = c.x, list = c.list;
+    var head = h("header", { "class": "sub-head", style: "gap:8px" },
+      h("a", { "class": "icon-btn", href: "#/turn", "aria-label": "Close decision mode", style: "color:var(--mesa-ink)" }, icon("close", 22)),
+      h("span", { "class": "grow", style: "font:600 15px/1 var(--mesa-font)" }, "Decision mode"),
+      list.length > 1 ? h("button", { type: "button", "class": "icon-btn", "aria-label": "Previous decision", "data-k": "dprev", on: { click: function () { goDecision(list, c.i - 1); } } }, icon("chevL", 20)) : null,
+      list.length ? h("span", { "class": "mono", style: "font-weight:600;font-size:13px;color:var(--mesa-ink-2);min-width:44px;text-align:center" }, (c.i + 1) + " of " + list.length) : null,
+      list.length > 1 ? h("button", { type: "button", "class": "icon-btn", "aria-label": "Next decision", "data-k": "dnext", on: { click: function () { goDecision(list, c.i + 1); } } }, icon("chevR", 20)) : null);
+    if (!x) return [head, noDecisions(false)];
+    var dots = h("div", { "class": "dots gut", "aria-hidden": "true", style: "grid-template-columns:repeat(" + list.length + ",minmax(0,1fr))" },
+      list.map(function (_, k) { return h("i", { "class": k === c.i ? "cur" : k < c.i ? "past" : null }); }));
+    var main = h("main", { "class": "gut", style: "flex:1;display:flex;flex-direction:column;gap:14px;padding-top:20px" },
+      decMeta(x), h("h1", { "class": "dm-q" }, x.d.question),
+      x.d.title && x.d.title !== x.d.question ? h("p", { "class": "t-sub" }, x.d.title) : null,
+      h("fieldset", { "class": "opts" }, h("legend", { "class": "group-h" }, "Options"), optionCards(x, false)),
+      whyBox(x, false), answerNote(x, false));
+    var actions = h("div", { "class": "dm-actions" },
+      answerLink(x, "btn btn-primary btn-big"),
+      h("div", { "class": "btn-row" },
+        h("button", { type: "button", "class": "btn btn-secondary btn-tall", style: "background:var(--mesa-surface)", "data-k": "open-talk", on: { click: function () { S.sheet = "talk"; S.flash = null; S.focusSheet = true; renderNow(); } } }, icon("chat", 18, 1.8), "Talk it over"),
+        h("button", { type: "button", "class": "btn btn-ghost btn-tall", style: "flex:0 0 96px", "data-k": "later", on: { click: function () { if (list.length > 1) goDecision(list, c.i + 1); else location.hash = "#/turn"; } } }, "Later")));
+    return [head, dots, main, actions, S.sheet === "talk" ? modal("talk-title", "Talk it over", talkParts(x)) : null];
+  }
+  function deskDecision() {
+    var c = currentDecision(), x = c.x, list = c.list;
+    var top = h("header", { "class": "dk-top" },
+      h("a", { "class": "back", href: "#/turn", style: "font-size:14.5px;min-height:44px" }, icon("chevL", 20), "Your turn"),
+      h("span", { style: "font:650 17px/1 var(--mesa-font)" }, "Decision mode"), h("span", { "class": "grow" }),
+      list.length > 1 ? h("span", { "class": "dots", "aria-hidden": "true", style: "width:120px;grid-template-columns:repeat(" + list.length + ",minmax(0,1fr))" },
+        list.map(function (_, k) { return h("i", { "class": k === c.i ? "cur" : k < c.i ? "past" : null, style: k > c.i ? "background:var(--mesa-line-strong)" : null }); })) : null,
+      list.length > 1 ? h("button", { type: "button", "class": "icon-btn boxed", "aria-label": "Previous decision", "data-k": "dprev", on: { click: function () { goDecision(list, c.i - 1); } } }, icon("chevL", 18)) : null,
+      list.length ? h("span", { "class": "mono", style: "font-weight:600;font-size:13px;color:var(--mesa-ink-2)" }, (c.i + 1) + " of " + list.length) : null,
+      list.length > 1 ? h("button", { type: "button", "class": "icon-btn boxed", "aria-label": "Next decision", "data-k": "dnext", on: { click: function () { goDecision(list, c.i + 1); } } }, icon("chevR", 18)) : null);
+    if (!x) return [top, h("div", { "class": "dk-body focus dm" }, h("main", { "class": "dk-main focus" }, noDecisions(true)))];
+    var answer = answerLink(x, "btn btn-primary btn-main");
+    answer.setAttribute("style", "border-radius:12px;padding:0 22px;font-size:15.5px");
+    var main = h("main", { "class": "dk-main focus" }, decMeta(x, true),
+      h("h1", { "class": "dm-q", style: "font-size:34px;line-height:1.15;letter-spacing:-0.025em;max-width:26ch" }, x.d.question),
+      x.d.title && x.d.title !== x.d.question ? h("p", { style: "font-size:17px;line-height:1.5;color:var(--mesa-ink-2);max-width:66ch" }, x.d.title) : null,
+      h("fieldset", { "class": "opts", style: "margin-top:6px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:12px" },
+        h("legend", { "class": "group-h", style: "padding-bottom:10px" }, "Options · the recommendation is preselected"), optionCards(x, true)),
+      whyBox(x, true),
+      h("div", { style: "display:flex;flex-wrap:wrap;gap:10px;padding-top:6px" },
+        answer,
+        h("button", { type: "button", "class": "btn btn-secondary btn-main", style: "border-radius:12px;padding:0 20px;font-size:15.5px;background:var(--mesa-surface)", "data-k": "open-talk",
+          on: { click: function () { S.sheet = "talk"; S.flash = null; S.focusSheet = true; renderNow(); } } }, icon("chat", 18, 1.8), "Talk it over"),
+        h("button", { type: "button", "class": "btn btn-ghost btn-main", style: "border-radius:12px;padding:0 20px;font-size:15.5px", "data-k": "later",
+          on: { click: function () { if (list.length > 1) goDecision(list, c.i + 1); else location.hash = "#/turn"; } } }, "Later")),
+      answerNote(x, true));
+    var aside = h("aside", { "class": "dk-aside", style: "gap:14px" }, blockedFacts(x).map(function (b) { return aboutCard(x, b); }),
+      h("section", { "class": "card dashed", style: "padding:14px 18px;gap:6px" }, h("span", { "class": "group-h" }, "Where this came from"),
+        h("span", { "class": "note", style: "font-size:14px" }, x.d.origin || "The decision does not say."),
+        h("span", { "class": "meta" }, "Labelled vigia:decision. The Mesa only reads it; the answer is yours to write on GitHub.")));
+    return [top, h("div", { "class": "dk-body focus dm" }, main, aside), S.sheet === "talk" ? modal("talk-title", "Talk it over", talkParts(x)) : null];
+  }
+  function aboutCard(x, b) {
+    var p = b.p, q = b.q, r = x.r;
+    var name, state, stateCls = "c-3", line, link;
+    if (p) {
+      var tt = p.tried_total || {}, s = prStatus(r, p);
+      name = p.title;
+      state = (p.parked ? "■ Parked at the " + STEP_LABEL[firstStep(p)].toLowerCase() : s.text) + " · " + p.tier + (p.since ? " · " + since(p.since) : "");
+      stateCls = p.parked ? "c-danger" : s.tone === "wait" ? "c-turn" : s.tone === "now" ? "c-live" : "c-3";
+      line = plural(tt.heads || 0, "head") + " · " + (tt.p1 || 0) + " P1 found · " + plural(tt.parks || 0, "park") + ". vigia does not hold it for this decision.";
+      link = nav(prRoute(r.repo, p.number), "What was tried on #" + p.number, "btn btn-secondary");
+    } else if (q) {
+      name = q.title; state = "○ ready · " + q.tier;
+      line = ["vigia picks it up when a slot is free, whatever this decision says. If the answer changes it, edit the ticket or remove ", labelCode(r, "ready"), " first."];
+      link = ext(q.url, "Open ticket #" + q.number, "btn btn-secondary");
+    } else {
+      name = "#" + b.n; state = "○ not an open PR or a ready ticket";
+      line = "The Mesa knows nothing more about #" + b.n + " than its number.";
+      link = ext(issueUrl(r.repo, b.n), "Open #" + b.n, "btn btn-secondary");
+    }
+    return h("section", { "class": "card", style: "padding:16px 18px;gap:10px" }, h("span", { "class": "group-h" }, "About #" + b.n),
+      h("span", { style: "font:600 16px/1.35 var(--mesa-font);overflow-wrap:anywhere" }, name),
+      h("span", { "class": "mono " + stateCls, style: "font-weight:600;font-size:12.5px;line-height:1.3" }, state),
+      h("span", { "class": "note", style: "font-size:14px;line-height:1.5" }, line), link);
+  }
+
+  /* ---------- PR detail ---------- */
+  function prKey(rt) { return rt.repo + "#" + rt.n; }
+  function fetchPR(rt, quiet) {
+    var key = prKey(rt), had = S.pr[key];
+    if (S.sample) {
+      var d = S.state && S.state.pr_details && S.state.pr_details[key];
+      S.pr[key] = d ? { data: d } : { error: "This sample has no detail for #" + rt.n + "." };
+      return;
+    }
+    // A refresh of an open screen keeps showing what it has while it asks again, and keeps it if the ask fails.
+    // One ask at a time, but a stuck one (no answer in 30 s) does not stop the next.
+    if (quiet && had && had.asking && Date.now() - (had.askedAt || 0) < 30000) return;
+    var keep = quiet && had && had.data ? had.data : null;
+    // A retry keeps the last failure on screen until an answer arrives: an ask in flight proves nothing yet.
+    S.pr[key] = keep
+      ? { data: keep, asking: true, askedAt: Date.now(), error: had && had.error }
+      : { loading: true, asking: true, askedAt: Date.now() };
+    var parts = rt.repo.split("/");
+    if (parts.length !== 2 || !NAME.test(parts[0]) || !NAME.test(parts[1])) { S.pr[key] = { error: "Not a repo name." }; return; }
+    function failed(msg) { S.pr[key] = keep ? { data: keep, error: msg } : { error: msg }; render(); }
+    fetch("/api/pr/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/" + rt.n, { cache: "no-store", credentials: "same-origin" })
+      .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, status: res.status, b: b }; }, function () { return { ok: false, status: res.status, b: null }; }); })
+      .then(function (x) {
+        if (x.ok && x.b && typeof x.b === "object") { S.pr[key] = { data: x.b }; render(); }
+        else failed((x.b && x.b.error) || "The server answered " + x.status + ".");
+      }, function () { failed("The Mesa cannot reach vigia."); });
+  }
+  function tlLook(e, tier, r) {
+    var s = sha7(e.sha);
+    switch (e.event) {
+      case "pr_opened": return ["+", "n-plain", "Opened" + (e.issue ? " from issue #" + e.issue : ""), ["builder", e.model, s ? "head " + s : null].filter(Boolean).join(" · ")];
+      case "verdict": {
+        var kind = e.kind === "review" ? (tier && tier !== "?" ? tier + " review" : "Review") : "Gate round " + (e.round || "?");
+        if (e.verdict === "UNAVAILABLE") return ["○", "n-wait", kind + " · unavailable", "no verdict from the other lab · holds the merge" + (s ? " · on " + s : "")];
+        var bad = e.verdict !== "APPROVE";
+        return [bad ? "✕" : "✓", bad ? "n-changes" : "n-ok", kind + " · " + e.verdict + (e.p1 ? " · " + e.p1 + " P1" : ""), [e.engine, e.model, s ? "on " + s : null].filter(Boolean).join(" · ")];
+      }
+      case "fix_started": return ["●", "n-plain", "Fixer started" + (e.stage ? " · " + e.stage + " findings" : ""), [e.engine, e.model, s ? "on " + s : null].filter(Boolean).join(" · ")];
+      case "pushed": return ["↑", "n-plain", "Fix pushed · " + s, [e.stage ? e.stage + " stage" : null, e.from_sha ? "from " + sha7(e.from_sha) : null].filter(Boolean).join(" · ")];
+      case "updated": return ["↑", "n-plain", "Base brought in · " + s, e.from_sha ? "from " + sha7(e.from_sha) : ""];
+      case "head_outside": return ["↑", "n-plain", "New head " + s, "pushed outside vigia"];
+      case "engine_failed": return ["!", "n-fail", "Session failed" + (s ? " on " + s : ""), e.reason || ""];
+      case "parked": return ["■", "n-park", "Parked" + (s ? " on " + s : ""), e.reason || ""];
+      case "unparked": return ["↺", "n-live", "Unparked · counters restart", label(r, "parked") + " removed on GitHub" + (s ? " · head " + s : "")];
+      case "merged": return ["✓", "n-ok", "Merged" + (s ? " at " + s : ""), e.tier ? "tier " + e.tier : ""];
+    }
+    return ["·", "n-plain", cap(String(e.event || "").replace(/_/g, " ")), ""];
+  }
+  function allFindings(d) {
+    var out = [];
+    (d.timeline || []).forEach(function (e) {
+      if (e.event !== "verdict") return;
+      (e.findings || []).forEach(function (f) { if (f.severity === "P1") out.push({ f: f, e: e }); });
+    });
+    return out;
+  }
+  function findingsText(d) {
+    var list = allFindings(d);
+    return [short(d.repo) + " #" + d.number + " · " + d.title, list.length + " P1 findings, newest first:", ""].concat(list.map(function (x) {
+      var where = x.f.file ? x.f.file + (x.f.line ? ":" + x.f.line : "") : "?";
+      return "- [" + (x.f.status || "?") + "] " + where + " — " + x.f.title + " (" + (x.e.kind || "gate") + " round " + (x.e.round || "?") + " on " + sha7(x.e.sha) + ")";
+    })).join("\n");
+  }
+  function prBrief(d, r) {
+    var tt = d.tried_total || {}, lines = [];
+    lines.push(short(d.repo) + " #" + d.number + " · " + d.title + " (" + d.tier + (d.parked ? ", parked" : "") + ")");
+    lines.push((d.parked ? "Why it is parked: " : "Where it stands: ") + d.reason);
+    lines.push("What was tried: " + (tt.gate_rounds || 0) + " gate rounds on " + (tt.heads || 0) + " heads, " + (tt.p1 || 0) + " P1, " + (tt.fix_rounds || 0) + " fix rounds, parked " + (tt.parks || 0) + " times.");
+    var open = allFindings(d).filter(function (x) { return x.f.status === "open"; });
+    if (open.length) {
+      lines.push("Open findings, no clean review has confirmed them fixed (head is " + sha7(d.head) + "):");
+      open.forEach(function (x) { lines.push("- " + (x.f.file || "?") + (x.f.line ? ":" + x.f.line : "") + " " + x.f.title + " (found on " + sha7(x.e.sha) + ")"); });
+    }
+    lines.push("", "History, newest first:");
+    (d.timeline || []).slice(0, 30).forEach(function (e) { var l = tlLook(e, d.tier, r); lines.push("- " + dayTime(e.ts) + " " + l[2] + (l[3] ? " (" + l[3] + ")" : "")); });
+    lines.push("", "PR: " + d.url);
+    if (isInt(d.issue)) lines.push("Ticket: " + issueUrl(d.repo, d.issue));
+    lines.push("Help me decide what to change in the ticket before I remove " + label(r, "parked") + ".");
+    return lines.join("\n");
+  }
+  function timeline(d, desk, r) {
+    var items = d.timeline || [], newestVerdict = -1;
+    items.forEach(function (e, i) { if (newestVerdict < 0 && e.event === "verdict" && (e.findings || []).length) newestVerdict = i; });
+    return h("ol", { "class": "tl" + (desk ? " desk" : ""), style: desk ? "max-width:860px" : "margin-top:4px" }, items.map(function (e, i) {
+      var l = tlLook(e, d.tier, r), fs = e.findings || [], fk = prKey({ repo: d.repo, n: d.number }) + "@" + i;
+      var open = desk || (fk in S.openFindings ? S.openFindings[fk] : i === newestVerdict);
+      var flist = fs.length && open ? h("ul", { "class": "findings" }, fs.map(function (f) {
+        var where = (f.severity || "?") + " · " + (f.file || "?") + (f.line ? ":" + f.line : "") + (f.status ? " · " + f.status : "");
+        return h("li", { "class": f.status || null }, h("span", { "class": "wh" }, where), h("span", { "class": "ft" }, f.title));
+      })) : null;
+      var toggle = fs.length && !desk ? h("button", { type: "button", "class": "btn btn-ghost", style: "align-self:flex-start;margin-top:4px;font-size:13px;border-color:var(--mesa-line-strong)", "aria-expanded": String(open), "data-k": "tog-" + fk,
+        on: { click: function () { S.openFindings[fk] = !open; renderNow(); } } }, open ? "Hide findings" : "Show " + plural(fs.length, "finding")) : null;
+      var node = h("span", { "class": "rail" }, h("span", { "class": "node " + l[1], "aria-hidden": "true" }, l[0]), h("span", { "class": "line" }));
+      var body = desk ? h("div", { "class": "body" }, h("span", { "class": "ttl" }, l[2]), l[3] ? h("span", { "class": "mt" }, l[3]) : null, flist) :
+        h("div", { "class": "body" }, h("div", { "class": "hdr" }, h("span", { "class": "ttl" }, l[2]), h("span", { "class": "age" }, dayTime(e.ts))), l[3] ? h("span", { "class": "mt" }, l[3]) : null, flist, toggle);
+      return desk ? h("li", null, h("time", { datetime: e.ts }, dayTime(e.ts)), node, body) : h("li", null, node, body);
+    }));
+  }
+  function chips(d, r) {
+    var tt = d.tried_total || {}, job = jobFor(r, d.number), state = null;
+    if (d.parked) state = h("span", { "class": "chip s-danger" }, "■ PARKED" + (tt.parks > 1 ? " · " + ordinal(tt.parks) + " TIME" : ""));
+    else if (d.waiting_for === "human") state = h("span", { "class": "chip s-turn" }, "◆ YOUR LABEL");
+    else if (job) state = h("span", { "class": "chip s-live" }, "● " + ({ gate: "AT THE GATE", review: "IN REVIEW", fix: "FIXING" }[job.action] || String(job.action).toUpperCase()));
+    else if (d.next === "merge") state = h("span", { "class": "chip s-live" }, "● MERGING");
+    var ci = { passing: ["✓ CI", "c-ok"], failing: ["✕ CI", "c-danger"], pending: ["● CI", "c-live"] }[d.ci] || ["○ CI", "c-3"];
+    return h("div", { style: "display:flex;flex-wrap:wrap;align-items:center;gap:6px" }, tierChip(d.tier), state,
+      d.head ? h("span", { "class": "fact strong" }, "head " + sha7(d.head)) : null, diffText(d.diff) ? h("span", { "class": "fact" }, diffText(d.diff)) : null,
+      h("span", { "class": "fact " + ci[1] }, ci[0]));
+  }
+  function ordinal(n) { return n + (n % 10 === 1 && n % 100 !== 11 ? "ST" : n % 10 === 2 && n % 100 !== 12 ? "ND" : n % 10 === 3 && n % 100 !== 13 ? "RD" : "TH"); }
+  function standBox(d, desk) {
+    var parkedRow = (d.timeline || []).filter(function (e) { return e.event === "parked"; })[0];
+    if (d.parked) return h("section", { "class": "stand danger", style: desk ? "max-width:760px;padding:16px 18px" : null },
+      h("span", { "class": "kicker k-danger" }, "Why it is parked" + (parkedRow ? (desk ? " · since " + dayTime(parkedRow.ts) : " · " + since(parkedRow.ts)) : "")),
+      h("p", { style: desk ? "font-size:17px;line-height:1.45" : null }, d.reason));
+    if (d.waiting_for === "human") return h("section", { "class": "stand turn", style: desk ? "max-width:760px" : null },
+      h("span", { "class": "kicker k-turn" }, "◆ Waiting for your label"), h("p", null, d.reason));
+    return h("section", { "class": "stand", style: desk ? "max-width:760px" : null },
+      h("span", { "class": "kicker" }, "vigia's next step · " + actionLabel(d.next, d.tier).toLowerCase()), h("p", null, d.reason));
+  }
+  function asks(d, r, desk, approvable) {
+    var out = [], nf = allFindings(d).length, issueN = isInt(d.issue) ? d.issue : null;
+    if (d.waiting_for === "human" && approvable) out.push({ you: true, title: "Approve this head", text: ["Adding ", labelCode(r, "human_ok"), " on GitHub lets vigia merge " + sha7(d.head) + ". A new push needs a new label."],
+      btn: h("div", { "class": "btn-row" }, ext(filesUrl(d.url), "Read the diff", "btn btn-secondary"), ext(d.url, "Approve on GitHub", "btn btn-primary")) });
+    if (d.parked) out.push({ you: true, title: "Edit the ticket, then unpark", text: ["Narrow the scope or turn the findings into acceptance criteria. Removing ", labelCode(r, "parked"), " restarts every counter."],
+      btn: issueN ? ext(issueUrl(d.repo, issueN), "Edit ticket #" + issueN, "btn btn-primary") : ext(d.url, "Open the PR", "btn btn-secondary") });
+    if (nf) out.push({ title: "Use the " + nf + " findings as a test list", text: "Each one names a file and a line, and says whether it is still open on this head.",
+      btn: copyButton("Copy the " + nf + " findings", "Copied " + nf + " findings", function () { return findingsText(d); }, "findings-" + d.repo + d.number, "btn btn-secondary") });
+    if (d.parked) out.push({ title: "Not sure? Talk it over", text: "Copies a brief with the ticket, the history and the open findings, then opens Claude.",
+      btn: copyLink(CLAUDE_NEW, "Copy brief and open Claude", function () { return prBrief(d, r); }, "prtalk-" + d.repo + d.number, "btn btn-secondary", "Copied · opening Claude") });
+    return out;
+  }
+  function prData(rt) {
+    var r = repoOf(rt.repo), base = prIn(r, rt.n), got = S.pr[prKey(rt)] || {};
+    var d = got.data || (base ? Object.assign({ repo: rt.repo, timeline: null }, base) : null);
+    // The detail on screen is for one head. If the state's head is another one, nothing is offered for the old
+    // head, whether the refresh failed, is still in flight or has not started; a failed refresh says so too.
+    var moved = !!(got.data && base && base.head && got.data.head && base.head !== got.data.head);
+    var stale = !!(got.data && (got.error || moved));
+    // Approval is offered only while the current state still says this PR waits for a person: a cached detail
+    // that said so earlier does not keep the offer alive once the state parks the PR, moves it on or drops it.
+    var approvable = !!(base && base.waiting_for === "human");
+    return { r: r, d: d, loading: !!got.loading, error: got.error || null, stale: stale, moved: moved, now: moved ? base.head : null, approvable: approvable };
+  }
+  function staleNote(x, rt) {
+    if (!x.stale) return null;
+    return h("div", { "class": "empty github", "data-k": "stale" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
+      h("span", { "class": "tx" }, h("b", null, "This is the last detail the Mesa could read" + (x.moved ? ", and the head has moved since" : "")),
+        h("span", { "class": "err-detail" }, (x.error ? x.error + " " : "") + (x.moved ? "Shown: " + sha7(x.d.head) + ". vigia is now on " + sha7(x.now) + "; refreshing." : "Refreshing again every 15 s."))));
+  }
+  function prLoadingOrError(x, rt) {
+    if (x.error) return h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
+      h("span", { "class": "tx" }, h("b", null, "The Mesa could not read the whole story of #" + rt.n), h("span", { "class": "err-detail" }, x.error)));
+    if (x.loading) return h("p", { "class": "note" }, "Reading the ledger and the PR's comments…");
+    return null;
+  }
+  function noPR(x, rt) {
+    if (x.r && x.r.prs === null) return h("p", { "class": "note c-danger" }, "! The pull requests of " + rt.repo + " are unknown: vigia cannot read this repo.");
+    return h("p", { "class": "note" }, "No open PR #" + rt.n + " in " + rt.repo + ".");
+  }
+  function phonePR() {
+    var rt = S.route, x = prData(rt), d = x.d, back = S.lastPlace;
+    var label = (PLACES.filter(function (p) { return p.id === back; })[0] || PLACES[1]).label;
+    var head = h("header", { "class": "sub-head" },
+      h("a", { "class": "back", href: "#/" + back }, icon("chevL", 22), label), h("span", { "class": "grow" }),
+      ext(d ? d.url : pullUrl(rt.repo, rt.n), short(rt.repo) + " #" + rt.n, "gh-ref"));
+    if (!d) return [head, h("div", { "class": "gut", style: "padding-top:12px" }, prLoadingOrError(x, rt) || noPR(x, rt))];
+    var tt = d.tried_total || {}, meta = [d.built_by ? "built by " + model(d.built_by) : null, isInt(d.issue) ? "from issue #" + d.issue : null, d.opened ? "opened " + dayTime(d.opened) : null].filter(Boolean).join(" · ");
+    var out = [head,
+      h("div", { "class": "gut", style: "padding-top:8px;display:flex;flex-direction:column;gap:10px" },
+        h("h1", { style: "font:650 23px/1.22 var(--mesa-font);letter-spacing:-0.02em;overflow-wrap:anywhere" }, d.title), chips(d, x.r), meta ? h("p", { "class": "meta" }, meta) : null),
+      h("div", { "class": "gut", style: "margin-top:16px" }, track(d)),
+      h("div", { "class": "gut", style: "margin-top:18px" }, standBox(d, false)),
+      h("section", { "class": "gut", "aria-labelledby": "tried-h", style: "margin-top:26px;display:flex;flex-direction:column;gap:12px" },
+        h("h2", { id: "tried-h", "class": "t-section" }, "What was tried"),
+        h("div", { "class": "tiles" }, h("span", { "class": "tile" }, h("b", null, String(tt.gate_rounds || 0)), h("span", null, "gate rounds")),
+          h("span", { "class": "tile" }, h("b", null, String(tt.heads || 0)), h("span", null, "heads")),
+          h("span", { "class": "tile" }, h("b", { "class": tt.p1 ? "c-danger" : null }, String(tt.p1 || 0)), h("span", null, "P1 found")),
+          h("span", { "class": "tile" }, h("b", null, String(tt.parks || 0)), h("span", null, "parks"))),
+        d.timeline ? timeline(d, false, x.r) : prLoadingOrError(x, rt))];
+    var as = x.moved ? [] : asks(d, x.r, false, x.approvable);
+    if (x.stale) out.splice(1, 0, h("div", { "class": "gut", style: "padding-top:4px" }, staleNote(x, rt)));
+    out.push(h("div", { "class": "gut", style: "margin-top:8px" }, h("section", { "class": "card tight", "aria-labelledby": "next-h" },
+      h("h2", { id: "next-h", style: "font:650 18px/1.2 var(--mesa-font);margin-bottom:8px" }, as.length ? "What you can do" : "Nothing for you right now"),
+      as.length ? as.map(function (a) { return h("div", { "class": "ask" }, h("b", null, a.title), a.text ? h("p", null, a.text) : null, a.btn); }) :
+        h("div", { "class": "ask" }, h("p", null, x.moved ? "The head moved and the detail could not be refreshed, so nothing is offered for " + sha7(d.head) + "." : "vigia's next step is " + actionLabel(d.next, d.tier).toLowerCase() + ": " + d.reason + ".")))));
+    if (d.engine_line) out.push(h("div", { "class": "gut", style: "margin-top:16px" }, h("section", { "class": "card dashed", style: "padding:14px 16px;gap:6px" },
+      h("span", { "class": "group-h" }, "Latest handoff · " + sha7(d.head)), h("span", { "class": "meta", style: "font-size:12.5px;color:var(--mesa-ink-2)" }, d.engine_line),
+      ext(d.url, "Read it on GitHub", "btn btn-quiet", null, "handoff"))));
+    out.push(h("p", { "class": "foot gut", style: "margin:24px 0 28px" }, "Everything on this page comes from the ledger and the PR's own comments. vigia wrote each step there before acting."));
+    return out;
+  }
+  function deskPR() {
+    var rt = S.route, x = prData(rt), d = x.d, back = S.lastPlace;
+    var label = (PLACES.filter(function (p) { return p.id === back; })[0] || PLACES[1]).label;
+    var top = h("header", { "class": "dk-top" },
+      h("a", { "class": "back", href: "#/" + back, style: "font-size:14.5px" }, icon("chevL", 20), label),
+      h("span", { "class": "mono", style: "font-size:14px;color:var(--mesa-ink-2)" }, short(rt.repo) + " #" + rt.n), h("span", { "class": "grow" }),
+      livePill(true), ext(d ? d.url : pullUrl(rt.repo, rt.n), "Open on GitHub", "btn btn-ghost", null, "open-gh"));
+    if (!d) return [top, h("div", { "class": "dk-body focus" }, h("main", { "class": "dk-main focus" }, prLoadingOrError(x, rt) || noPR(x, rt)))];
+    var tt = d.tried_total || {}, tl = d.timeline || [];
+    var reviews = tl.filter(function (e) { return e.event === "verdict" && e.kind === "review"; }).length;
+    var opened = tl.filter(function (e) { return e.event === "pr_opened"; }).slice(-1)[0];
+    var meta = [d.built_by ? "built by " + model(d.built_by) : null, isInt(d.issue) ? "from issue #" + d.issue : null, d.opened ? "opened " + dayTime(d.opened) : null, opened && opened.branch ? "branch " + opened.branch : null].filter(Boolean).join(" · ");
+    var gate = tl.filter(function (e) { return e.event === "verdict" && e.kind === "gate"; })[0];
+    var rev = tl.filter(function (e) { return e.event === "verdict" && e.kind === "review"; })[0];
+    var main = h("main", { "class": "dk-main focus" }, staleNote(x, rt), chips(d, x.r),
+      h("h1", { style: "font:650 32px/1.15 var(--mesa-font);letter-spacing:-0.025em;max-width:30ch;overflow-wrap:anywhere" }, d.title),
+      meta ? h("p", { "class": "meta", style: "font-size:13px" }, meta) : null,
+      track(d, true), standBox(d, true),
+      h("div", { style: "display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;padding-top:10px" }, h("h2", { style: "font:650 22px/1.2 var(--mesa-font);letter-spacing:-0.01em" }, "What was tried"),
+        h("span", { "class": "mono", style: "font-size:13px;color:var(--mesa-ink-2)" }, plural(tt.heads || 0, "head") + " · " + plural(tt.gate_rounds || 0, "gate round") + " · " + plural(reviews, "review") + " · ",
+          h("strong", { "class": "c-danger", style: "font-weight:600" }, (tt.p1 || 0) + " P1"), " · " + plural(tt.fix_rounds || 0, "fix round") + " · " + plural(tt.parks || 0, "park"))),
+      d.timeline ? timeline(d, true, x.r) : prLoadingOrError(x, rt));
+    var as = x.moved ? [] : asks(d, x.r, true, x.approvable), mine = as.filter(function (a) { return a.you; });
+    var next = h("section", { "class": "card", style: "padding:18px;gap:10px;" + (mine.length ? "border:1.5px solid var(--mesa-turn)" : "") },
+      h("span", { "class": "kicker " + (mine.length ? "k-turn" : "") }, mine.length ? "◆ Next step is yours" : "Next step is vigia's"),
+      as.length ? as.map(function (a, i) { return h("div", { style: "display:flex;flex-direction:column;gap:8px;" + (i ? "padding-top:10px;border-top:1px solid var(--mesa-line)" : "") },
+        h("span", { style: "font:600 16px/1.35 var(--mesa-font);overflow-wrap:anywhere" }, a.title), a.text ? h("span", { "class": "note", style: "font-size:14px" }, a.text) : null, a.btn); }) :
+        h("span", { "class": "note", style: "font-size:14px" }, x.moved ? "The head moved and the detail could not be refreshed, so nothing is offered for " + sha7(d.head) + "." : actionLabel(d.next, d.tier) + ": " + d.reason + "."));
+    function fact(k, v) { return v ? h("div", null, h("span", { "class": "k" }, k), h("span", { "class": "v" }, v)) : null; }
+    var facts = h("section", { "class": "side-card", style: "padding:18px" }, h("h2", { style: "margin-bottom:8px" }, "Facts"),
+      h("div", { "class": "facts" }, fact("Tier", d.tier), fact("Head", String(d.head || "").slice(0, 8)), fact("Built by", d.built_by),
+        fact("Gate", gate ? [gate.model, gate.family ? "lab " + gate.family : null].filter(Boolean).join(" · ") : null),
+        fact("Reviewer", rev ? [rev.model, rev.family ? "lab " + rev.family : null].filter(Boolean).join(" · ") : null),
+        fact("Rounds", "gate " + (tt.gate_rounds || 0) + " · fix " + (tt.fix_rounds || 0) + " · unparked " + (tt.unparks || 0) + " times"),
+        fact("CI", d.ci), fact("Next", actionLabel(d.next, d.tier).toLowerCase())));
+    var hand = d.engine_line ? h("section", { "class": "card dashed", style: "padding:16px 18px;gap:8px" }, h("span", { "class": "group-h" }, "Latest handoff · " + sha7(d.head)),
+      h("span", { "class": "meta", style: "font-size:12.5px;line-height:1.55;color:var(--mesa-ink-2)" }, d.engine_line),
+      h("span", { style: "display:flex;flex-wrap:wrap;gap:4px 12px" }, ext(d.url, "Handoff", "btn btn-quiet", null, "h1"), ext(filesUrl(d.url), "Diff", "btn btn-quiet", null, "h2"),
+        isInt(d.issue) ? ext(issueUrl(d.repo, d.issue), "Ticket #" + d.issue, "btn btn-quiet", null, "h3") : null)) : null;
+    return [top, h("div", { "class": "dk-body focus" }, main, h("aside", { "class": "dk-aside", style: "flex-basis:320px;gap:14px" }, next, facts, hand))];
+  }
+
+  /* ---------- shells ---------- */
+  function phoneHeader() {
+    return h("header", { "class": "ph-head gut" }, logo(24), h("span", { "class": "brand" }, "vigia"), h("span", { "class": "brand-k" }, "Mesa"), h("span", { "class": "grow" }), livePill(false));
+  }
+  function tabBar(place, count) {
+    return h("nav", { "class": "tabs", "aria-label": "Mesa" }, PLACES.map(function (p) {
+      return h("a", { "class": "tab", href: "#/" + p.id, "aria-current": p.id === place ? "page" : null, "data-k": "tab-" + p.id },
+        icon(p.icon, 22, 1.8), p.label, p.id === "turn" && count ? h("span", { "class": "badge" }, String(count)) : null,
+        p.id === "turn" && count ? h("span", { "class": "vh" }, ", " + count + " need you") : null);
+    }));
+  }
+  function phoneShell() {
+    var rt = S.route;
+    if (rt.name === "decide") return h("div", { "class": "ph sub" }, h("div", { "class": "ph-in", style: "min-height:100vh;display:flex;flex-direction:column" }, phoneDecision()));
+    if (rt.name === "pr") return h("div", { "class": "ph sub" }, h("div", { "class": "ph-in" }, phonePR()));
+    var body = { turn: phoneTurn, factory: phoneFactory, captures: phoneCaptures, feed: phoneFeed, fuel: phoneFuel }[rt.name]();
+    var b = banner(), sn = sampleNote();
+    return h("div", { "class": "ph" }, h("div", { "class": "ph-in" }, phoneHeader(),
+      b || sn ? h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:8px;padding-bottom:10px" }, b, sn) : null,
+      body, h("div", { "class": "gut", style: "padding-top:20px;padding-bottom:20px" }, themeControl())), tabBar(rt.name, turnModel().count));
+  }
+  function deskTop(count, place) {
+    var total = slotsTotal(), busy = busyTotal(), left = codexLeft(), mt = mergedToday();
+    return h("header", { "class": "dk-top" }, logo(26), h("span", { "class": "brand" }, "vigia"), h("span", { "class": "brand-k" }, "Mesa"), h("span", { "class": "grow" }),
+      h("span", { "class": "pills" }, livePill(true),
+        h("span", { "class": "pill" }, "sessions ", h("b", { "class": "c-live" }, busy + " / " + total)),
+        h("span", { "class": "pill" }, "merged today ", h("b", { "class": "c-ok" }, mt == null ? "—" : String(mt))),
+        h("span", { "class": "pill" }, "Codex ", h("b", null, left == null ? "—" : pct(left)), " · Claude ", h("b", { "class": "c-3" }, "—")),
+        place !== "turn" && count ? h("a", { "class": "pill", href: "#/turn", style: "background:var(--mesa-turn-bg);border-color:transparent;color:var(--mesa-turn-ink);font:600 12.5px/1 var(--mesa-font);text-decoration:none;min-height:44px" }, "◆ Your turn · " + count) : null,
+        h("span", { "class": "pill ro" }, icon("lock", 13, 2.2), "Read-only")));
+  }
+  function rail(place, m) {
+    var decs = openDecisions().length, live = busyTotal();
+    function item(id, label, ic, extra, sub) {
+      return h("a", { "class": "ri" + (sub ? " sub" : ""), href: "#/" + id, "aria-current": id === place ? "page" : null, "data-k": "rail-" + id }, ic ? icon(ic, 19, 1.8) : null, h("span", { "class": "grow" }, label), extra);
+    }
+    return h("nav", { "class": "rail", "aria-label": "Mesa" },
+      item("turn", "Your turn", "turn", m.count ? h("span", { "class": "badge md" }, String(m.count)) : null),
+      decs ? item("decide", "Decisions", null, h("span", { "class": "n c-turn" }, String(decs)), true) : null,
+      item("captures", "Captures", "captures", h("span", { "class": "n c-3" }, "0")),
+      item("factory", "Factory", "factory", live ? h("span", { "class": "dot live pulse", "aria-label": live + " running" }) : null),
+      item("feed", "Feed", "feed"), item("fuel", "Fuel", "fuel"),
+      h("span", { "class": "group-h rail-h" }, "Repos"),
+      repos().map(function (r) {
+        var jobs = (r.jobs || []).length, parked = (r.prs || []).filter(function (p) { return p.parked; }).length;
+        var mark = r.error ? h("span", { "class": "n c-danger" }, "! error") : jobs ? h("span", { "class": "n c-live" }, "● " + jobs) : parked ? h("span", { "class": "n c-danger" }, "■ " + parked) : h("span", { "class": "n c-3" }, "○");
+        return h("a", { "class": "ri repo", href: "#/factory", "data-k": "rail-repo-" + r.repo }, h("span", { "class": "grow wrap-any" }, short(r.repo)), mark);
+      }),
+      h("p", { "class": "foot", style: "margin:24px 12px 0" }, "The Mesa never writes as you. Every ↗ opens GitHub, where your login decides."),
+      h("div", { style: "margin:16px 12px 0" }, themeControl()));
+  }
+  function deskTurnAside() {
+    var ss = sessions(), left = codexLeft(), c = S.state && S.state.fuel && S.state.fuel.codex, cu = (S.state && S.state.fuel && S.state.fuel.claude_usage) || {};
+    return h("aside", { "class": "dk-aside" },
+      h("section", { "class": "side-card", "aria-labelledby": "now-h" }, h("div", { "class": "hrow" }, h("h2", { id: "now-h" }, "Right now"), h("span", { "class": "grow" }),
+        h("a", { href: "#/factory", style: "font:600 13px/1 var(--mesa-font);color:var(--mesa-ink-2);min-height:44px;display:inline-flex;align-items:center" }, "Factory")),
+        ss.length ? ss.map(function (s) {
+          return h("div", { "class": "sess" + (s.over ? " over" : ""), style: "gap:5px" }, h("div", { "class": "top" }, h("span", { "class": "dot " + (s.over ? "danger" : "live pulse") }),
+            h("span", { "class": "what", style: "font-size:14px;flex:1" }, s.what), h("span", { "class": "sage", style: "font-size:12.5px" }, s.age)), h("span", { "class": "eng", style: "padding-left:15px" }, s.eng));
+        }) : null,
+        h("span", { style: "padding-top:10px;border-top:1px solid var(--mesa-line);font-size:13px;color:var(--mesa-ink-3)" }, freeLine())),
+      h("section", { "class": "side-card", "aria-labelledby": "today-h" }, h("div", { "class": "hrow" }, h("h2", { id: "today-h" }, "Merged today"),
+        mergedToday() != null ? h("span", { "class": "mono c-ok", style: "font-weight:600;font-size:13px" }, String(mergedToday())) : null),
+        mergedRows().length ? mergedRows().map(function (x) {
+          return h("div", { style: "display:flex;align-items:center;gap:10px;min-height:40px;border-top:1px solid var(--mesa-line)" }, h("span", { "class": "c-ok", style: "font-weight:600" }, "✓"),
+            h("span", { style: "flex:1;min-width:0;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, short(x.r.repo) + " #" + x.m.pr + (x.m.title ? " · " + x.m.title : "")),
+            h("span", { "class": "age" }, (x.m.tier || "") + " " + hhmm(x.m.ts)));
+        }) : h("span", { "class": "note" }, "Nothing merged today yet.")),
+      h("section", { "class": "side-card", "aria-labelledby": "fuel-h", style: "gap:12px" }, h("h2", { id: "fuel-h" }, "Fuel"),
+        h("div", { "class": "mini-tank" }, h("span", { "class": "hr" }, h("span", null, "Codex"), h("span", { "class": left != null && left < 30 ? "c-danger" : null }, left == null ? "unknown" : pct(left) + " left")),
+          left == null ? h("span", { "class": "meter sm unknown", "aria-hidden": "true" }) : h("span", { "class": "meter sm", "aria-hidden": "true" }, h("i", { "class": left < 30 ? "low" : null, style: "width:" + left + "%" })),
+          c && resetsText(c.resets_at) ? h("span", { "class": "meta" }, resetsText(c.resets_at)) : null),
+        h("div", { "class": "mini-tank" }, h("span", { "class": "hr" }, h("span", null, "Claude"), h("span", { "class": "c-3" }, "unknown")), h("span", { "class": "meter sm unknown", "aria-hidden": "true" }),
+          h("span", { "class": "meta" }, plural(cu.sessions_7d || 0, "session") + " this week · check /usage"))));
+  }
+  function deskShell() {
+    var rt = S.route, m = turnModel();
+    if (rt.name === "decide") return h("div", null, deskDecision());
+    if (rt.name === "pr") return h("div", null, deskPR());
+    var b = banner(), sn = sampleNote(), head = [b, sn];
+    var main, aside = null;
+    if (rt.name === "turn") {
+      main = h("main", { "class": "dk-main" }, head, h("div", { style: "display:flex;flex-direction:column;gap:6px" },
+        h("h1", { "class": "t-display", style: "display:flex;align-items:center;gap:12px" }, "Your turn", m.count ? h("span", { "class": "badge xl" }, String(m.count)) : null),
+        turnLine(m, true) ? h("p", { style: "font-size:16px;color:var(--mesa-ink-2)" }, turnLine(m, true)) : null), turnGroups(m, true));
+      aside = deskTurnAside();
+    } else if (rt.name === "factory") {
+      main = h("main", { "class": "dk-main wide" }, head, deskFactory());
+    } else {
+      var title = { captures: ["Captures", "UI changes, before and after, on the exact head. Looking never blocks a merge."], feed: ["Feed", "What vigia did, newest first. Every line is one ledger row."], fuel: ["Fuel", "What each lab's plan has left this week, and what vigia spent from it."] }[rt.name];
+      var body = { captures: capturesBody, feed: function () { return feedBody(true); }, fuel: function () { return fuelBody(true); } }[rt.name]();
+      main = h("main", { "class": "dk-main" }, head, h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-display" }, title[0]), h("p", { style: "font-size:16px;color:var(--mesa-ink-2)" }, title[1])), body);
+    }
+    return h("div", null, deskTop(m.count, rt.name), h("div", { "class": "dk-body" }, rail(rt.name, m), main, aside));
+  }
+
+  /* ---------- render: never while you type or while a sheet is open from a poll ---------- */
+  var app = document.getElementById("app");
+  function busyTyping() {
+    var a = document.activeElement;
+    return a && app.contains(a) && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && a.type !== "checkbox"));
+  }
+  function render() {
+    if (busyTyping() || S.manual) { S.dirty = true; return; }
+    renderNow();
+  }
+  function renderNow() {
+    S.dirty = false;
+    var a = document.activeElement, fk = a && app.contains(a) ? a.getAttribute("data-k") : null;
+    var node;
+    if (!S.state) {
+      node = h("div", { "class": "gut", style: "padding-top:24px;display:flex;flex-direction:column;gap:12px;max-width:720px;margin:0 auto" },
+        h("div", { style: "display:flex;align-items:center;gap:10px" }, logo(24), h("span", { "class": "brand" }, "vigia"), h("span", { "class": "brand-k" }, "Mesa")),
+        S.error ? banner() : h("p", { "class": "note" }, "Reading vigia's state…"));
+    } else {
+      node = DESK.matches ? deskShell() : phoneShell();
+    }
+    while (app.firstChild) app.removeChild(app.firstChild);
+    app.appendChild(node);
+    if (S.manual) app.appendChild(manualSheet());
+    document.body.classList.toggle("locked", !!(S.manual || S.sheet));
+    if (S.focusSheet) {  // a sheet that just opened takes the focus
+      S.focusSheet = false;
+      fk = S.manual ? "manual-close" : "sheet-close";
+    }
+    if (fk) {
+      var el = null;
+      try { el = app.querySelector('[data-k="' + (window.CSS && CSS.escape ? CSS.escape(fk) : fk) + '"]'); } catch (e) { el = null; }
+      if (el) el.focus({ preventScroll: true });
+    }
+  }
+  function manualSheet() {
+    var m = S.manual;
+    var pre = h("pre", { "class": "brief", tabindex: "0", style: "max-height:240px" }, m.text);
+    function close() { S.manual = null; renderNow(); }
+    return h("div", { "class": "scrim", on: { click: close } }, h("section", { "class": "sheet", role: "dialog", "aria-modal": "true", "aria-labelledby": "manual-h", on: { click: function (e) { e.stopPropagation(); } } },
+      h("span", { "class": "grab", "aria-hidden": "true" }),
+      h("div", { style: "display:flex;align-items:center;gap:8px" }, h("h2", { id: "manual-h" }, "Copy by hand"),
+        h("button", { type: "button", "class": "icon-btn", "aria-label": "Close", "data-k": "manual-close", on: { click: close } }, icon("close", 20))),
+      h("p", { "class": "note", style: "font-size:14px" }, "This browser did not let the Mesa use the clipboard: it needs https or localhost, and your permission. Copy by hand: select the text below and copy it."),
+      pre,
+      h("button", { type: "button", "class": "btn btn-secondary", "data-k": "select-all", on: { click: function () {
+        try { var sel = window.getSelection(), range = document.createRange(); range.selectNodeContents(pre); sel.removeAllRanges(); sel.addRange(range); } catch (e) {}
+      } } }, "Select all"),
+      m.url ? ext(m.url, m.label || "Open", "btn btn-primary btn-big") : null));
+  }
+  // a poll that arrived while you typed renders after you leave the field, late enough not to eat the click that moved focus
+  app.addEventListener("focusout", function () { setTimeout(function () { if (S.dirty && !busyTyping() && !S.manual) renderNow(); }, 600); });
+
+  /* ---------- routes: #/turn #/factory #/captures #/feed #/fuel #/decide[/owner/repo/n] #/pr/owner/repo/n ---------- */
+  function parseRoute() {
+    var p = location.hash.replace(/^#\/?/, "").split("/");
+    if (p[0] === "pr" && p.length === 4 && NAME.test(p[1]) && NAME.test(p[2]) && /^\d{1,9}$/.test(p[3])) return { name: "pr", repo: p[1] + "/" + p[2], n: Number(p[3]) };
+    if (p[0] === "decide") {
+      if (p.length === 4 && NAME.test(p[1]) && NAME.test(p[2]) && /^\d{1,9}$/.test(p[3])) return { name: "decide", repo: p[1] + "/" + p[2], n: Number(p[3]) };
+      return { name: "decide" };
+    }
+    if (PLACE_IDS.indexOf(p[0]) >= 0) return { name: p[0] };
+    return null;
+  }
+  function onRoute() {
+    var prev = S.route, rt = parseRoute();
+    if (!rt) {
+      var saved = store.get("mesa.tab");
+      rt = { name: PLACE_IDS.indexOf(saved) >= 0 ? saved : "turn" };
+    }
+    if (PLACE_IDS.indexOf(rt.name) >= 0) { S.lastPlace = rt.name; store.set("mesa.tab", rt.name); }
+    var same = prev && prev.name === rt.name && prev.repo === rt.repo && prev.n === rt.n;
+    S.route = rt;
+    if (!same) { S.sheet = null; S.flash = null; }
+    if (rt.name === "pr" && !same) fetchPR(rt);
+    renderNow();
+    if (!same && !(prev && prev.name === "decide" && rt.name === "decide")) window.scrollTo(0, 0);
+  }
+  window.addEventListener("hashchange", onRoute);
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (S.manual) { S.manual = null; renderNow(); }
+    else if (S.sheet) { S.sheet = null; S.flash = null; renderNow(); }
+  });
+  function onLayout() { applyTheme(); renderNow(); }
+  if (DESK.addEventListener) DESK.addEventListener("change", onLayout); else if (DESK.addListener) DESK.addListener(onLayout);
+
+  /* ---------- data: GET /api/state every 15 s, read-only ---------- */
+  function load() {
+    fetch("/api/state", { cache: "no-store", credentials: "same-origin" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (s) {
+        var polled = !!S.lastOk; // the first read comes with the route's own fetch of the detail
+        S.state = s; S.error = null; S.lastOk = Date.now();
+        if (polled && S.route && S.route.name === "pr") fetchPR(S.route, true); // the open screen follows the watcher too
+        render();
+      },
+        function (e) { S.error = String(e && e.message || e); render(); });
+  }
+  var embedded = (document.getElementById("mesa-sample").textContent || "").trim();
+  if (embedded.charAt(0) === "{") {
+    try { S.state = JSON.parse(embedded); S.sample = true; S.lastOk = Date.now(); } catch (e) { S.state = null; }
+  }
+  applyTheme();
+  onRoute();
+  if (!S.sample) { load(); setInterval(load, POLL_MS); }
 })();
 </script>
+</body>
+</html>
