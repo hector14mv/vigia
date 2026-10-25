@@ -207,3 +207,11 @@ def test_init_uses_only_the_fake_runner_for_the_clone(tmp_path):
     runner = make_runner(tmp_path)
     run_init(tmp_path, runner=runner)
     assert ["git", "rev-parse", "--show-toplevel"] in runner.calls
+
+
+def test_init_creates_the_follow_up_label():
+    from vigia.config import Labels
+    from vigia.init import label_specs
+
+    specs = {name: description for name, _, description in label_specs(Labels())}
+    assert "vigia:follow-up" in specs

@@ -78,6 +78,7 @@ class Labels:
     review: str = "vigia:review"
     parked: str = "vigia:parked"
     human_ok: str = "vigia:human-ok"
+    follow_up: str = "vigia:follow-up"
     tier_prefix: str = "tier:"
 
     def tier(self, tier: str) -> str:
@@ -87,7 +88,7 @@ class Labels:
         """Workflow labels that are also a planner or tier label (GitHub compares labels ignoring case). A ready
         label named `vigia:proposed` would send every ticket the planner holds back straight to the queue."""
         others = {n.casefold() for n in (PROPOSED, HUMAN_TASK, *(self.tier(t) for t in TIERS))}
-        workflow = (self.ready, self.building, self.review, self.parked, self.human_ok)
+        workflow = (self.ready, self.building, self.review, self.parked, self.human_ok, self.follow_up)
         return [n for n in workflow if n.casefold() in others]
 
 
@@ -268,8 +269,8 @@ def parse(data: dict, path: Path | None = None) -> Config:
     if unknown:
         raise ConfigError(f"labels: unknown keys {sorted(unknown)}")
     labels = Labels(**{k: str(v) for k, v in labels_t.items()})
-    names = [labels.ready, labels.building, labels.review, labels.parked, labels.human_ok]
-    if len(set(names)) != len(names):
+    names = [labels.ready, labels.building, labels.review, labels.parked, labels.human_ok, labels.follow_up]
+    if len({n.casefold() for n in names}) != len(names):  # GitHub compares label names ignoring case
         raise ConfigError("labels: every label must be different")
     if labels.collisions():
         raise ConfigError(f"labels: {labels.collisions()} are reserved for the planner and the tiers")

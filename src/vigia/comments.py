@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 from .config import FAMILIES, Seat
 
 HANDOFF_HEAD = re.compile(r"^## Handoff ([0-9a-f]{40})\b")
 ENGINE_LINE = re.compile(r"^Engine:\s*(claude|codex)\b", re.M)
+FOLLOW_UPS_HEAD = re.compile(r"^##\s+Follow-ups\s*$", re.I)
+BULLET = re.compile(r"^\s{0,3}[-*+]\s+(.*\S)")
+TITLE_MAX = 70
+MARKER = re.compile(r"^<!-- vigia:follow-up pr=(\d+) hash=([0-9a-f]{12}) -->$", re.M)
 
 
 def handoff(
@@ -49,6 +54,73 @@ def handoff_for(comments: list[dict], sha: str, login: str | None) -> str:
         if m and m.group(1) == sha and (login is None or c["author"] == login):
             found = c["body"]
     return found
+
+
+def handoffs(comments: list[dict], login: str | None) -> list[str]:
+    """The body of every handoff comment posted by vigia's own login, oldest first."""
+    return [
+        c["body"]
+        for c in comments
+        if HANDOFF_HEAD.match(c["body"].lstrip()) and (login is None or c["author"] == login)
+    ]
+
+
+def follow_ups(body: str) -> list[str]:
+    """The bullets of a handoff's `## Follow-ups` section, one string each (wrapped lines joined).
+
+    "none" bullets are dropped here, so what comes back is work somebody should look at.
+    """
+    items: list[list[str]] = []
+    inside = False
+    for line in body.splitlines():
+        if line.startswith("#"):
+            inside = bool(FOLLOW_UPS_HEAD.match(line.rstrip()))
+            continue
+        if not inside or not line.strip():
+            continue
+        bullet = BULLET.match(line)
+        if bullet:
+            items.append([bullet.group(1)])
+        elif items:
+            items[-1].append(line.strip())
+    texts = (" ".join(" ".join(parts).split()) for parts in items)
+    return [t for t in texts if t.strip(" .*_`").lower() != "none"]
+
+
+def follow_up_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def follow_up_title(text: str) -> str:
+    """The bullet cut to 70 characters at a word boundary."""
+    if len(text) <= TITLE_MAX:
+        return text
+    cut = text[:TITLE_MAX]
+    if not text[TITLE_MAX].isspace() and " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:-")
+
+
+def follow_up_marker(pr: int, digest: str) -> str:
+    return f"<!-- vigia:follow-up pr={pr} hash={digest} -->"
+
+
+def marked_follow_ups(body: str, pr: int) -> set[str]:
+    """Hashes of the follow-up markers an issue body carries for PR `pr` (a quoted bullet cannot fake one)."""
+    return {digest for number, digest in MARKER.findall(body) if int(number) == pr}
+
+
+def follow_up_issue(text: str, pr: int, pr_url: str, sha: str) -> tuple[str, str]:
+    """Title and body of the issue for one follow-up bullet."""
+    quoted = "\n".join(f"> {line}" for line in text.splitlines())
+    link = f"{pr_url} (#{pr})" if pr_url else f"#{pr}"
+    body = (
+        f"{quoted}\n\n"
+        f"A builder or fixer noted this outside its ticket in PR {link}, merged at `{sha}`.\n\n"
+        "This is a note, not a ticket: rewrite it into the vigia ticket template before it gets `vigia:ready`.\n\n"
+        f"{follow_up_marker(pr, follow_up_hash(text))}\n"
+    )
+    return follow_up_title(text), body
 
 
 def engine_family(comments: list[dict], login: str | None) -> str | None:

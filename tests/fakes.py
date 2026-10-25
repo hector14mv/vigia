@@ -99,6 +99,9 @@ class FakeGitHub:
     def _item(self, n: int) -> dict:
         return self.issues_.get(n) or self.prs_[n]
 
+    def issues_by(self, creator: str, since: str | None) -> list[dict]:
+        return [dict(i) for i in self.issues_.values()]  # every issue in the fake was filed by its one login
+
     def open_issues(self) -> list[dict]:
         return [dict(i) for i in self.issues_.values() if i["state"] == "OPEN"]
 
@@ -170,6 +173,9 @@ class FakeGitHub:
             "mergeable": "MERGEABLE",
         }
         return n
+
+    def merged_at(self, n: int) -> str | None:
+        return "2026-10-24T00:00:00Z" if self.prs_[n]["state"] == "MERGED" else None
 
     def merge(self, n: int, sha: str) -> None:
         p = self.prs_[n]

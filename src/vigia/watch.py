@@ -8,13 +8,18 @@ on the same repository at once in v0.1.
 from __future__ import annotations
 
 import time
+from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from . import builder, comments, gate, jobs, tickets
 from .context import Ctx
 from .ledger import utcnow
 from .proc import CommandError
 from .rules import Decision, PRState, Verdict, decide
+
+MAX_FOLLOW_UPS = 5  # issues filed per merged PR, however many bullets the handoffs hold
+LOOK_BACK_SECONDS = 60  # crash recovery looks this far before GitHub's merge time
 
 
 @dataclass
@@ -146,11 +151,98 @@ def merge(ctx: Ctx, seen: Seen) -> bool:
         return False
     ctx.gh.merge(n, sha)
     opened = ctx.ledger.last("pr_opened", pr=n) or {}
-    ctx.ledger.append("merged", pr=n, sha=sha, tier=st.tier, issue=opened.get("issue"), title=fresh["title"])
+    # `follow_ups` marks a merge whose handoff notes are still owed to the tracker (see `pending_follow_ups`).
+    ctx.ledger.append(
+        "merged",
+        pr=n,
+        sha=sha,
+        tier=st.tier,
+        issue=opened.get("issue"),
+        title=fresh["title"],
+        follow_ups=True,
+    )
     ctx.gh.delete_branch(fresh["branch"])
     ctx.gh.comment(n, comments.merged(sha, st.tier or "?", _why(ctx, n, sha, st.tier or "T2")))
     ctx.say(f"PR #{n}: merged {sha[:8]}")
+    _file_follow_ups_safely(ctx, n)
     return True
+
+
+def pending_follow_ups(ctx: Ctx) -> list[int]:
+    """PRs vigia merged whose follow-ups are not all filed yet (older ledger rows carry no `follow_ups` flag)."""
+    done = {r.get("pr") for r in ctx.ledger.events("follow_ups_done")}
+    owed = [r["pr"] for r in ctx.ledger.events("merged") if r.get("follow_ups") and r["pr"] not in done]
+    broken = Counter(r.get("pr") for r in ctx.ledger.events("error", action="follow_up") if "hash" not in r)
+    return [n for n in dict.fromkeys(owed) if broken[n] < ctx.cfg.caps.attempts]
+
+
+def _look_back(iso: str | None) -> str | None:
+    """`iso` (GitHub's UTC time, `...Z`) moved back by LOOK_BACK_SECONDS; None stays None (no lower bound)."""
+    if not iso:
+        return None
+    moment = datetime.fromisoformat(iso.replace("Z", "+00:00")) - timedelta(seconds=LOOK_BACK_SECONDS)
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def file_follow_ups(ctx: Ctx, n: int) -> None:
+    """At most MAX_FOLLOW_UPS issues per merged PR `n`, one per bullet of the `## Follow-ups` sections in vigia's
+    handoffs on it. Follow-ups carry only `labels.follow_up`: no tier and never ready.
+
+    What is already filed is read back from GitHub, not only from the ledger: every issue vigia's login opened
+    since the merge, in any state and with any labels, whose body holds this PR's marker. That covers a crash
+    between creating an issue and recording it, and an issue someone relabelled or closed since. The cap counts
+    everything filed for the PR, so a retry after a crash never goes past it, whatever the handoffs say now. A
+    failed creation is an `error` row, tried again next tick up to `caps.attempts` times per bullet.
+    """
+    merged = ctx.ledger.last("merged", pr=n) or {}
+    sha = merged.get("sha", "")
+    # The lower bound for what vigia already filed is GitHub's own merge time, never this machine's clock: a follow-up
+    # is created after GitHub merged the PR, on the same clock, whatever the local time says.
+    # GitHub's `since` filter is strictly after, and an issue created in the merge's own second carries that same
+    # time, so look back a safety margin: the marker check below makes extra issues in the window harmless.
+    since = _look_back(ctx.gh.merged_at(n))
+    found: dict[str, str] = {}  # hash -> text, in handoff order, exact duplicates dropped
+    for body in comments.handoffs(ctx.gh.comments(n), ctx.gh.login()):
+        for text in comments.follow_ups(body):
+            found.setdefault(comments.follow_up_hash(text), text)
+    filed = {r.get("hash") for r in ctx.ledger.events("followup_filed", pr=n)}
+    for issue in ctx.gh.issues_by(ctx.gh.login(), since):
+        # every marker for this PR counts, whether or not its bullet is still in a handoff:
+        # created but not recorded, so adopt it
+        for h in sorted(comments.marked_follow_ups(issue["body"], n) - filed):
+            ctx.ledger.append("followup_filed", pr=n, hash=h, issue=issue["number"])
+            filed.add(h)
+    room = max(0, MAX_FOLLOW_UPS - len(filed))
+    todo = [(h, t) for h, t in found.items() if h not in filed][:room]
+    pr_url = f"https://github.com/{ctx.cfg.repo}/pull/{n}"
+    retry = False
+    for h, text in todo:
+        failures = sum(1 for r in ctx.ledger.events("error", pr=n, action="follow_up") if r.get("hash") == h)
+        if failures >= ctx.cfg.caps.attempts:
+            continue  # gave up on this one; the errors stay in the ledger
+        title, body = comments.follow_up_issue(text, n, pr_url, sha)
+        try:
+            number = ctx.gh.create_issue(title, body, [ctx.cfg.labels.follow_up])
+        except CommandError as exc:
+            ctx.ledger.append("error", pr=n, action="follow_up", hash=h, detail=str(exc)[:500])
+            ctx.say(f"PR #{n}: could not file a follow-up — {exc}")
+            retry = retry or failures + 1 < ctx.cfg.caps.attempts
+            continue
+        ctx.ledger.append("followup_filed", pr=n, hash=h, issue=number)
+        filed.add(h)
+        ctx.say(f"PR #{n}: follow-up filed as #{number}")
+    if not retry:
+        unfiled = len([h for h in found if h not in filed])
+        ctx.ledger.append("follow_ups_done", pr=n, found=len(found), dropped=unfiled)
+
+
+def _file_follow_ups_safely(ctx: Ctx, n: int) -> None:
+    """Filing is never allowed to fail a merge or the rest of the tick: the PR is already merged."""
+    try:
+        file_follow_ups(ctx, n)
+    except Exception as exc:  # a bug here must cost a retry, not a merge
+        ctx.ledger.append("error", pr=n, action="follow_up", detail=str(exc)[:500])
+        ctx.say(f"PR #{n}: follow-ups not filed — {exc}")
 
 
 def park(ctx: Ctx, seen: Seen) -> None:
@@ -211,6 +303,8 @@ def tick(
                 s.decision = Decision("wait", "its build job has not finished its handoff", s.pr["head"])
         for s in seen:  # report every decision first, so the output reads in the order things happen
             ctx.say(f"PR #{s.pr['number']}: {s.decision}")
+        for n in pending_follow_ups(ctx):  # a merge from an earlier tick whose filing failed or was cut short
+            _file_follow_ups_safely(ctx, n)
         for s in seen:
             try:
                 if s.decision.action == "merge":
