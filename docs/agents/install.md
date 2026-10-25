@@ -29,7 +29,8 @@ this file only orders the work.
    `codex login --device-auth` on a server (or `codex login` on a laptop). Check: `gh auth status`,
    `claude auth status`, `codex login status`.
 4. **Repositories.** Ask which GitHub repositories vigia should work on and which lab should build (the other
-   one reviews). Clone them side by side in one folder (e.g. `~/factory`), run `vigia init` in each (answer its
+   one reviews). Each needs a CI workflow that runs on `pull_request`: vigia merges only with CI green, so
+   if one has none, say so and ask the person whether to add one. Clone them side by side in one folder (e.g. `~/factory`), run `vigia init` in each (answer its
    questions with the person), commit and push the files it writes if the person agrees, then run
    `vigia workspace` in the folder. Then ask the person to protect each base branch on GitHub (Settings →
    Branches, a rule for `main`: "Require status checks to pass before merging" with their CI check, and

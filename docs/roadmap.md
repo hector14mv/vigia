@@ -46,7 +46,6 @@ the rest, in roughly the order below. This page gives an order, never dates.
   question to you takes seconds to answer.
 - The planner promoting independent T0/T1 tickets to the queue by itself, with the dependency and duplicate
   rules its review found; in v0.1 you ratify every planned ticket.
-- Follow-ups from a merged PR's handoff filed as issues ([#41](https://github.com/hector14mv/vigia/pull/41)).
 - A post-merge check queue to confirm a change works or file a bug, so checking a result is one tap.
 - Actions in the status desk (the Mesa) once it has its own login, so you can act where you read.
 

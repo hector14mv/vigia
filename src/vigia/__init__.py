@@ -1,3 +1,3 @@
-"""vigia — AI agents write the code. A different lab reviews it. A script with no AI merges it."""
+"""vigia — Agents build. The other lab reviews. A deterministic decision table merges only the reviewed commit."""
 
 __version__ = "0.1.0"

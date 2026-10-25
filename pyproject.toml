@@ -1,7 +1,7 @@
 [project]
 name = "vigia"
 version = "0.1.0"
-description = "AI agents write the code. A different lab reviews it. A script with no AI merges it."
+description = "Agents build. The other lab reviews. A deterministic decision table merges only the reviewed commit."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

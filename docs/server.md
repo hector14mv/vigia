@@ -69,7 +69,7 @@ mkdir -p ~/factory && cd ~/factory
 git clone https://github.com/you/app && (cd app && vigia init)
 git clone https://github.com/you/api && (cd api && vigia init)
 vigia workspace          # writes vigia.workspace.toml: these clones and the slots they share
-vigia doctor             # in each clone: every check should say ok
+for d in */; do (cd "$d" && vigia doctor); done   # every check in every clone should say ok
 ```
 
 On GitHub, protect each repository's base branch (**Settings → Branches**, a rule for `main`; branch rules need

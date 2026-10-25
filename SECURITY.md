@@ -31,6 +31,14 @@ session opens exports it again. `gh` does not need such a line (it keeps its own
 only in the interactive `~/.zshrc`, which login shells do not read. For that, run vigia under a separate OS
 user or in a container (next section).
 
+## Who can start a build
+
+An issue's body and title are the builder's whole prompt, so the `vigia:ready` label decides what an engine is
+told to do. vigia builds an issue only when that label was added by someone with write, maintain or admin
+permission on the repository, and only when neither the body nor the title changed after it was added; anything
+else is refused, with the reason written on the issue. The ticket template adds no label: a maintainer reads the
+ticket and adds `vigia:ready`. Give write access only to people you would let run commands as your user.
+
 ## The sandboxing vigia applies
 
 The flags live in `DEFAULT_ENGINE_ARGS` in `src/vigia/config.py` and are passed by
