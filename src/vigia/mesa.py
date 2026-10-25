@@ -590,12 +590,15 @@ def pr_detail(ctx: Ctx, n: int) -> dict:
     steps, waiting = _pipeline(ctx, seen, running)
     mine = [r for r in ctx.ledger.rows() if r.get("pr") == n]
     explained = {r.get("sha") for r in mine if r["event"] in ("pr_opened", "pushed", "updated")}
-    # A P1 counts as fixed only once a later verdict of the same kind has actually looked again: a newer head
-    # that nobody has reviewed yet proves nothing about the code the finding pointed at.
-    reviewed = [
-        (i, r["kind"])
+    # A P1 counts as fixed only once a later review of the same kind, on another head, came back with no P1 at all:
+    # that review looked at everything and found nothing. A later review that reports a different blocker says
+    # nothing about this finding, and a head nobody has reviewed yet proves nothing about the code it pointed at.
+    clean = [
+        (i, r["kind"], r.get("sha"))
         for i, r in enumerate(mine)
-        if r["event"] == "verdict" and r["verdict"] != "UNAVAILABLE"
+        if r["event"] == "verdict"
+        and r["verdict"] != "UNAVAILABLE"
+        and not any(f.get("severity") == "P1" for f in r.get("findings") or [])
     ]
     timeline = []
     for at, r in enumerate(mine):
@@ -605,7 +608,9 @@ def pr_detail(ctx: Ctx, n: int) -> dict:
         elif r["event"] in TIMELINE:
             item = {k: v for k, v in r.items() if k != "findings"}
             if r["event"] == "verdict":
-                rechecked = any(i > at and kind == r["kind"] for i, kind in reviewed)
+                rechecked = any(
+                    i > at and kind == r["kind"] and sha != r.get("sha") for i, kind, sha in clean
+                )
                 item["findings"] = [
                     {
                         "severity": f.get("severity"),

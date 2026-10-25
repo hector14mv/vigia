@@ -679,8 +679,8 @@ def test_pr_detail_tells_the_whole_story(world):  # noqa: F811
     kinds = [e["event"] for e in d["timeline"]]
     assert kinds[-1] == "pr_opened" and "head_outside" in kinds and "pushed" in kinds
     verdicts = [e for e in d["timeline"] if e["event"] == "verdict"]
-    # newest first: the second round's P1 was never re-checked (nobody has reviewed the new head), so it is still open
-    assert [f["status"] for v in verdicts for f in v["findings"]] == ["open", "fixed"]
+    # newest first: no later review came back clean, so neither round's P1 is confirmed fixed
+    assert [f["status"] for v in verdicts for f in v["findings"]] == ["open", "open"]
     assert d["engine_line"].startswith("Engine: claude")
     assert d["tried_total"]["gate_rounds"] == 2 and d["built_by"].startswith("claude")
 
@@ -713,6 +713,47 @@ def test_a_finding_is_fixed_only_once_a_later_review_has_looked_again(world):  #
     assert statuses() == ["open"]
     ctx.ledger.append("verdict", pr=pr, kind="gate", sha="b" * 40, tier="T0", verdict="APPROVE", findings=[])
     assert statuses() == ["fixed"]
+
+
+def test_another_review_that_still_blocks_does_not_resolve_an_earlier_finding(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([CHANGES])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    for _ in range(2):  # build, gate P1 on the first head
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    first = gh.prs_[pr]["head"]
+    other = [{"severity": "P1", "file": "other.py", "line": 9, "title": "A different blocker"}]
+    ctx.ledger.append("pushed", pr=pr, sha="b" * 40, from_sha=first)
+    ctx.ledger.append(
+        "verdict", pr=pr, kind="gate", sha="b" * 40, tier="T0", verdict="CHANGES", p1=1, findings=other
+    )
+
+    def shown():
+        d = mesa.pr_detail(ctx, pr)
+        return [
+            (f["title"], f["status"]) for e in d["timeline"] if e["event"] == "verdict" for f in e["findings"]
+        ]
+
+    assert shown()[0] == ("A different blocker", "open") and shown()[1][1] == "open"
+    # a clean review on head b confirms the first head's P1, but not the P1 that was found on b itself
+    ctx.ledger.append(
+        "verdict", pr=pr, kind="gate", sha="b" * 40, tier="T0", verdict="CHANGES", p1=0, findings=[]
+    )
+    assert [st for _, st in shown()] == ["open", "fixed"]
+    # P2-only findings are not blockers: a review on a newer head that reports only those confirms the fixes
+    ctx.ledger.append("pushed", pr=pr, sha="c" * 40, from_sha="b" * 40)
+    ctx.ledger.append(
+        "verdict",
+        pr=pr,
+        kind="gate",
+        sha="c" * 40,
+        tier="T0",
+        verdict="CHANGES",
+        p1=0,
+        findings=[{"severity": "P2", "file": "x.py", "line": 1, "title": "Naming"}],
+    )
+    assert [st for t, st in shown() if t != "Naming"] == ["fixed", "fixed"]
 
 
 def test_an_open_pr_screen_follows_the_watcher(world, tmp_path):  # noqa: F811
@@ -802,6 +843,47 @@ def test_a_failed_refresh_keeps_the_detail_but_says_so_and_stops_offering_the_ol
     assert "the head has moved since" in after and "GitHub answered 502." in after
     assert "fffffff" in after and detail["head"][:7] in after
     assert "Approve this head" not in after and "Approve on GitHub" not in after
+
+
+def _render_live(node, tmp_path, live, gh, pr):
+    path = tmp_path / "live.json"
+    path.write_text(json.dumps(live), encoding="utf-8")
+    script = Path(__file__).with_name("mesa_render.js")
+    out = subprocess.run(
+        [node, str(script), "--live", str(mesa.PAGE), str(path), f"pr/{gh.repo}/{pr}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_an_approval_is_withdrawn_when_the_state_stops_waiting_for_a_person(world, tmp_path):  # noqa: F811
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    gh, build = world
+    ctx, _ = build([APPROVE, APPROVE])
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    for _ in range(4):
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    first = mesa.state([ctx], _now(ctx))
+    assert _pr(first, pr)["waiting_for"] == "human"
+    detail = mesa.pr_detail(ctx, pr)
+    fail = {"__status": 502, "error": "GitHub answered 502."}
+    # the same head, now parked and no longer waiting for a label, and the detail refresh fails
+    parked = json.loads(json.dumps(first))
+    _pr(parked, pr).update(waiting_for=None, parked=True, next="wait")
+    # the PR is gone from the state's list
+    gone = json.loads(json.dumps(first))
+    gone["repos"][0]["prs"] = [p for p in gone["repos"][0]["prs"] if p["number"] != pr]
+    for later in (parked, gone):
+        shown = _render_live(node, tmp_path, {"state": [first, later], "pr": [detail, fail]}, gh, pr)
+        assert "Approve this head" in shown["before"]["text"]
+        after = shown["after"]["text"]
+        assert "Approve this head" not in after and "Approve on GitHub" not in after
 
 
 def test_a_detail_whose_head_moved_never_offers_the_old_head_while_it_refreshes(world, tmp_path):  # noqa: F811

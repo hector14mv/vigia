@@ -1642,7 +1642,7 @@ a.ev { min-height: 44px; }
     lines.push("What was tried: " + (tt.gate_rounds || 0) + " gate rounds on " + (tt.heads || 0) + " heads, " + (tt.p1 || 0) + " P1, " + (tt.fix_rounds || 0) + " fix rounds, parked " + (tt.parks || 0) + " times.");
     var open = allFindings(d).filter(function (x) { return x.f.status === "open"; });
     if (open.length) {
-      lines.push("Open findings, not yet re-checked by a later review (head is " + sha7(d.head) + "):");
+      lines.push("Open findings, no clean review has confirmed them fixed (head is " + sha7(d.head) + "):");
       open.forEach(function (x) { lines.push("- " + (x.f.file || "?") + (x.f.line ? ":" + x.f.line : "") + " " + x.f.title + " (found on " + sha7(x.e.sha) + ")"); });
     }
     lines.push("", "History, newest first:");
@@ -1692,9 +1692,9 @@ a.ev { min-height: 44px; }
     return h("section", { "class": "stand", style: desk ? "max-width:760px" : null },
       h("span", { "class": "kicker" }, "vigia's next step · " + actionLabel(d.next, d.tier).toLowerCase()), h("p", null, d.reason));
   }
-  function asks(d, r, desk) {
+  function asks(d, r, desk, approvable) {
     var out = [], nf = allFindings(d).length, issueN = isInt(d.issue) ? d.issue : null;
-    if (d.waiting_for === "human") out.push({ you: true, title: "Approve this head", text: ["Adding ", labelCode(r, "human_ok"), " on GitHub lets vigia merge " + sha7(d.head) + ". A new push needs a new label."],
+    if (d.waiting_for === "human" && approvable) out.push({ you: true, title: "Approve this head", text: ["Adding ", labelCode(r, "human_ok"), " on GitHub lets vigia merge " + sha7(d.head) + ". A new push needs a new label."],
       btn: h("div", { "class": "btn-row" }, ext(filesUrl(d.url), "Read the diff", "btn btn-secondary"), ext(d.url, "Approve on GitHub", "btn btn-primary")) });
     if (d.parked) out.push({ you: true, title: "Edit the ticket, then unpark", text: ["Narrow the scope or turn the findings into acceptance criteria. Removing ", labelCode(r, "parked"), " restarts every counter."],
       btn: issueN ? ext(issueUrl(d.repo, issueN), "Edit ticket #" + issueN, "btn btn-primary") : ext(d.url, "Open the PR", "btn btn-secondary") });
@@ -1711,7 +1711,10 @@ a.ev { min-height: 44px; }
     // head, whether the refresh failed, is still in flight or has not started; a failed refresh says so too.
     var moved = !!(got.data && base && base.head && got.data.head && base.head !== got.data.head);
     var stale = !!(got.data && (got.error || moved));
-    return { r: r, d: d, loading: !!got.loading, error: got.error || null, stale: stale, moved: moved, now: moved ? base.head : null };
+    // Approval is offered only while the current state still says this PR waits for a person: a cached detail
+    // that said so earlier does not keep the offer alive once the state parks the PR, moves it on or drops it.
+    var approvable = !!(base && base.waiting_for === "human");
+    return { r: r, d: d, loading: !!got.loading, error: got.error || null, stale: stale, moved: moved, now: moved ? base.head : null, approvable: approvable };
   }
   function staleNote(x, rt) {
     if (!x.stale) return null;
@@ -1749,7 +1752,7 @@ a.ev { min-height: 44px; }
           h("span", { "class": "tile" }, h("b", { "class": tt.p1 ? "c-danger" : null }, String(tt.p1 || 0)), h("span", null, "P1 found")),
           h("span", { "class": "tile" }, h("b", null, String(tt.parks || 0)), h("span", null, "parks"))),
         d.timeline ? timeline(d, false, x.r) : prLoadingOrError(x, rt))];
-    var as = x.moved ? [] : asks(d, x.r, false);
+    var as = x.moved ? [] : asks(d, x.r, false, x.approvable);
     if (x.stale) out.splice(1, 0, h("div", { "class": "gut", style: "padding-top:4px" }, staleNote(x, rt)));
     out.push(h("div", { "class": "gut", style: "margin-top:8px" }, h("section", { "class": "card tight", "aria-labelledby": "next-h" },
       h("h2", { id: "next-h", style: "font:650 18px/1.2 var(--mesa-font);margin-bottom:8px" }, as.length ? "What you can do" : "Nothing for you right now"),
@@ -1783,7 +1786,7 @@ a.ev { min-height: 44px; }
         h("span", { "class": "mono", style: "font-size:13px;color:var(--mesa-ink-2)" }, plural(tt.heads || 0, "head") + " · " + plural(tt.gate_rounds || 0, "gate round") + " · " + plural(reviews, "review") + " · ",
           h("strong", { "class": "c-danger", style: "font-weight:600" }, (tt.p1 || 0) + " P1"), " · " + plural(tt.fix_rounds || 0, "fix round") + " · " + plural(tt.parks || 0, "park"))),
       d.timeline ? timeline(d, true, x.r) : prLoadingOrError(x, rt));
-    var as = x.moved ? [] : asks(d, x.r, true), mine = as.filter(function (a) { return a.you; });
+    var as = x.moved ? [] : asks(d, x.r, true, x.approvable), mine = as.filter(function (a) { return a.you; });
     var next = h("section", { "class": "card", style: "padding:18px;gap:10px;" + (mine.length ? "border:1.5px solid var(--mesa-turn)" : "") },
       h("span", { "class": "kicker " + (mine.length ? "k-turn" : "") }, mine.length ? "◆ Next step is yours" : "Next step is vigia's"),
       as.length ? as.map(function (a, i) { return h("div", { style: "display:flex;flex-direction:column;gap:8px;" + (i ? "padding-top:10px;border-top:1px solid var(--mesa-line)" : "") },
