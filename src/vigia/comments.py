@@ -92,13 +92,14 @@ def follow_up_hash(text: str) -> str:
 
 
 def follow_up_title(text: str) -> str:
-    """The bullet cut to 70 characters at a word boundary."""
+    """The bullet, or if longer than 70 characters, cut at a word boundary and ended with "…" (70 in all)."""
     if len(text) <= TITLE_MAX:
         return text
-    cut = text[:TITLE_MAX]
-    if not text[TITLE_MAX].isspace() and " " in cut:
+    room = TITLE_MAX - 1  # leave one character for the "…"
+    cut = text[:room]
+    if not text[room].isspace() and " " in cut:
         cut = cut.rsplit(" ", 1)[0]
-    return cut.rstrip(" ,;:-")
+    return cut.rstrip(" ,;:-") + "…"
 
 
 def follow_up_marker(pr: int, digest: str) -> str:

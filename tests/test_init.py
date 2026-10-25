@@ -215,3 +215,102 @@ def test_init_creates_the_follow_up_label():
 
     specs = {name: description for name, _, description in label_specs(Labels())}
     assert "vigia:follow-up" in specs
+
+
+CI_PROMPT = "Merge without CI? (y/N)"
+WHERE_PROMPT = "Where will vigia run: laptop or server? (a server keeps the factory on day and night)"
+
+
+def with_workflow(root: Path) -> None:
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / ".github" / "workflows" / "ci.yml").write_text("on: [pull_request]\n", encoding="utf-8")
+
+
+def ci_ask(answer: str):
+    asked: list[tuple[str, str]] = []
+
+    def ask(prompt: str, default: str) -> str:
+        asked.append((prompt, default))
+        return answer if prompt == CI_PROMPT else default
+
+    ask.asked = asked
+    return ask
+
+
+def test_init_yes_without_workflow_keeps_require_ci_and_says_so(tmp_path):
+    path, messages = run_init(tmp_path)
+    assert config_mod.load(path).require_ci is True
+    assert any("merges only with CI green" in m and "no workflow" in m for m in messages)
+    assert any("require_ci = true" in m and "pull_request" in m for m in messages)
+    assert not (tmp_path / ".github" / "workflows").exists()  # never writes a workflow
+
+
+def test_init_with_a_workflow_does_not_mention_ci(tmp_path):
+    with_workflow(tmp_path)
+    ask = ci_ask("y")
+    messages: list[str] = []
+    path = init(tmp_path, ask, messages.append, runner=make_runner(tmp_path), create_labels=False)
+    assert CI_PROMPT not in [p for p, _ in ask.asked]
+    assert config_mod.load(path).require_ci is True
+    assert not any("no workflow" in m for m in messages)
+
+
+def test_init_interactive_asks_after_the_test_command_and_default_keeps_ci(tmp_path):
+    ask = ci_ask("")
+    messages: list[str] = []
+    path = init(tmp_path, ask, messages.append, runner=make_runner(tmp_path), create_labels=False)
+    prompts = [p for p, _ in ask.asked]
+    assert prompts.index(CI_PROMPT) == prompts.index("Test command builders run (optional)") + 1
+    assert dict(ask.asked)[CI_PROMPT] == "n"
+    assert config_mod.load(path).require_ci is True
+    assert any("merges only with CI green" in m for m in messages)
+    assert any("require_ci = true" in m and "pull_request" in m for m in messages)
+
+
+def test_init_interactive_yes_writes_require_ci_false_and_it_loads(tmp_path):
+    path = init(tmp_path, ci_ask("y"), lambda m: None, runner=make_runner(tmp_path), create_labels=False)
+    assert config_mod.load(path).require_ci is False
+    assert "require_ci = false" in path.read_text(encoding="utf-8")
+    assert not (tmp_path / ".github" / "workflows").exists()
+
+
+def no_repo_runner(root: Path):
+    inner = make_runner(root)
+
+    def runner(args, **kwargs):
+        if list(args[:2]) == ["gh", "repo"]:
+            return Result(1, "", "no git remotes found")
+        return inner(args, **kwargs)
+
+    runner.calls = inner.calls
+    return runner
+
+
+def test_init_yes_without_a_repository_exits_2_before_any_question(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        run_init(tmp_path, runner=no_repo_runner(tmp_path))  # no_ask fails the test on any prompt
+    assert exc.value.code == 2
+    assert "could not tell the GitHub repository: pass --repo OWNER/NAME" in capsys.readouterr().err
+    assert not (tmp_path / "vigia.toml").exists()
+
+
+def test_init_yes_with_repo_flag_needs_no_detection(tmp_path):
+    path, _ = run_init(tmp_path, runner=no_repo_runner(tmp_path), repo="acme/other")
+    assert config_mod.load(path).repo == "acme/other"
+
+
+def test_init_empty_repository_answer_exits_2_with_the_same_message(tmp_path, capsys):
+    def ask(prompt: str, default: str) -> str:
+        assert prompt == "Repository (owner/name)", f"asked {prompt!r} after the repository"
+        return ""
+
+    with pytest.raises(SystemExit) as exc:
+        init(tmp_path, ask, lambda m: None, runner=no_repo_runner(tmp_path), create_labels=False)
+    assert exc.value.code == 2
+    assert "could not tell the GitHub repository: pass --repo OWNER/NAME" in capsys.readouterr().err
+
+
+def test_init_where_will_vigia_run_defaults_to_laptop(tmp_path):
+    ask = ci_ask("")
+    init(tmp_path, ask, lambda m: None, runner=make_runner(tmp_path), create_labels=False)
+    assert dict(ask.asked)[WHERE_PROMPT] == "laptop"

@@ -8,9 +8,11 @@
 // as `html` (attributes kept, text escaped), as `text` (one line per block), and its `links` and `tags`. A route
 // written `route!key` renders `route`, then clicks the element whose data-k is `key` once (a sheet opening, say).
 // With `--live` first, it instead runs the page against a scripted server, as served (no embedded sample), and shows
-// the route before and after one poll: node mesa_render.js --live <mesa.html> <live.json> <route>, where live.json is
+// the route before and after one poll, with the delays of the timeouts the page asked for before it, during it, and
+// after the timeouts it was then waiting on went off once:
+// node mesa_render.js --live <mesa.html> <live.json> <route>, where live.json is
 // {"state": [state, ...], "pr": [detail, ...]} and each fetch of that kind answers with the next entry (the last one
-// repeats; an entry with "__status" answers with that HTTP error). It prints {"before": view, "after": view} for the desktop layout.
+// repeats; an entry with "__status" answers with that HTTP error). It prints {"before": view, "after": view, "timers": {"before": [ms], "after": [ms], "retry": [ms]}} for the desktop layout.
 // Anything the page must never do (innerHTML, document.write, a fetch) throws, and so fails the test.
 "use strict";
 const fs = require("fs");
@@ -191,6 +193,7 @@ async function renderLive(route) {
     return Promise.resolve({ ok: !status, status: status || 200, json: () => Promise.resolve(body), url });
   };
   let poll = null;
+  const timers = [], waiting = []; // the delay of each setTimeout the page asks for, in ms, in order; and their callbacks
   const win = {
     document: doc,
     location: { hash: "#/" + route },
@@ -201,7 +204,7 @@ async function renderLive(route) {
     addEventListener() {},
     scrollTo() {},
     setInterval: (fn) => { poll = fn; return 0; },
-    setTimeout: () => 0,
+    setTimeout: (fn, ms) => { timers.push(ms); waiting.push(fn); return timers.length; },
     clearTimeout() {},
     fetch: (url) => answer(String(url).startsWith("/api/pr/") ? "pr" : "state", url),
     console,
@@ -211,10 +214,15 @@ async function renderLive(route) {
   scripts.forEach((code, i) => vm.runInContext(code, context, { filename: `mesa.html <script> #${i + 1}` }));
   await settle();
   const before = view(app);
+  const scheduled = timers.length;
   if (!poll) throw new Error("the page did not start a poll");
   poll();
   await settle();
-  return { before, after: view(app) };
+  const polled = timers.length;
+  waiting.splice(0).forEach((fn) => fn()); // the timers the page is waiting on go off, once
+  await settle();
+  const timeouts = { before: timers.slice(0, scheduled), after: timers.slice(scheduled, polled), retry: timers.slice(polled) };
+  return { before, after: view(app), timers: timeouts };
 }
 
 if (live) {

@@ -16,7 +16,7 @@ from . import config as config_mod
 from . import proc, safety
 from .config import Config, ConfigError
 from .context import work_root
-from .init import label_specs, preflight
+from .init import label_specs, preflight, workflow_files
 from .proc import CommandError
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -80,16 +80,30 @@ def _labels(runner: Runner, cfg: Config, reachable: bool) -> Check:
 def _workflows(clone: Path, cfg: Config) -> Check:
     if not cfg.require_ci:
         return Check("ci workflow", OK, "checks.require_ci is false")
-    directory = clone / ".github" / "workflows"
-    found = sorted(p for pattern in ("*.yml", "*.yaml") for p in directory.glob(pattern) if p.is_file())
-    if found:
-        return Check("ci workflow", OK, f"{len(found)} in .github/workflows")
-    return Check(
-        "ci workflow",
-        WARN,
-        "no workflow file in .github/workflows",
-        "add a GitHub Actions workflow that runs your tests, or set `require_ci = false` under [checks]",
-    )
+    found = workflow_files(clone)
+    if not found:
+        return Check(
+            "ci workflow",
+            FAIL,
+            "no workflow file in .github/workflows",
+            "vigia merges only with CI green on the head: add a GitHub Actions workflow that runs on "
+            "`pull_request`, or set `require_ci = false` under [checks]",
+        )
+    if not any("pull_request" in _read(p) for p in found):
+        return Check(
+            "ci workflow",
+            WARN,
+            f"{len(found)} in .github/workflows, none runs on pull_request",
+            "add `pull_request` to the `on:` trigger of the workflow that runs your tests",
+        )
+    return Check("ci workflow", OK, f"{len(found)} in .github/workflows")
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _test_command(cfg: Config) -> Check:

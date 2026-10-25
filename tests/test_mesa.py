@@ -115,7 +115,27 @@ def test_the_server_serves_the_page_and_the_state(world):  # noqa: F811
         srv.shutdown()
 
 
-def test_the_page_has_the_five_places_and_writes_nothing(world):  # noqa: F811
+def test_the_path_is_matched_without_its_query_string(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    srv = _serve(ctx)
+    try:
+        for path in ("/?x=1", "/index.html?x=1"):
+            status, kind, body = _get(srv, path)
+            assert status == 200 and kind == "text/html; charset=utf-8" and b"Your turn" in body, path
+        status, _, body = _get(srv, "/api/state?x=1")
+        assert status == 200 and json.loads(body)["repos"][0]["repo"] == gh.repo
+        status, _, body = _get(srv, f"/api/pr/{gh.repo}/{pr}?x=1")
+        assert status == 200 and json.loads(body)["number"] == pr
+        assert _get(srv, "/nope?x=1")[0] == 404 and _get(srv, "/api/state/x?y=1")[0] == 404
+    finally:
+        srv.shutdown()
+
+
+def test_the_page_has_the_four_places_and_writes_nothing(world):  # noqa: F811
     gh, build = world
     ctx, _ = build([])
     srv = _serve(ctx)
@@ -128,8 +148,9 @@ def test_the_page_has_the_five_places_and_writes_nothing(world):  # noqa: F811
         srv.shutdown()
     assert "connect-src 'self'" in csp and "script-src 'unsafe-inline'" in csp
     assert b'<meta name="viewport"' in body and b'id="mesa-sample"' in body and b"{{SAMPLE}}" not in body
-    for place in (b'"Your turn"', b'"Factory"', b'"Captures"', b'"Feed"', b'"Fuel"'):
+    for place in (b'"Your turn"', b'"Factory"', b'"Feed"', b'"Fuel"'):
         assert place in body
+    assert b"Captures" not in body  # v0.1 shoots no screenshots
     # read-only: no form, no write verb, no script from elsewhere, no markup built from strings
     assert b"<form" not in body and b"method:" not in body and b"<script src" not in body
     assert b"innerHTML" not in body and b'fetch("/api/state"' in body and b'fetch("/api/pr/"' in body
@@ -149,7 +170,7 @@ def test_the_server_is_read_only_and_answers_only_its_own_host(world):  # noqa: 
         srv.shutdown()
 
 
-PLACES = ("turn", "factory", "captures", "feed", "fuel", "decide")
+PLACES = ("turn", "factory", "feed", "fuel", "decide")
 LINK = re.compile(
     r"^(#/[A-Za-z0-9_./-]*|https://claude\.ai/new|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
     r"(/(pull|issues)/\d{1,9}(/files)?)?(/issues\?q=[A-Za-z0-9%._+:-]*)?(#new_comment_field)?)$"
@@ -408,7 +429,6 @@ def test_every_place_renders_on_both_layouts_and_says_when_nothing_needs_you(wor
         assert "Nothing needs you" in turn["text"] and "Could not read" not in turn["text"]
     for route, words in (
         ("factory", "Sessions"),
-        ("captures", "No UI changes"),
         ("feed", "Today"),
         ("fuel", "Codex"),
         ("decide", "No open decisions"),
@@ -1343,7 +1363,89 @@ def test_the_first_request_shows_a_github_that_answers_at_once(world):  # noqa: 
     ctx, _ = build([])
     srv = _serve(ctx)
     try:
+        started = time.monotonic()
+        status, _, first = _get(srv, "/api/state")
+        assert status == 200 and time.monotonic() - started < 1  # the first answer does not wait for GitHub
+        # the fake GitHub may finish after FIRST_WAIT on a slow machine: wait for the refresh, then ask again
+        assert json.loads(first)["repos"][0]["repo"] == gh.repo
+        _until(lambda: "pending" not in json.loads(_get(srv, "/api/state")[2])["repos"][0])
         status, _, body = _get(srv, "/api/state")
-        assert status == 200 and "pending" not in json.loads(body)["repos"][0]  # no flash of "Reading GitHub"
+        assert status == 200 and "pending" not in json.loads(body)["repos"][0]  # no "Reading GitHub"
     finally:
         srv.shutdown()
+
+
+def test_there_are_no_captures_on_either_layout(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    s = mesa.state([ctx])
+    shown = _render(tmp_path, s, routes=("turn", "factory", "feed", "fuel", "decide", "captures"))
+    for layout in shown.values():
+        for route, view in layout.items():
+            assert "Captures" not in view["text"] and "#/captures" not in view["links"], route
+            assert "Look when you can" not in view["text"] and "No UI changes" not in view["text"], route
+    # an old link (or a remembered tab) lands on Your turn
+    for turn, old in zip(_views(shown, "turn"), _views(shown, "captures"), strict=True):
+        assert old["text"] == turn["text"] and 'aria-current="page"' in old["html"]
+    assert 'data-k="tab-turn"' in shown["phone"]["captures"]["html"]
+    assert 'data-k="rail-turn"' in shown["desk"]["captures"]["html"]
+    assert shown["phone"]["turn"]["text"].count("Your turn") >= 1
+    assert "tab-captures" not in shown["phone"]["turn"]["html"]
+    assert "rail-captures" not in shown["desk"]["turn"]["html"]
+
+
+def test_a_watcher_that_never_ran_gets_a_calm_note_not_an_alarm(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    s = mesa.state([ctx])
+    s["health"] = dict(s["health"], last_tick=None)
+    shown = _render(tmp_path, s, routes=("turn", "factory"))
+    for route in ("turn", "factory"):
+        for view in _views(shown, route):
+            assert "○ watcher not started" in view["text"]
+            assert "pill quiet" not in view["html"] and 'role="alert"' not in view["html"]
+            assert "has not written" not in view["text"] and "watcher quiet" not in view["text"]
+    for turn in _views(shown, "turn"):
+        assert "The watcher has not run yet" in turn["text"]
+        assert "Start it with vigia watch in this folder; this page updates by itself." in turn["text"]
+        assert "empty watcher" not in turn["html"] and "Nothing needs you" in turn["text"]
+
+
+def test_a_watcher_that_ticked_and_went_quiet_still_gets_the_red_banner(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    s = mesa.state([ctx])
+    then = datetime.fromisoformat(s["generated"].replace("Z", "+00:00")) - timedelta(minutes=6)
+    quiet = dict(s, health=dict(s["health"], last_tick=mesa._iso(then)))
+    shown = _render(tmp_path, quiet, routes=("turn",))
+    for turn in _views(shown, "turn"):
+        assert "The watcher has not written for 6 min" in turn["text"] and "Last tick at" in turn["text"]
+        assert 'role="alert"' in turn["html"] and "empty watcher" in turn["html"]
+        assert "watcher quiet · 6 min" in turn["text"] and "pill quiet" in turn["html"]
+        assert "The watcher has not run yet" not in turn["text"] and "watcher not started" not in turn["text"]
+    assert shown["phone"]["turn"]["html"].count("The watcher has not written for") == 1
+
+
+def _pending(state):
+    repo = dict(state["repos"][0], pending=True)
+    for name in ("prs", "queue", "parked_issues", "refused", "human_tasks", "proposed", "decisions"):
+        repo[name] = None
+    return dict(state, repos=[repo])
+
+
+def test_a_failed_poll_while_github_is_first_read_asks_again_in_a_second_and_a_half(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    good = mesa.state([ctx])
+    pending = _pending(good)
+    boom = {"__status": 502, "error": "bad gateway"}
+    # an ask is already waiting when the poll fails: the poll adds none (at most one), and once it goes off and
+    # fails too, the next one is scheduled
+    waiting = _poll_after(tmp_path, gh, [pending, boom])
+    assert waiting["timers"] == {"before": [1500], "after": [], "retry": [1500]}
+    # once that ask went off and failed, it asks again soon: not after the full 15 s
+    again = _poll_after(tmp_path, gh, [good, pending, boom])
+    assert again["timers"] == {"before": [], "after": [1500], "retry": [1500]}
+    # a failed ask over a state that was read has nothing to hurry for
+    calm = _poll_after(tmp_path, gh, [good, boom])
+    assert calm["timers"] == {"before": [], "after": [], "retry": []}

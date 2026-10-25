@@ -448,11 +448,10 @@ a.ev { min-height: 44px; }
   var STEPS = ["build", "ci", "gate", "review", "human", "merge"];
   var STEP_LABEL = { build: "Build", ci: "CI", gate: "Gate", review: "Review", human: "Human", merge: "Merge" };
   var STEP_GLYPH = { now: " ●", wait: " ◆", stop: " ■" };
-  // The five places, the same on both layouts. Phone tab order; the desktop rail puts Captures before Factory.
+  // The four places, the same on both layouts. The desktop rail keeps the same order.
   var PLACES = [
     { id: "turn", label: "Your turn", icon: "turn" },
     { id: "factory", label: "Factory", icon: "factory" },
-    { id: "captures", label: "Captures", icon: "captures" },
     { id: "feed", label: "Feed", icon: "feed" },
     { id: "fuel", label: "Fuel", icon: "fuel" }
   ];
@@ -522,7 +521,6 @@ a.ev { min-height: 44px; }
     close: [["path", { d: "M6 6l12 12M18 6 6 18" }]],
     turn: [["path", { d: "M4 13h4.5l1.5 2.5h4l1.5-2.5H20" }], ["path", { d: "M5.5 5h13L20 13v6H4v-6z" }]],
     factory: [["circle", { cx: 5, cy: 12, r: 2.2 }], ["circle", { cx: 12, cy: 12, r: 2.2 }], ["circle", { cx: 19, cy: 12, r: 2.2 }], ["path", { d: "M7.2 12h2.6M14.2 12h2.6" }]],
-    captures: [["rect", { x: 3.5, y: 5, width: 17, height: 14, rx: 2 }], ["path", { d: "M12 5v14" }]],
     feed: [["path", { d: "M5 7h14M5 12h14M5 17h9" }]],
     fuel: [["path", { d: "M4.5 16a7.5 7.5 0 1 1 15 0" }], ["path", { d: "m12 16 3.5-4.5" }]],
     chat: [["path", { d: "M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z" }]],
@@ -679,7 +677,7 @@ a.ev { min-height: 44px; }
     if (S.error && !S.state) return { kind: "down", failed: S.serverFailed };
     if (S.error && !S.sample) return { kind: "down", at: S.lastOk, failed: S.serverFailed };
     var t = ms(S.state && S.state.health && S.state.health.last_tick);
-    if (t == null) return { kind: "quiet", never: true };
+    if (t == null) return { kind: "never" };
     var age = now() - t;
     if (age >= 60000) {
       // With one slot the watcher runs each session inside its tick: a stale tick with a live session means busy, not gone.
@@ -695,7 +693,8 @@ a.ev { min-height: 44px; }
   function livePill(desk) {
     var w = watcher();
     if (w.kind === "down") return h("span", { "class": "pill quiet" }, "■ Mesa offline");
-    if (w.kind === "quiet") return h("span", { "class": "pill quiet" }, "■ watcher quiet · " + (w.never ? "no tick yet" : dur(w.age)));
+    if (w.kind === "never") return h("span", { "class": "pill" }, "○ watcher not started");
+    if (w.kind === "quiet") return h("span", { "class": "pill quiet" }, "■ watcher quiet · " + dur(w.age));
     if (w.kind === "busy") {
       var what = w.job.action + (w.job.number != null ? " #" + w.job.number : "");
       return h("span", { "class": "pill" }, h("span", { "class": "dot live pulse" }), (desk ? "watcher busy · " : "busy · ") + what);
@@ -723,8 +722,14 @@ a.ev { min-height: 44px; }
     if (w.kind !== "quiet") return null;
     return h("div", { "class": "empty watcher", role: "alert" }, h("span", { "class": "ic danger", "aria-hidden": "true" }, "■"),
       h("span", { "class": "tx" },
-        h("b", null, w.never ? "The watcher has not written yet" : "The watcher has not written for " + dur(w.age)),
-        h("span", null, (w.never ? "" : "Last tick at " + dayTime(new Date(w.at).toISOString()) + ". ") + "What you see may be old. Is vigia watch still running?")));
+        h("b", null, "The watcher has not written for " + dur(w.age)),
+        h("span", null, "Last tick at " + dayTime(new Date(w.at).toISOString()) + ". What you see may be old. Is vigia watch still running?")));
+  }
+  // A watcher that never ran here is not an alarm: say how to start it, and that this page follows by itself.
+  function neverNote() {
+    return h("div", { "class": "empty on-surface", role: "status" }, h("span", { "class": "ic idle", "aria-hidden": "true" }, "○"),
+      h("span", { "class": "tx" }, h("b", null, "The watcher has not run yet"),
+        h("span", null, "Start it with ", h("code", null, "vigia watch"), " in this folder; this page updates by itself.")));
   }
   function sampleNote() { return S.state && typeof S.state.sample === "string" ? h("div", { "class": "sample" }, S.state.sample) : null; }
 
@@ -1043,11 +1048,6 @@ a.ev { min-height: 44px; }
     return reading(r) ? h("p", { "class": "note" }, "Reading its pull requests from GitHub…")
       : h("p", { "class": "note c-danger" }, "! Pull requests unknown: vigia cannot read this repo.");
   }
-  function emptyCaptures() {
-    return h("div", { "class": "empty on-surface" }, h("span", { "class": "ic idle", "aria-hidden": "true" }, "○"),
-      h("span", { "class": "tx" }, h("b", null, "No UI changes to look at"),
-        h("span", null, "Captures appear when a ticket has vigia:ui and the repo has a capture command. This vigia does not shoot them yet.")));
-  }
   function repoErrors() {
     return repos().filter(function (r) { return r.error; }).map(function (r) {
       return h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
@@ -1059,13 +1059,13 @@ a.ev { min-height: 44px; }
   }
   function turnGroups(m, desk) {
     var out = [];
+    if (watcher().kind === "never") out.push(neverNote());
     // "Nothing needs you" only when every list was read and all of them are empty
     if (!m.count && !m.nU && !m.pending.length) out.push(emptyTurn());
     if (m.pending.length) out.push(readingNote(m.pending));
     if (m.unknown.length) out.push(groupHead("Could not read · " + m.nU, desk, true), m.unknown.map(function (c) { return cardFor(c, desk); }));
     if (m.blocking.length) out.push(groupHead("Blocking the factory · " + m.nB, desk, !m.unknown.length), m.blocking.map(function (c) { return cardFor(c, desk); }));
     if (m.only.length) out.push(groupHead("Only you · " + m.nO, desk, !m.unknown.length && !m.blocking.length), m.only.map(function (c) { return cardFor(c, desk); }));
-    out.push(groupHead("Look when you can · 0", desk, !m.count), emptyCaptures());
     return out;
   }
   function groupHead(text, desk, first) {
@@ -1397,18 +1397,6 @@ a.ev { min-height: 44px; }
       h("div", { "class": "gut", style: "padding-top:14px;display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-title" }, "Fuel"),
         h("p", { "class": "t-sub" }, "What each lab's plan has left this week, and what vigia spent from it.")),
       h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:12px;padding-top:16px" }, fuelBody(false))
-    ];
-  }
-
-  /* ---------- Captures (not shot yet in this vigia: the empty state) ---------- */
-  function capturesBody() {
-    return [emptyCaptures(), h("p", { "class": "foot" }, "When it lands, vigia shoots both heads with your repo's capture command when the ticket has vigia:ui. “Looks right” is remembered on this device only; looking never blocks a merge.")];
-  }
-  function phoneCaptures() {
-    return [
-      h("div", { "class": "gut", style: "padding-top:14px;display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-title" }, "Captures"),
-        h("p", { "class": "t-sub" }, "UI changes, before and after, on the exact head. Looking never blocks a merge.")),
-      h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:14px;padding-top:16px" }, capturesBody())
     ];
   }
 
@@ -1851,7 +1839,7 @@ a.ev { min-height: 44px; }
     var rt = S.route;
     if (rt.name === "decide") return h("div", { "class": "ph sub" }, h("div", { "class": "ph-in", style: "min-height:100vh;display:flex;flex-direction:column" }, phoneDecision()));
     if (rt.name === "pr") return h("div", { "class": "ph sub" }, h("div", { "class": "ph-in" }, phonePR()));
-    var body = { turn: phoneTurn, factory: phoneFactory, captures: phoneCaptures, feed: phoneFeed, fuel: phoneFuel }[rt.name]();
+    var body = { turn: phoneTurn, factory: phoneFactory, feed: phoneFeed, fuel: phoneFuel }[rt.name]();
     var b = banner(), sn = sampleNote();
     return h("div", { "class": "ph" }, h("div", { "class": "ph-in" }, phoneHeader(),
       b || sn ? h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:8px;padding-bottom:10px" }, b, sn) : null,
@@ -1875,7 +1863,6 @@ a.ev { min-height: 44px; }
     return h("nav", { "class": "rail", "aria-label": "Mesa" },
       item("turn", "Your turn", "turn", m.count ? h("span", { "class": "badge md" }, String(m.count)) : null),
       decs ? item("decide", "Decisions", null, h("span", { "class": "n c-turn" }, String(decs)), true) : null,
-      item("captures", "Captures", "captures", h("span", { "class": "n c-3" }, "0")),
       item("factory", "Factory", "factory", live ? h("span", { "class": "dot live pulse", "aria-label": live + " running" }) : null),
       item("feed", "Feed", "feed"), item("fuel", "Fuel", "fuel"),
       h("span", { "class": "group-h rail-h" }, "Repos"),
@@ -1925,8 +1912,8 @@ a.ev { min-height: 44px; }
     } else if (rt.name === "factory") {
       main = h("main", { "class": "dk-main wide" }, head, deskFactory());
     } else {
-      var title = { captures: ["Captures", "UI changes, before and after, on the exact head. Looking never blocks a merge."], feed: ["Feed", "What vigia did, newest first. Every line is one ledger row."], fuel: ["Fuel", "What each lab's plan has left this week, and what vigia spent from it."] }[rt.name];
-      var body = { captures: capturesBody, feed: function () { return feedBody(true); }, fuel: function () { return fuelBody(true); } }[rt.name]();
+      var title = { feed: ["Feed", "What vigia did, newest first. Every line is one ledger row."], fuel: ["Fuel", "What each lab's plan has left this week, and what vigia spent from it."] }[rt.name];
+      var body = { feed: function () { return feedBody(true); }, fuel: function () { return fuelBody(true); } }[rt.name]();
       main = h("main", { "class": "dk-main" }, head, h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-display" }, title[0]), h("p", { style: "font-size:16px;color:var(--mesa-ink-2)" }, title[1])), body);
     }
     return h("div", null, deskTop(m.count, rt.name), h("div", { "class": "dk-body" }, rail(rt.name, m), main, aside));
@@ -1985,7 +1972,7 @@ a.ev { min-height: 44px; }
   // a poll that arrived while you typed renders after you leave the field, late enough not to eat the click that moved focus
   app.addEventListener("focusout", function () { setTimeout(function () { if (S.dirty && !busyTyping() && !S.manual) renderNow(); }, 600); });
 
-  /* ---------- routes: #/turn #/factory #/captures #/feed #/fuel #/decide[/owner/repo/n] #/pr/owner/repo/n ---------- */
+  /* ---------- routes: #/turn #/factory #/feed #/fuel #/decide[/owner/repo/n] #/pr/owner/repo/n ---------- */
   function parseRoute() {
     var p = location.hash.replace(/^#\/?/, "").split("/");
     if (p[0] === "pr" && p.length === 4 && NAME.test(p[1]) && NAME.test(p[2]) && /^\d{1,9}$/.test(p[3])) return { name: "pr", repo: p[1] + "/" + p[2], n: Number(p[3]) };
@@ -1994,6 +1981,7 @@ a.ev { min-height: 44px; }
       return { name: "decide" };
     }
     if (PLACE_IDS.indexOf(p[0]) >= 0) return { name: p[0] };
+    if (p[0] === "captures") return { name: "turn" }; // v0.1 shoots no screenshots: an old link or tab lands on Your turn
     return null;
   }
   function onRoute() {
@@ -2032,11 +2020,15 @@ a.ev { min-height: 44px; }
       .then(function (s) {
         var polled = !!S.lastOk; // the first read comes with the route's own fetch of the detail
         S.state = s; S.error = null; S.serverFailed = false; S.lastOk = Date.now();
-        if (readingRepos().length && !S.soon) S.soon = setTimeout(function () { S.soon = null; load(); }, SOON_MS);
+        soon();
         if (polled && S.route && S.route.name === "pr") fetchPR(S.route, true); // the open screen follows the watcher too
         render();
       },
-        function (e) { S.serverFailed = !!(e && e.serverFailed); S.error = String(e && e.message || e); render(); });
+        function (e) { S.serverFailed = !!(e && e.serverFailed); S.error = String(e && e.message || e); soon(); render(); });
+  }
+  // While GitHub is first read, ask again soon, whether or not the last ask worked; never more than one is waiting.
+  function soon() {
+    if (readingRepos().length && !S.soon) S.soon = setTimeout(function () { S.soon = null; load(); }, SOON_MS);
   }
   var embedded = (document.getElementById("mesa-sample").textContent || "").trim();
   if (embedded.charAt(0) === "{") {

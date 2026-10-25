@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import tomllib
 from collections.abc import Callable
 from dataclasses import replace
@@ -107,6 +108,12 @@ def _test_command(root: Path) -> str:
     return ""
 
 
+def workflow_files(root: Path) -> list[Path]:
+    """The GitHub Actions workflow files of a clone."""
+    directory = root / ".github" / "workflows"
+    return sorted(p for pattern in ("*.yml", "*.yaml") for p in directory.glob(pattern) if p.is_file())
+
+
 def _ask_seat(ask: Ask, what: str, seat: Seat) -> Seat:
     model = ask(f"  {what} model ({seat.engine})", seat.model).strip() or seat.model
     effort = ask(f"  {what} effort", seat.effort or "").strip() or seat.effort
@@ -140,7 +147,12 @@ def init(
         raise SystemExit("vigia needs git, gh and both engines logged in: one lab builds, the other reviews")
 
     detected, default_base = _detect(runner, root)
-    repo = repo or (detected if assume_yes and detected else ask("Repository (owner/name)", detected or ""))
+    if not repo:
+        repo = detected or "" if assume_yes else ask("Repository (owner/name)", detected or "")
+    repo = repo.strip()
+    if not repo:
+        print("could not tell the GitHub repository: pass --repo OWNER/NAME", file=sys.stderr)
+        raise SystemExit(2)
     base = default_base if assume_yes else ask("Base branch", default_base)
     if builder is None:
         builder = (
@@ -172,6 +184,17 @@ def init(
             )
     guess = _test_command(root)
     test_command = guess if assume_yes else ask("Test command builders run (optional)", guess)
+
+    require_ci = True
+    if not workflow_files(root):
+        say(
+            "vigia merges only with CI green on the PR head, and this repo has no workflow in .github/workflows."
+        )
+        if not assume_yes and ask("Merge without CI? (y/N)", "n").strip().lower().startswith("y"):
+            require_ci = False
+            say("Merging without CI: require_ci = false. Add a workflow later and set it back to true.")
+        else:
+            say("Keeping require_ci = true: add a GitHub Actions workflow that runs on `pull_request`.")
 
     login = _login(runner)
     humans = [login] if login else []
@@ -205,6 +228,7 @@ def init(
         base=base,
         tiers=tiers,
         test_command=test_command.strip() or None,
+        require_ci=require_ci,
         humans=tuple(humans),
         slots=slots,
         engine_args={e: dict(r) for e, r in config_mod.DEFAULT_ENGINE_ARGS.items()},
@@ -234,7 +258,7 @@ def init(
         say(f"Created {len(label_specs(cfg.labels))} labels on {repo}")
     if not assume_yes:
         where = ask(
-            "Where will vigia run: laptop or server? (a server keeps the factory on day and night)", "server"
+            "Where will vigia run: laptop or server? (a server keeps the factory on day and night)", "laptop"
         )
         if where.strip().lower().startswith("s"):
             say(
