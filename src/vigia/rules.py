@@ -121,18 +121,20 @@ def decide(pr: PRState, cfg: Config) -> Decision:
 
     def fix_or_park(stage: str, why: str) -> Decision:
         if pr.fix_rounds >= caps.fix_rounds:
-            return park(f"{why}; fix rounds used up ({pr.fix_rounds}/{caps.fix_rounds})")
+            return park(f"{why}; the cap of {caps.fix_rounds} fix rounds is reached")
         if not gate_rounds_left:
-            return park(f"{why}; a fix would need another gate round and all {caps.gate_rounds} are used")
+            return park(
+                f"{why}; a fix needs another gate round, and the cap of {caps.gate_rounds} is reached"
+            )
         return Decision("fix", why, head, stage)
 
     # 3 — CI before review.
     if pr.ci == "pending":
-        return wait("CI running on head")
+        return wait("CI running on this head")
     if pr.ci == "none" and cfg.require_ci:
-        return wait("no CI result on head yet")
+        return wait("no CI result on this head yet")
     if pr.ci == "failing":
-        return fix_or_park("ci", "CI is red on head")
+        return fix_or_park("ci", "CI is red on this head")
 
     # 4 — cross-lab gate on the exact head.
     on_head = [v for v in pr.verdicts if v.kind == "gate" and v.sha == head]
@@ -141,14 +143,18 @@ def decide(pr: PRState, cfg: Config) -> Decision:
         unavailable = len(on_head)
         if unavailable >= caps.attempts:
             return park(
-                f"GATE_UNAVAILABLE: no verdict from the other lab on head after {unavailable} attempts"
+                f"GATE_UNAVAILABLE: no verdict from the other lab on this head after {unavailable} attempts"
             )
         if not gate_rounds_left:
-            return park(f"gate rounds used up ({caps.gate_rounds}) and the head moved after the last one")
-        return Decision("gate", f"gate round {len(gated) + 1} on head", head, str(len(gated) + 1))
+            return park(
+                f"the cap of {caps.gate_rounds} gate rounds is reached and the head moved after the last one"
+            )
+        return Decision("gate", f"round {len(gated) + 1} on this head", head, str(len(gated) + 1))
     gate = with_content[-1]
     if not gate.passes:
-        return fix_or_park("gate", f"gate round {gated.index(head) + 1}: {gate.p1} P1 finding(s) on head")
+        return fix_or_park(
+            "gate", f"gate round {gated.index(head) + 1}: {gate.p1} P1 finding(s) on this head"
+        )
 
     # 5 — stronger reviewer (T1/T2) on the same exact head.
     if policy.reviewer is not None:
@@ -157,15 +163,17 @@ def decide(pr: PRState, cfg: Config) -> Decision:
         with_content_r = [v for v in on_head_r if v.content]
         if not with_content_r:
             if len(on_head_r) >= caps.attempts:
-                return park(f"reviewer returned no verdict on head after {len(on_head_r)} attempts")
+                return park(f"reviewer returned no verdict on this head after {len(on_head_r)} attempts")
             if len(reviewed) >= caps.review_rounds:
                 return park(
-                    f"review rounds used up ({caps.review_rounds}) and the head moved after the last one"
+                    f"the cap of {caps.review_rounds} review rounds is reached and the head moved after the last one"
                 )
-            return Decision("review", f"{pr.tier} review on head", head, str(len(reviewed) + 1))
+            return Decision(
+                "review", f"{pr.tier} round {len(reviewed) + 1} on this head", head, str(len(reviewed) + 1)
+            )
         review = with_content_r[-1]
         if not review.passes:
-            return fix_or_park("review", f"{pr.tier} reviewer: {review.p1} P1 finding(s) on head")
+            return fix_or_park("review", f"{pr.tier} reviewer: {review.p1} P1 finding(s) on this head")
 
     # 6 — T2: a human on the exact head.
     if policy.human and not pr.human_ok:
@@ -174,4 +182,4 @@ def decide(pr: PRState, cfg: Config) -> Decision:
     # 7 — merge.
     if pr.mergeable != "MERGEABLE":
         return wait("GitHub has not computed mergeability yet")
-    return Decision("merge", f"{pr.tier} requirements hold on head", head)
+    return Decision("merge", f"{pr.tier} requirements hold on this head", head)

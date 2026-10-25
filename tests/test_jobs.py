@@ -409,7 +409,11 @@ def test_a_stale_park_is_not_applied_to_a_pr_that_moved(world):  # noqa: F811
     tick(ctx)
     pr = next(iter(gh.prs_))
     old = sense(ctx, track=False)[0]
-    stale = Seen(old.pr, old.state, Decision("park", "CI is red on head; fix rounds used up", old.pr["head"]))
+    stale = Seen(
+        old.pr,
+        old.state,
+        Decision("park", "CI is red on this head; the cap of 2 fix rounds is reached", old.pr["head"]),
+    )
     wt = ctx.root / "moved"  # a job pushed a new head after the snapshot
     git("worktree", "add", "--quiet", "--detach", str(wt), old.pr["head"], cwd=ctx.clone)
     (wt / "fix.txt").write_text("fixed")

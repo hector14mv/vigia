@@ -43,7 +43,7 @@ def test_t0_with_only_p2_findings_merges():
 
 def test_gate_approve_of_an_older_head_does_not_count():
     action, reason = act(pr(head=H2, verdicts=(gate(sha=H1),)))
-    assert action == "gate" and "round 2" in reason
+    assert action == "gate" and "round 2 on this head" in reason
 
 
 def test_approve_that_lists_a_p1_is_read_as_changes():
@@ -71,7 +71,7 @@ def test_red_ci_asks_for_a_fix_round():
 
 def test_red_ci_parks_when_fix_rounds_are_used_up():
     action, reason = act(pr(ci="failing", fix_rounds=2))
-    assert action == "park" and "fix rounds used up" in reason
+    assert action == "park" and "the cap of 2 fix rounds is reached" in reason
 
 
 def test_a_green_ci_never_merges_without_a_gate():
@@ -101,7 +101,7 @@ def test_p1_on_round_two_parks_instead_of_a_third_round():
 def test_head_moving_after_the_last_gate_round_parks():
     state = pr(head=H3, fix_rounds=2, verdicts=(gate(H1, "CHANGES", 1), gate(H2, "APPROVE")))
     action, reason = act(state)
-    assert action == "park" and "gate rounds used up" in reason
+    assert action == "park" and "the cap of 2 gate rounds is reached" in reason
 
 
 def test_round_two_approve_merges():
@@ -126,7 +126,7 @@ def test_unavailable_never_counts_as_a_round_or_a_pass():
 def test_caps_are_configurable():
     cfg = replace(CFG, caps=Caps(gate_rounds=1))
     action, reason = act(pr(verdicts=(gate(verdict="CHANGES", p1=1),)), cfg)
-    assert action == "park" and "another gate round" in reason
+    assert action == "park" and "a fix needs another gate round, and the cap of 1 is reached" in reason
 
 
 # --- T1: + stronger reviewer ----------------------------------------------------------------
@@ -148,6 +148,15 @@ def test_t1_review_of_an_older_head_does_not_count():
 def test_t1_review_changes_asks_for_a_fix():
     d = decide(pr(tier="T1", verdicts=(gate(), review(verdict="CHANGES", p1=1))), CFG)
     assert (d.action, d.stage) == ("fix", "review")
+
+
+def test_reasons_read_as_plain_english():
+    assert decide(pr(), CFG).reason == "round 1 on this head"
+    assert decide(pr(tier="T1", verdicts=(gate(),)), CFG).reason == "T1 round 1 on this head"
+    assert (
+        decide(pr(tier="T1", verdicts=(gate(), review())), CFG).reason == "T1 requirements hold on this head"
+    )
+    assert str(decide(pr(), CFG)) == "gate: round 1 on this head"
 
 
 # --- T2: + human label ------------------------------------------------------------------------
