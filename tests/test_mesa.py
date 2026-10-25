@@ -610,12 +610,70 @@ def test_pr_detail_tells_the_whole_story(world):  # noqa: F811
     kinds = [e["event"] for e in d["timeline"]]
     assert kinds[-1] == "pr_opened" and "head_outside" in kinds and "pushed" in kinds
     verdicts = [e for e in d["timeline"] if e["event"] == "verdict"]
-    assert [f["status"] for v in verdicts for f in v["findings"]] == [
-        "fixed",
-        "fixed",
-    ]  # neither is on this head
+    # newest first: the second round's P1 was never re-checked (nobody has reviewed the new head), so it is still open
+    assert [f["status"] for v in verdicts for f in v["findings"]] == ["open", "fixed"]
     assert d["engine_line"].startswith("Engine: claude")
     assert d["tried_total"]["gate_rounds"] == 2 and d["built_by"].startswith("claude")
+
+
+def test_a_finding_is_fixed_only_once_a_later_review_has_looked_again(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([CHANGES])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    for _ in range(2):  # build, gate P1 on the first head
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+
+    def statuses():
+        d = mesa.pr_detail(ctx, pr)
+        return [f["status"] for e in d["timeline"] if e["event"] == "verdict" for f in e["findings"]]
+
+    assert statuses() == ["open"]
+    # a person pushes a new head without touching the affected code: nobody has verified it yet
+    ctx.ledger.append("pushed", pr=pr, sha="b" * 40, from_sha=gh.prs_[pr]["head"])
+    assert statuses() == ["open"]
+    # a review with no usable verdict looked at nothing
+    ctx.ledger.append(
+        "verdict", pr=pr, kind="gate", sha="b" * 40, tier="T0", verdict="UNAVAILABLE", findings=[]
+    )
+    assert statuses() == ["open"]
+    # a review of another kind did not re-check the gate's finding either
+    ctx.ledger.append(
+        "verdict", pr=pr, kind="review", sha="b" * 40, tier="T0", verdict="APPROVE", findings=[]
+    )
+    assert statuses() == ["open"]
+    ctx.ledger.append("verdict", pr=pr, kind="gate", sha="b" * 40, tier="T0", verdict="APPROVE", findings=[])
+    assert statuses() == ["fixed"]
+
+
+def test_an_open_pr_screen_follows_the_watcher(world, tmp_path):  # noqa: F811
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    gh, build = world
+    ctx, _ = build([CHANGES])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    for _ in range(2):
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    state = mesa.state([ctx], _now(ctx))
+    first = mesa.pr_detail(ctx, pr)
+    # the watcher moves on while the screen is open: a new head, a new reason
+    second = dict(first, head="f" * 40, reason="the watcher pushed a fix and is waiting for a new review")
+    assert second["reason"] not in json.dumps(first)
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"state": [state], "pr": [first, second]}), encoding="utf-8")
+    script = Path(__file__).with_name("mesa_render.js")
+    out = subprocess.run(
+        [node, str(script), "--live", str(mesa.PAGE), str(live), f"pr/{gh.repo}/{pr}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    shown = json.loads(out.stdout)
+    assert first["reason"] in shown["before"]["text"] and second["reason"] not in shown["before"]["text"]
+    assert second["reason"] in shown["after"]["text"] and first["reason"] not in shown["after"]["text"]
 
 
 def test_the_server_serves_a_pr_detail_and_nothing_else(world):  # noqa: F811

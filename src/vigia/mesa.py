@@ -598,23 +598,29 @@ def pr_detail(ctx: Ctx, n: int) -> dict:
     steps, waiting = _pipeline(ctx, seen, running)
     mine = [r for r in ctx.ledger.rows() if r.get("pr") == n]
     explained = {r.get("sha") for r in mine if r["event"] in ("pr_opened", "pushed", "updated")}
-    on_head = [r for r in mine if r["event"] == "verdict" and r.get("sha") == pr["head"]]
-    latest = on_head[-1] if on_head else None
+    # A P1 counts as fixed only once a later verdict of the same kind has actually looked again: a newer head
+    # that nobody has reviewed yet proves nothing about the code the finding pointed at.
+    reviewed = [
+        (i, r["kind"])
+        for i, r in enumerate(mine)
+        if r["event"] == "verdict" and r["verdict"] != "UNAVAILABLE"
+    ]
     timeline = []
-    for r in mine:
+    for at, r in enumerate(mine):
         if r["event"] == "head_seen" and r.get("sha") not in explained:
             timeline.append({"ts": r["ts"], "event": "head_outside", "sha": r.get("sha")})
             explained.add(r.get("sha"))  # once per head
         elif r["event"] in TIMELINE:
             item = {k: v for k, v in r.items() if k != "findings"}
             if r["event"] == "verdict":
+                rechecked = any(i > at and kind == r["kind"] for i, kind in reviewed)
                 item["findings"] = [
                     {
                         "severity": f.get("severity"),
                         "file": f.get("file"),
                         "line": f.get("line"),
                         "title": f.get("title"),
-                        "status": ("open" if r is latest else "fixed") if f.get("severity") == "P1" else None,
+                        "status": ("fixed" if rechecked else "open") if f.get("severity") == "P1" else None,
                     }
                     for f in r.get("findings") or []
                 ]

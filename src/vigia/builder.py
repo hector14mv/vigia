@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from . import comments, jobs, prompts, tickets
+from . import comments, decisions, jobs, prompts, tickets
 from .context import Ctx
 from .engines import Outcome, handoff_body, handoff_commit
 from .proc import CommandError, run
@@ -65,12 +65,45 @@ def gaps(ctx: Ctx, issue: dict) -> list[str]:
     return found
 
 
+def unanswered_decisions(ctx: Ctx) -> dict[int, list[int]]:
+    """Issue or PR number -> the open decision issues that block it and have no recorded answer.
+    Raises CommandError when the decisions cannot be read: the caller holds the work rather than guess."""
+    answered = {r.get("issue") for r in ctx.ledger.events("decided")}
+    waits: dict[int, list[int]] = {}
+    for d in ctx.gh.issues(decisions.LABEL):
+        if d["number"] not in answered:
+            # `field`, not `parse`: a decision whose body is malformed still blocks what it says it blocks
+            for n in decisions.refs(decisions.field(d["body"], "Blocks")):
+                waits.setdefault(n, []).append(d["number"])
+    return waits
+
+
+def blockers(ctx: Ctx, issue: dict, waits: dict[int, list[int]] | None = None) -> list[int]:
+    """The open items that keep `issue` from being built: tickets in its `Blocked by:` line that are still open
+    and decision issues that name it in `Blocks:` and are not answered. Raises CommandError when that cannot be
+    read."""
+    waits = unanswered_decisions(ctx) if waits is None else waits
+    held = [n for n in decisions.blocked_by(issue["body"]) if n != issue["number"] and ctx.gh.item_open(n)]
+    return sorted(set(held) | set(waits.get(issue["number"], [])))
+
+
 def next_issue(ctx: Ctx, skip: set[int] | frozenset[int] = frozenset()) -> dict | None:
     """The oldest ready issue that is launchable, other than those in `skip` (already being built).
-    Non-launchable ones are refused on the way."""
+    Blocked ones (an open `Blocked by:` ticket, an unanswered decision) wait; non-launchable ones are refused
+    on the way."""
     labels = ctx.cfg.labels
+    waits: dict[int, list[int]] | None = None
     for issue in ctx.gh.issues(labels.ready):
         if issue["number"] in skip or labels.building in issue["labels"] or labels.parked in issue["labels"]:
+            continue
+        try:
+            waits = unanswered_decisions(ctx) if waits is None else waits
+            held = blockers(ctx, issue, waits)
+        except CommandError as exc:  # unknown is not free: hold it until the next tick can read
+            ctx.say(f"#{issue['number']}: not building — could not read what blocks it ({exc})")
+            continue
+        if held:
+            ctx.say(f"#{issue['number']}: not building — blocked by {', '.join(f'#{n}' for n in held)}")
             continue
         problems = gaps(ctx, issue)
         if problems:

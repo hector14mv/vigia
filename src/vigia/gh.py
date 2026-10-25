@@ -163,6 +163,16 @@ class GitHub:
             "labels": sorted(label["name"] for label in r.get("labels") or []),
         }
 
+    def item_open(self, number: int) -> bool:
+        """True while issue or pull request `number` is open (the REST issues endpoint answers for both)."""
+        data = self._api("GET", f"repos/{self.repo}/issues/{number}")
+        return (data or {}).get("state") == "open"
+
+    def close_issue(self, number: int) -> None:
+        self._api(
+            "PATCH", f"repos/{self.repo}/issues/{number}", {"state": "closed", "state_reason": "completed"}
+        )
+
     def add_labels(self, number: int, *labels: str) -> None:
         if labels:
             self._api("POST", f"repos/{self.repo}/issues/{number}/labels", {"labels": list(labels)})

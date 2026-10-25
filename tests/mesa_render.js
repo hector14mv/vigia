@@ -6,14 +6,19 @@
 // phone width and at desktop width, each in a fresh context with the state embedded as the page's sample (so the
 // page never fetches). It prints {"phone": {route: view}, "desk": {route: view}}, where a view is the #app subtree
 // as `html` (attributes kept, text escaped), as `text` (one line per block), and its `links` and `tags`.
+// With `--live` first, it instead runs the page against a scripted server, as served (no embedded sample), and shows
+// the route before and after one poll: node mesa_render.js --live <mesa.html> <live.json> <route>, where live.json is
+// {"state": [state, ...], "pr": [detail, ...]} and each fetch of that kind answers with the next entry (the last one
+// repeats). It prints {"before": view, "after": view} for the desktop layout.
 // Anything the page must never do (innerHTML, document.write, a fetch) throws, and so fails the test.
 "use strict";
 const fs = require("fs");
 const vm = require("vm");
 
-const [pagePath, statePath, ...routes] = process.argv.slice(2);
+const live = process.argv[2] === "--live";
+const [pagePath, statePath, ...routes] = process.argv.slice(live ? 3 : 2);
 const scripts = [...fs.readFileSync(pagePath, "utf8").matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
-const sample = fs.readFileSync(statePath, "utf8");
+const sample = live ? "" : fs.readFileSync(statePath, "utf8");
 const BLOCK = new Set(["div", "p", "h1", "h2", "h3", "li", "ul", "ol", "article", "section", "header", "main", "aside",
   "nav", "pre", "fieldset", "legend", "label", "button", "textarea"]);
 
@@ -159,9 +164,56 @@ function render(desk, route) {
   };
 }
 
-const out = { phone: {}, desk: {} };
-for (const route of routes) {
-  out.phone[route] = render(false, route);
-  out.desk[route] = render(true, route);
+function view(app) {
+  const els = walk(app);
+  return { html: serialize(app), text: lines(app), links: els.filter((el) => el.hasAttribute("href")).map((el) => el.getAttribute("href")) };
 }
-process.stdout.write(JSON.stringify(out));
+
+const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+
+async function renderLive(route) {
+  const script = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  const { doc, app } = makeDocument();
+  const seen = { state: 0, pr: 0 };
+  const answer = (kind, url) => {
+    const list = script[kind];
+    const body = list[Math.min(seen[kind]++, list.length - 1)];
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body), url });
+  };
+  let poll = null;
+  const win = {
+    document: doc,
+    location: { hash: "#/" + route },
+    navigator: {},
+    isSecureContext: false,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    matchMedia: (q) => ({ matches: /min-width:\s*1024px/.test(q), addEventListener() {}, addListener() {} }),
+    addEventListener() {},
+    scrollTo() {},
+    setInterval: (fn) => { poll = fn; return 0; },
+    setTimeout: () => 0,
+    clearTimeout() {},
+    fetch: (url) => answer(String(url).startsWith("/api/pr/") ? "pr" : "state", url),
+    console,
+  };
+  win.window = win;
+  const context = vm.createContext(win);
+  scripts.forEach((code, i) => vm.runInContext(code, context, { filename: `mesa.html <script> #${i + 1}` }));
+  await settle();
+  const before = view(app);
+  if (!poll) throw new Error("the page did not start a poll");
+  poll();
+  await settle();
+  return { before, after: view(app) };
+}
+
+if (live) {
+  renderLive(routes[0]).then((r) => process.stdout.write(JSON.stringify(r)), (e) => { console.error(e); process.exit(1); });
+} else {
+  const out = { phone: {}, desk: {} };
+  for (const route of routes) {
+    out.phone[route] = render(false, route);
+    out.desk[route] = render(true, route);
+  }
+  process.stdout.write(JSON.stringify(out));
+}

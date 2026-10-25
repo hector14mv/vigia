@@ -1626,22 +1626,26 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
 
   /* ---------- PR detail ---------- */
   function prKey(rt) { return rt.repo + "#" + rt.n; }
-  function fetchPR(rt) {
-    var key = prKey(rt);
+  function fetchPR(rt, quiet) {
+    var key = prKey(rt), had = S.pr[key];
     if (S.sample) {
       var d = S.state && S.state.pr_details && S.state.pr_details[key];
       S.pr[key] = d ? { data: d } : { error: "This sample has no detail for #" + rt.n + "." };
       return;
     }
-    S.pr[key] = { loading: true };
+    // A refresh of an open screen keeps showing what it has while it asks again, and keeps it if the ask fails.
+    if (quiet && had && had.asking) return;
+    var keep = quiet && had && had.data ? had.data : null;
+    S.pr[key] = keep ? { data: keep, asking: true } : { loading: true, asking: true };
     var parts = rt.repo.split("/");
     if (parts.length !== 2 || !NAME.test(parts[0]) || !NAME.test(parts[1])) { S.pr[key] = { error: "Not a repo name." }; return; }
+    function failed(msg) { S.pr[key] = keep ? { data: keep } : { error: msg }; render(); }
     fetch("/api/pr/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/" + rt.n, { cache: "no-store", credentials: "same-origin" })
       .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, status: res.status, b: b }; }, function () { return { ok: false, status: res.status, b: null }; }); })
       .then(function (x) {
-        S.pr[key] = x.ok && x.b && typeof x.b === "object" ? { data: x.b } : { error: (x.b && x.b.error) || "The server answered " + x.status + "." };
-        render();
-      }, function () { S.pr[key] = { error: "The Mesa cannot reach vigia." }; render(); });
+        if (x.ok && x.b && typeof x.b === "object") { S.pr[key] = { data: x.b }; render(); }
+        else failed((x.b && x.b.error) || "The server answered " + x.status + ".");
+      }, function () { failed("The Mesa cannot reach vigia."); });
   }
   function tlLook(e, tier, r) {
     var s = sha7(e.sha);
@@ -1686,8 +1690,8 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     lines.push("What was tried: " + (tt.gate_rounds || 0) + " gate rounds on " + (tt.heads || 0) + " heads, " + (tt.p1 || 0) + " P1, " + (tt.fix_rounds || 0) + " fix rounds, parked " + (tt.parks || 0) + " times.");
     var open = allFindings(d).filter(function (x) { return x.f.status === "open"; });
     if (open.length) {
-      lines.push("Open on " + sha7(d.head) + ":");
-      open.forEach(function (x) { lines.push("- " + (x.f.file || "?") + (x.f.line ? ":" + x.f.line : "") + " " + x.f.title); });
+      lines.push("Open findings, not yet re-checked by a later review (head is " + sha7(d.head) + "):");
+      open.forEach(function (x) { lines.push("- " + (x.f.file || "?") + (x.f.line ? ":" + x.f.line : "") + " " + x.f.title + " (found on " + sha7(x.e.sha) + ")"); });
     }
     lines.push("", "History, newest first:");
     (d.timeline || []).slice(0, 30).forEach(function (e) { var l = tlLook(e, d.tier, r); lines.push("- " + dayTime(e.ts) + " " + l[2] + (l[3] ? " (" + l[3] + ")" : "")); });
@@ -2031,7 +2035,12 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   function load() {
     fetch("/api/state", { cache: "no-store", credentials: "same-origin" })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(function (s) { S.state = s; S.error = null; S.lastOk = Date.now(); render(); },
+      .then(function (s) {
+        var polled = !!S.lastOk; // the first read comes with the route's own fetch of the detail
+        S.state = s; S.error = null; S.lastOk = Date.now();
+        if (polled && S.route && S.route.name === "pr") fetchPR(S.route, true); // the open screen follows the watcher too
+        render();
+      },
         function (e) { S.error = String(e && e.message || e); render(); });
   }
   var embedded = (document.getElementById("mesa-sample").textContent || "").trim();

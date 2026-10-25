@@ -233,3 +233,14 @@ def test_open_issues_reads_every_page_and_leaves_out_pull_requests():
     issues = GitHub("o/r", runner=run).open_issues()
     assert issues == [{"number": 1, "title": "a", "url": "u1", "labels": ["tier:T1"]}]
     assert "--paginate" in run.calls[0]["args"] and "--slurp" in run.calls[0]["args"]
+
+
+def test_item_open_reads_issues_and_pull_requests_alike_and_close_issue_closes():
+    runner = Runner(json.dumps({"state": "open"}), json.dumps({"state": "closed"}), "{}")
+    gh = GitHub("o/r", runner=runner)
+    assert gh.item_open(7) is True and gh.item_open(8) is False
+    assert runner.calls[0]["args"][-1] == "repos/o/r/issues/7"
+    gh.close_issue(7)
+    call = runner.calls[2]
+    assert "PATCH" in call["args"] and call["args"][-3:] == ["repos/o/r/issues/7", "--input", "-"]
+    assert json.loads(call["input"])["state"] == "closed"
