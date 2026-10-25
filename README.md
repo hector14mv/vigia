@@ -151,8 +151,8 @@ vigia watch     # the loop: CI → gate → fix → review → merge or park, un
 vigia status    # the queue, every open PR with its next step, parked reasons, recent events
 ```
 
-`vigia:ready` is what starts a build, so only someone with write access to the repository can add it, and vigia
-checks who did. `vigia watch` runs until you press Ctrl-C, and it also builds ready issues. `vigia watch --once`
+`vigia:ready` is what starts a build: vigia builds an issue only when someone with write access to the
+repository added that label, and removing it withdraws the approval. `vigia watch` runs until you press Ctrl-C, and it also builds ready issues. `vigia watch --once`
 does a single tick and exits; `vigia watch --no-build` only moves PRs that are already open and builds nothing
 new.
 
