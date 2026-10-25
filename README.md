@@ -2,8 +2,8 @@
 
 **Agents build. The other lab reviews. A deterministic decision table merges only the reviewed commit.**
 
-vigia takes GitHub issues to merged pull requests with coding agents from two AI labs: Claude Code (Anthropic)
-and Codex CLI (OpenAI). An agent from one lab builds each change, a model from the other lab reviews it on its
+vigia is a small AI software factory: it takes GitHub issues to merged pull requests with coding agents from two
+AI labs, Claude Code (Anthropic) and Codex CLI (OpenAI). An agent from one lab builds each change, a model from the other lab reviews it on its
 exact commit, and a pure function, with no model in it, decides whether it merges. Every step is one line in an
 append-only ledger.
 
@@ -51,8 +51,8 @@ flowchart LR
     G -. "two rounds used" .-> K["Parked<br/>with a written reason"]
 ```
 
-Only four steps run a model, each in a fresh, headless session capped in time: **build**, **fix**, **gate** and
-the **stronger review**. Everything else is deterministic code: ticket validation, commit, push, PR and handoff,
+On a pull request's path only four steps run a model, each in a fresh, headless session capped in time:
+**build**, **fix**, **gate** and the **second review**. Everything else is deterministic code: ticket validation, commit, push, PR and handoff,
 verdict parsing, caps and parking, the merge decision, and the ledger.
 
 ## Quickstart
@@ -102,8 +102,8 @@ vigia doctor
 `init` checks the four tools, asks which lab builds (the other one reviews), proposes models per tier, writes
 `vigia.toml`, adds `.vigia/` to `.gitignore`, writes the ticket template to
 `.github/ISSUE_TEMPLATE/vigia-ticket.md`, and creates the labels on GitHub. **Commit and push** those files:
-GitHub shows the template only once it is on the default branch. `doctor` checks everything vigia needs and
-prints the command that fixes each problem.
+GitHub shows the template only once it is on the default branch. `doctor` checks the tools, `vigia.toml`, the
+repository, the labels, CI and the test command (not branch protection), and prints the fix for each problem.
 
 Then protect the base branch on GitHub (branch rules need a public repository, or a paid plan for a private
 one). In **Settings → Branches**, add a rule for `main` with:
@@ -192,8 +192,9 @@ A P1 starts one **fix round**: a new builder session from the same lab, with onl
 The gate then reviews the new head. There are at most two gate rounds per PR; after that the PR is parked for a
 person.
 
-**T1 and T2** add a second reviewer on the same exact head, by default from the builder's lab (when Claude builds:
-Claude Opus 5.5 on T1 and Claude Fable 5.1 on T2). **T2** also waits for a person to add `vigia:human-ok` on that head. The label counts only if
+**T1 and T2** add a second reviewer on the same exact head, by default from the builder's lab: when Claude builds,
+Claude Opus 5.5 on T1 and Claude Fable 5.1 on T2; when Codex builds, GPT-6.1 Sol (the builder's own model, in a
+fresh read-only session) on T1 and GPT-6 Astra on T2. **T2** also waits for a person to add `vigia:human-ok` on that head. The label counts only if
 GitHub recorded it after vigia first saw the head, so an approval never carries over to a later push (vigia also
 removes the stale label, as a courtesy).
 
@@ -366,15 +367,16 @@ repositories with a shared budget, the Mesa, a planner that turns a goal into ti
 engine report from the ledger, and a guide to run it all on an always-on server.
 
 **vigia built vigia.** From 23 October 2026 until 25 October at 21:12 (Madrid), this repository and vigia-demo
-ran on vigia itself. Their ledgers count 54 pull requests merged by `vigia watch`: 43 built by vigia's own builder
+ran on vigia itself. Their ledgers count 55 pull requests merged by `vigia watch`: 44 built by vigia's own builder
 sessions, the other 11 by an interactive Claude Code session put through the same flow. Every one was gated on its
-exact commit by a model from the other lab. The gate returned 106 P1 findings across 121 verdicts, no pull request
+exact commit by a model from the other lab. The gate returned 106 P1 findings across 122 verdicts, no pull request
 merged while the latest review of its head reported a P1, and 28 times a pull request was parked for a person
-with the reason written on it. Each merged pull request shows its handoff, verdicts and merge comment:
-[vigia](https://github.com/hector14mv/vigia/pulls?q=is%3Apr+is%3Amerged) and
-[vigia-demo](https://github.com/hector14mv/vigia-demo/pulls?q=is%3Apr+is%3Amerged). Several designs in this
-release changed because of what the gate found, and one feature, bringing a moved base into a pull request,
-stayed out of v0.1 for the same reason.
+with the reason written on it. Each of those pull requests shows its handoff, verdicts and merge comment:
+[vigia](https://github.com/hector14mv/vigia/pulls?q=is%3Apr+is%3Amerged+merged%3A%3C%3D2026-10-25T21%3A12%3A00%2B01%3A00)
+and
+[vigia-demo](https://github.com/hector14mv/vigia-demo/pulls?q=is%3Apr+is%3Amerged+merged%3A%3C%3D2026-10-25T21%3A12%3A00%2B01%3A00).
+Several designs in this release changed because of what the gate found, and one feature, bringing a moved base
+into a pull request, stayed out of v0.1 for the same reason.
 
 ## Limitations of v0.1
 
