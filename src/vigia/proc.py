@@ -97,15 +97,26 @@ def run_session(
             # The engine is done, but a child it started may not be: nothing of the session outlives this call,
             # or the target would be let go while something still works on it.
             _end_group(proc.pid, grace=5, proc=proc)
+            _log_stdout(log, out)
             return Result(proc.returncode, out or "", "")
         except subprocess.TimeoutExpired:
             out = _stop(proc, grace=15)
+            _log_stdout(log, out)
             return Result(
                 proc.returncode if proc.returncode is not None else -9, out or "", "", timed_out=True
             )
         except BaseException:  # the runner is going away: the session must not outlive it
             _stop(proc, grace=5)
             raise
+
+
+def _log_stdout(log: Path, out: str | None) -> None:
+    """Append the session's stdout to its log, after the stderr already streamed there: a Claude session prints
+    its JSON on stdout and nothing on stderr, so without this its log would be empty."""
+    if not out:
+        return
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write("\n--- stdout ---\n" + out if log.stat().st_size else out)
 
 
 def _stop(proc: subprocess.Popen, grace: float) -> str:

@@ -231,5 +231,5 @@ def test_open_issues_reads_every_page_and_leaves_out_pull_requests():
     ]
     run = Runner(json.dumps(pages))
     issues = GitHub("o/r", runner=run).open_issues()
-    assert issues == [{"number": 1, "title": "a", "url": "u1", "labels": ["tier:T1"]}]
+    assert issues == [{"number": 1, "title": "a", "url": "u1", "labels": ["tier:T1"], "created": None}]
     assert "--paginate" in run.calls[0]["args"] and "--slurp" in run.calls[0]["args"]

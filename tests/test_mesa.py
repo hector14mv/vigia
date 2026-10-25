@@ -1147,3 +1147,29 @@ def test_the_page_says_the_server_failed_apart_from_not_reaching_it(world, tmp_p
     # a proxy's 502 (the Mesa is not there) is still "cannot reach"
     gone = _poll_after(tmp_path, gh, [good, {"__status": 502, "error": "bad gateway"}])["after"]["text"]
     assert "The Mesa cannot reach vigia" in gone and "server failed" not in gone
+
+
+def test_a_proposed_ticket_shows_with_its_tier_even_past_the_first_hundred(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    n = gh.add_issue("feat: planned thing", TICKET, ["tier:T1", "vigia:proposed"])
+    gh.add_issue("feat: not proposed", TICKET, ["tier:T0", "vigia:ready"])
+    gh.issues = lambda label: []  # what `gh issue list --limit 100` returns for a ticket on a later page
+    repo = mesa.state([ctx])["repos"][0]
+    assert [(p["number"], p["title"], p["tier"]) for p in repo["proposed"]] == [
+        (n, "feat: planned thing", "T1")
+    ]
+    assert "proposed tickets" not in repo["unread"]
+
+
+def test_proposed_tickets_that_cannot_be_read_are_unknown_not_none(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("feat: planned thing", TICKET, ["tier:T1", "vigia:proposed"])
+
+    def down():
+        raise CommandError(["gh", "api"], 1, "", "HTTP 502")
+
+    gh.open_issues = down
+    repo = mesa.state([ctx])["repos"][0]
+    assert repo["proposed"] is None and "proposed tickets" in repo["unread"]

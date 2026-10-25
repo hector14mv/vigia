@@ -273,3 +273,62 @@ def test_a_human_task_already_open_or_repeated_is_filed_once(world):  # noqa: F8
         "an open issue has this title",
         "the plan already has this title",
     ]
+
+
+def test_a_watcher_tick_runs_during_the_planner_session(world):  # noqa: F811
+    from vigia.watch import tick
+
+    gh, build = world
+    ctx, _ = build([])
+    scripted = engine([_plan()])
+    ticked = []
+
+    def run(cmd, cwd, input, timeout, log, **kwargs):
+        tick(ctx, build=False)  # takes the clone's lock: it would raise Busy if the plan still held it
+        ticked.append(True)
+        assert (ctx.root / next(p.name for p in ctx.root.iterdir())).exists()  # recovery kept the worktree
+        return scripted(cmd, cwd, input, timeout, log, **kwargs)
+
+    ctx.engines._run = run
+    _, filed = plan.plan(ctx, "Cover the helpers with tests")
+    assert ticked == [True] and len(filed) == 4
+    assert not any(ctx.root.iterdir())
+
+
+def test_a_second_planner_on_the_same_clone_is_refused(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    scripted = engine([_plan()])
+    refused = []
+
+    def run(cmd, cwd, input, timeout, log, **kwargs):
+        with pytest.raises(SystemExit, match="another vigia plan"):
+            plan.plan(ctx, "a second goal")
+        refused.append(True)
+        return scripted(cmd, cwd, input, timeout, log, **kwargs)
+
+    ctx.engines._run = run
+    plan.plan(ctx, "first goal", dry_run=True)
+    assert refused == [True] and not any(ctx.root.iterdir())
+
+
+def test_the_next_tick_removes_the_worktree_a_killed_planner_left(world):  # noqa: F811
+    from vigia.watch import tick
+
+    gh, build = world
+    ctx, _ = build([])
+    sha = ctx.git.remote_branch_sha("main")
+    stale = ctx.git.worktree_detached(ctx.root / f"plan-{sha[:8]}", sha)  # kill -9 mid-session
+    tick(ctx, build=False)
+    assert not stale.exists()
+    assert "plan-" not in ctx.git._git("worktree", "list").stdout
+
+
+def test_a_second_plan_works_over_a_worktree_the_first_left(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    sha = ctx.git.remote_branch_sha("main")
+    ctx.git.worktree_detached(ctx.root / f"plan-{sha[:8]}", sha)  # left by a killed planner, no tick since
+    ctx.engines._run = engine([_plan()])
+    _, filed = plan.plan(ctx, "Cover the helpers with tests")
+    assert len(filed) == 4 and not any(ctx.root.iterdir())

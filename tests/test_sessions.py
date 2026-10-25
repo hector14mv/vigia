@@ -14,7 +14,7 @@ import time
 
 from fakes import APPROVE
 from test_e2e import TICKET, world  # noqa: F401  (world is a fixture)
-from vigia import jobs
+from vigia import jobs, proc
 
 SESSION = """\
 import fcntl, os, signal, sys
@@ -201,3 +201,19 @@ def test_a_session_whose_output_cannot_be_read_still_leaves_nothing_behind(tmp_p
     finally:
         if child_pid.exists() and _alive(int(child_pid.read_text())):
             os.kill(int(child_pid.read_text()), signal.SIGKILL)
+
+
+def test_session_log_holds_both_stdout_and_stderr(tmp_path):
+    script = 'import sys; print(\'progress\', file=sys.stderr); print(\'{"result": "hi", "num_turns": 1}\')'
+    log = tmp_path / "logs" / "s.log"
+    result = proc.run_session([sys.executable, "-c", script], cwd=tmp_path, input="", timeout=60, log=log)
+    text = log.read_text(encoding="utf-8")
+    assert "progress" in text
+    assert '"num_turns": 1' in text
+    assert result.stdout == '{"result": "hi", "num_turns": 1}\n'
+
+
+def test_session_log_of_a_stdout_only_session_is_just_its_stdout(tmp_path):
+    log = tmp_path / "s.log"
+    proc.run_session([sys.executable, "-c", "print('{}')"], cwd=tmp_path, input="", timeout=60, log=log)
+    assert log.read_text(encoding="utf-8") == "{}\n"
