@@ -43,9 +43,9 @@ A manual pull request also needs two labels, or vigia never picks it up: `vigia:
 one `tier:T0`, `tier:T1` or `tier:T2` (with none or several tier labels it is parked).
 
 The gate of each tier is fixed in `vigia.toml`, and it is Codex in this repository. A gate from the
-builder's own lab is never used: a pull request whose handoff says `Engine: codex · …` is parked. So here such
-a pull request declares `Engine: claude · <model>`. To gate Codex-written work, a maintainer has to change the
-`gate` in `vigia.toml` first.
+builder's own lab is never used, so a pull request whose handoff says `Engine: codex · …` is parked. With this
+configuration, only Claude-written work can be reviewed here, and the `Engine:` line must name the engine that
+really wrote the change. To gate Codex-written work, a maintainer first changes the `gate` in `vigia.toml`.
 
 The full operating model is in [docs/operating-model.md](docs/operating-model.md).
 
