@@ -62,6 +62,12 @@ no longer covers the PR. The gate runs once per round, and a second round exists
 for an accepted finding has been pushed. After the second round there is no third: the PR is parked
 and a human decides. Repeated review rounds were the factory's single largest waste of quota.
 
+A review covers the PR's head, not the base it lands on: when the base moves after the review, the squash
+merge combines reviewed code with base changes nobody reviewed together. In v0.1 the guard is GitHub's own:
+turn on "Require branches to be up to date before merging" with at least one required check, and GitHub
+refuses to merge a stale head; the PR then waits until someone presses "Update branch", and vigia reviews the
+new head like any other. Bringing a moved base in and reviewing again by itself is on the roadmap.
+
 *Where:* every verdict in the ledger is keyed by the full SHA; `rules.decide()` counts gated heads
 against `caps.gate_rounds` (default 2) and parks when they are used.
 
@@ -102,12 +108,31 @@ nobody — no model, no session — approves its own work.
 
 *Where:* `rules.decide()` is pure Python with no I/O and is tested row by row
 (`tests/test_rules.py`); `watch.merge()` re-reads the PR and re-decides right before merging; the
-ledger is `.vigia/ledger.jsonl`, opened in append mode only (`ledger.Ledger`).
+ledger is `.vigia/ledger.jsonl`, opened in append mode only (`ledger.Ledger`). When several engine
+sessions run at once (`watch.slots`), each holds a lock on its PR or issue for its whole life, taken by
+the watcher before the session starts, so no two sessions ever work on the same PR (`jobs.spawn`).
 
 ---
 
+## How the parts fit
+
+1. **Plan.** `vigia plan "<goal>"` turns a goal into tickets in the template, every one filed as
+   `vigia:proposed`: a person ratifies a ticket by swapping that label for the ready one, so what the factory
+   builds next stays a person's call. Work only a person can do becomes a `vigia:human-task` issue.
+2. **Build.** `vigia watch` takes the oldest ready ticket into a free slot: a builder session in its own
+   worktree, then vigia commits, pushes, opens the PR and posts the handoff.
+3. **Check.** CI on the head; then the cross-lab gate; a P1 starts a fresh fix round; on T1/T2 the stronger
+   reviewer; on T2, a person's label on the exact head.
+4. **Merge or park.** The decision table merges with `--match-head-commit`, or parks with the reason written
+   on the PR. Nothing loops past a cap.
+5. **See it.** `vigia mesa` shows what needs a person, every PR's path and the last events, on a laptop or a
+   phone; `vigia report` turns the ledger into the engine table; `vigia status` prints the same in a terminal.
+   One `vigia.workspace.toml` drives several repositories with shared slots, on a laptop or an always-on
+   server ([server.md](server.md)).
+
 ## What a human still does
 
+- **Ratifies planned tickets** that wait as `vigia:proposed`, and does the `vigia:human-task` issues.
 - **Decides what to build**: writes, or approves, the ticket and its tier.
 - **Owns T2**: adds `vigia:human-ok` on the exact head of every T2 change. A label added before the
   head moved never counts (`watch.human_approved` compares GitHub's own event order, not clocks).

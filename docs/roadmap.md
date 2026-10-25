@@ -18,6 +18,11 @@ over the rest, in roughly the order below. This page gives an order, never dates
 
 ## Merging
 
+- Base updates: when the base moved after the review, vigia brings it into the PR and reviews the new head
+  before it merges, so what was reviewed is what lands ([#39](https://github.com/hector14mv/vigia/issues/39)).
+  Built and tested, held back from v0.1 by its review: a check made before the merge can race a moving
+  base unless GitHub enforces up-to-date branches, and it must survive a crash between push and record.
+
 - A final full CI run on the exact accepted head, so what merges is what was reviewed and tested.
 - A classifier that parks any database migration that is not purely additive, because those need a person.
 
