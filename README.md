@@ -16,9 +16,9 @@ append-only ledger.
 
 ![One issue becomes a merged pull request: Claude builds it, Codex reviews the exact commit, the decision table merges it](docs/demo.gif)
 
-*Recorded live on [vigia-demo](https://github.com/hector14mv/vigia-demo): issue #22 became PR #23, built by
-Claude, gated by Codex on its exact commit and merged by `vigia watch`. Idle time is compressed; nothing else
-is edited.*
+*Recorded live on [vigia-demo](https://github.com/hector14mv/vigia-demo): issue #26, a T1 ticket, became PR #27,
+built by Claude Sonnet, gated by Codex on its exact commit, reviewed by Claude Opus and merged by `vigia watch`.
+Idle time is compressed; nothing else is edited.*
 
 ## Three rules
 
