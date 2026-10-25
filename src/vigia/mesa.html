@@ -1582,9 +1582,13 @@ a.ev { min-height: 44px; }
       return;
     }
     // A refresh of an open screen keeps showing what it has while it asks again, and keeps it if the ask fails.
-    if (quiet && had && had.asking) return;
+    // One ask at a time, but a stuck one (no answer in 30 s) does not stop the next.
+    if (quiet && had && had.asking && Date.now() - (had.askedAt || 0) < 30000) return;
     var keep = quiet && had && had.data ? had.data : null;
-    S.pr[key] = keep ? { data: keep, asking: true } : { loading: true, asking: true };
+    // A retry keeps the last failure on screen until an answer arrives: an ask in flight proves nothing yet.
+    S.pr[key] = keep
+      ? { data: keep, asking: true, askedAt: Date.now(), error: had && had.error }
+      : { loading: true, asking: true, askedAt: Date.now() };
     var parts = rt.repo.split("/");
     if (parts.length !== 2 || !NAME.test(parts[0]) || !NAME.test(parts[1])) { S.pr[key] = { error: "Not a repo name." }; return; }
     function failed(msg) { S.pr[key] = keep ? { data: keep, error: msg } : { error: msg }; render(); }
@@ -1703,15 +1707,17 @@ a.ev { min-height: 44px; }
   function prData(rt) {
     var r = repoOf(rt.repo), base = prIn(r, rt.n), got = S.pr[prKey(rt)] || {};
     var d = got.data || (base ? Object.assign({ repo: rt.repo, timeline: null }, base) : null);
-    // A failed refresh keeps the last good detail on screen, so it must say so; a head that moved since makes it unsafe to act on.
-    var stale = !!(got.data && got.error), moved = !!(stale && base && base.head && got.data.head && base.head !== got.data.head);
+    // The detail on screen is for one head. If the state's head is another one, nothing is offered for the old
+    // head, whether the refresh failed, is still in flight or has not started; a failed refresh says so too.
+    var moved = !!(got.data && base && base.head && got.data.head && base.head !== got.data.head);
+    var stale = !!(got.data && (got.error || moved));
     return { r: r, d: d, loading: !!got.loading, error: got.error || null, stale: stale, moved: moved, now: moved ? base.head : null };
   }
   function staleNote(x, rt) {
     if (!x.stale) return null;
     return h("div", { "class": "empty github", "data-k": "stale" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
       h("span", { "class": "tx" }, h("b", null, "This is the last detail the Mesa could read" + (x.moved ? ", and the head has moved since" : "")),
-        h("span", { "class": "err-detail" }, x.error + (x.moved ? " Shown: " + sha7(x.d.head) + ". vigia is now on " + sha7(x.now) + "." : " Refreshing again every 15 s."))));
+        h("span", { "class": "err-detail" }, (x.error ? x.error + " " : "") + (x.moved ? "Shown: " + sha7(x.d.head) + ". vigia is now on " + sha7(x.now) + "; refreshing." : "Refreshing again every 15 s."))));
   }
   function prLoadingOrError(x, rt) {
     if (x.error) return h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),

@@ -802,3 +802,32 @@ def test_a_failed_refresh_keeps_the_detail_but_says_so_and_stops_offering_the_ol
     assert "the head has moved since" in after and "GitHub answered 502." in after
     assert "fffffff" in after and detail["head"][:7] in after
     assert "Approve this head" not in after and "Approve on GitHub" not in after
+
+
+def test_a_detail_whose_head_moved_never_offers_the_old_head_while_it_refreshes(world, tmp_path):  # noqa: F811
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    gh, build = world
+    ctx, _ = build([APPROVE, APPROVE])
+    gh.add_issue("Touch billing", TICKET, ["vigia:ready", "tier:T2"])
+    for _ in range(4):
+        tick(ctx)
+    pr = next(iter(gh.prs_))
+    first = mesa.state([ctx], _now(ctx))
+    detail = mesa.pr_detail(ctx, pr)
+    moved = json.loads(json.dumps(first))
+    _pr(moved, pr)["head"] = "f" * 40
+    live = tmp_path / "live.json"  # the state moves to a new head, and the detail's refresh never answers
+    live.write_text(json.dumps({"state": [first, moved], "pr": [detail, {"__hang": True}]}), encoding="utf-8")
+    script = Path(__file__).with_name("mesa_render.js")
+    out = subprocess.run(
+        [node, str(script), "--live", str(mesa.PAGE), str(live), f"pr/{gh.repo}/{pr}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    after = json.loads(out.stdout)["after"]["text"]
+    assert "the head has moved since" in after and "fffffff" in after
+    assert "Approve this head" not in after and "Approve on GitHub" not in after

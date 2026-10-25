@@ -186,6 +186,7 @@ async function renderLive(route) {
   const answer = (kind, url) => {
     const list = script[kind];
     const body = list[Math.min(seen[kind]++, list.length - 1)];
+    if (body && body.__hang) return new Promise(() => {}); // an entry {"__hang": true} never answers
     const status = body && body.__status; // an entry {"__status": 502, ...} answers with that HTTP error
     return Promise.resolve({ ok: !status, status: status || 200, json: () => Promise.resolve(body), url });
   };
