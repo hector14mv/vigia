@@ -481,7 +481,7 @@ a.ev { min-height: 44px; }
 
   /* ---------- in-memory view state (never sent anywhere) ---------- */
   var S = {
-    state: null, error: null, lastOk: null, sample: false,
+    state: null, error: null, serverFailed: false, lastOk: null, sample: false,
     route: null, lastPlace: "turn",
     picks: {}, sheet: null, flash: null, manual: null,
     pr: {}, openFindings: {}, feedFilter: "all", dirty: false
@@ -671,8 +671,8 @@ a.ev { min-height: 44px; }
 
   /* ---------- the watcher: fresh < 1 min, slow < 5 min, then quiet ---------- */
   function watcher() {
-    if (S.error && !S.state) return { kind: "down" };
-    if (S.error && !S.sample) return { kind: "down", at: S.lastOk };
+    if (S.error && !S.state) return { kind: "down", failed: S.serverFailed };
+    if (S.error && !S.sample) return { kind: "down", at: S.lastOk, failed: S.serverFailed };
     var t = ms(S.state && S.state.health && S.state.health.last_tick);
     if (t == null) return { kind: "quiet", never: true };
     var age = now() - t;
@@ -699,8 +699,17 @@ a.ev { min-height: 44px; }
     if (desk) return h("span", { "class": "pill" }, dot, "watcher ", h("b", null, dur(w.age) + " ago"));
     return h("span", { "class": "pill" }, dot, (w.kind === "fresh" ? "live · " : "slow · ") + dur(w.age));
   }
+  // When GitHub was last read for this repo without an error: the Mesa backs off while it keeps failing.
+  function lastRead(r) { return r.last_ok ? "Last read OK at " + dayTime(r.last_ok) + "." : "It has not read GitHub OK since it started."; }
   function banner() {
     var w = watcher();
+    if (w.kind === "down" && w.failed) {
+      // The Mesa answered, but its own code failed: not a lost connection, so say what the server said.
+      return h("div", { "class": "empty watcher", role: "alert" }, h("span", { "class": "ic danger", "aria-hidden": "true" }, "■"),
+        h("span", { "class": "tx" }, h("b", null, "The Mesa server failed"),
+          h("span", null, (S.lastOk ? "Last good answer at " + hhmm(new Date(S.lastOk).toISOString()) + ". " : "") + "What you see may be old. Look at the log of vigia mesa."),
+          h("span", { "class": "err-detail" }, S.error)));
+    }
     if (w.kind === "down") {
       return h("div", { "class": "empty watcher", role: "alert" }, h("span", { "class": "ic danger", "aria-hidden": "true" }, "■"),
         h("span", { "class": "tx" }, h("b", null, "The Mesa cannot reach vigia"),
@@ -918,7 +927,7 @@ a.ev { min-height: 44px; }
     var kick = "! Cannot read · " + short(r.repo), title = "GitHub did not answer for " + short(r.repo);
     var why = h("div", { "class": "why-box" }, h("span", { "class": "err-detail", style: "color:var(--mesa-ink-2)" }, r.error));
     var hint = h("p", { "class": "note", style: "font-size:14px" }, "Its pull requests and tickets are unknown until vigia can read GitHub again: check ",
-      h("code", null, "gh auth status"), " where vigia runs. Running sessions and today's merges still show: they come from this machine.");
+      h("code", null, "gh auth status"), " where vigia runs. Running sessions and today's merges still show: they come from this machine. " + lastRead(r));
     var btn = ext(repoUrl(r.repo), "Open " + short(r.repo) + " on GitHub", "btn btn-secondary");
     if (desk) {
       return h("article", { "class": "card wide-card" },
@@ -1028,7 +1037,7 @@ a.ev { min-height: 44px; }
       return h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
         h("span", { "class": "tx" }, h("b", null, "GitHub did not answer for " + short(r.repo)),
           h("span", null, "Its PRs, queue, decisions and tasks are unknown, not empty; the ledger parts still show. Check ", h("code", null, "gh auth status"),
-            " where vigia runs. The Mesa asks again in 15 s."),
+            " where vigia runs. " + lastRead(r) + " While GitHub keeps failing the Mesa asks it less often, up to every 5 min."),
           h("span", { "class": "err-detail" }, r.error)));
     });
   }
@@ -1992,14 +2001,20 @@ a.ev { min-height: 44px; }
   /* ---------- data: GET /api/state every 15 s, read-only ---------- */
   function load() {
     fetch("/api/state", { cache: "no-store", credentials: "same-origin" })
-      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (r) {
+        if (r.ok) return r.json();
+        if (r.status !== 500) throw new Error("HTTP " + r.status);
+        // A 500 is the Mesa's own code failing, and its body says what: show that, not "cannot reach".
+        return r.json().then(function (b) { throw { serverFailed: true, message: (b && b.error) || "HTTP 500" }; },
+          function () { throw { serverFailed: true, message: "HTTP 500" }; });
+      })
       .then(function (s) {
         var polled = !!S.lastOk; // the first read comes with the route's own fetch of the detail
-        S.state = s; S.error = null; S.lastOk = Date.now();
+        S.state = s; S.error = null; S.serverFailed = false; S.lastOk = Date.now();
         if (polled && S.route && S.route.name === "pr") fetchPR(S.route, true); // the open screen follows the watcher too
         render();
       },
-        function (e) { S.error = String(e && e.message || e); render(); });
+        function (e) { S.serverFailed = !!(e && e.serverFailed); S.error = String(e && e.message || e); render(); });
   }
   var embedded = (document.getElementById("mesa-sample").textContent || "").trim();
   if (embedded.charAt(0) === "{") {

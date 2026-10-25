@@ -913,3 +913,154 @@ def test_a_detail_whose_head_moved_never_offers_the_old_head_while_it_refreshes(
     after = json.loads(out.stdout)["after"]["text"]
     assert "the head has moved since" in after and "fffffff" in after
     assert "Approve this head" not in after and "Approve on GitHub" not in after
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def _unreadable_github(gh):
+    """Make every GitHub read fail the way an expired login or a rate limit does; returns the list of attempts."""
+    attempts = []
+
+    def failing(*args, **kwargs):
+        attempts.append(1)
+        raise CommandError(["gh", "pr", "list"], 1, "", "HTTP 403: API rate limit exceeded")
+
+    gh.prs = failing
+    return attempts
+
+
+def test_a_failing_github_is_asked_less_and_less_often_and_a_good_answer_resets_it(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    clock = _Clock()
+    cache = mesa._Cache([ctx], 15, clock=clock)
+
+    def body_at(moment):
+        clock.now = moment
+        return json.loads(cache.get())
+
+    healthy, reads_ok = gh.prs, []
+
+    def counting(*args, **kwargs):
+        reads_ok.append(1)
+        return healthy(*args, **kwargs)
+
+    gh.prs = counting
+    first = body_at(0)
+    assert "error" not in first["repos"][0] and len(reads_ok) == 1
+    assert body_at(14) == first and len(reads_ok) == 1  # the page polls every 15 s: served from the cache
+    second = body_at(15)
+    assert len(reads_ok) == 2  # ... and GitHub is read again after it
+
+    attempts = _unreadable_github(gh)
+    failed = body_at(30)  # 15 s after the last read
+    assert "rate limit" in failed["repos"][0]["error"] and len(attempts) == 1
+    assert failed["repos"][0]["prs"] is None  # still unknown, never empty
+    assert failed["repos"][0]["last_ok"] == second["generated"]
+    # each failed refresh doubles the wait: 30 s, 60 s, 120 s, 240 s, then 300 s at most
+    waits, last, reads = [], 30.0, 1
+    for _ in range(7):
+        probe = last
+        while True:
+            probe += 1
+            body_at(probe)
+            if len(attempts) > reads:
+                break
+        waits.append(probe - last)
+        last, reads = probe, len(attempts)
+    assert waits == [30, 60, 120, 240, 300, 300, 300]
+    # GitHub answers again: the next attempt shows it, and the page is back to 15 s
+    gh.prs = counting
+    reads_ok.clear()
+    clock.now = last + 299  # still inside the wait: the old failure is served, GitHub is not asked
+    assert "error" in json.loads(cache.get())["repos"][0] and not reads_ok
+    clock.now = last + 300
+    recovered = json.loads(cache.get())
+    assert "error" not in recovered["repos"][0] and recovered["repos"][0]["prs"] is not None
+    assert cache.last_ok[gh.repo] == recovered["generated"] and len(reads_ok) == 1
+    clock.now += 14
+    assert json.loads(cache.get()) == recovered and len(reads_ok) == 1
+    clock.now += 1
+    json.loads(cache.get())
+    assert len(reads_ok) == 2  # back to a read every 15 s
+
+
+def test_an_unreadable_repo_says_when_it_was_last_read_ok(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    clock = _Clock()
+    cache = mesa._Cache([ctx], 15, clock=clock)
+    first = json.loads(cache.get())
+    _unreadable_github(gh)
+    clock.now = 15
+    failed = json.loads(cache.get())
+    assert failed["repos"][0]["last_ok"] == first["generated"]
+    shown = _render(tmp_path, failed, routes=("turn", "factory"))
+    stamp = mesa.datetime.fromisoformat(first["generated"].replace("Z", "+00:00")).astimezone()
+    for view in (*_views(shown, "turn"), *_views(shown, "factory")):
+        assert "Last read OK at" in view["text"] and f"{stamp:%H:%M}" in view["text"]
+    # a Mesa that never read GitHub OK says so instead of inventing a time
+    never = mesa._Cache([ctx], 15, clock=clock)
+    clock.now = 0
+    assert json.loads(never.get())["repos"][0]["last_ok"] is None
+    never_shown = _render(tmp_path, json.loads(never.get()), routes=("turn",))
+    assert "has not read GitHub OK since it started" in never_shown["desk"]["turn"]["text"]
+
+
+def test_an_unexpected_error_in_the_server_answers_500_with_the_error_and_backs_off(world, monkeypatch):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    calls = []
+
+    def broken(*args, **kwargs):
+        calls.append(1)
+        raise RuntimeError("the state broke: boom")
+
+    monkeypatch.setattr(mesa, "state", broken)
+    srv = _serve(ctx)
+    try:
+        status, kind, body = _get(srv, "/api/state")
+        assert status == 500 and kind == "application/json; charset=utf-8"
+        assert "boom" in json.loads(body)["error"]
+        status, _, body = _get(srv, "/api/state")  # inside the wait: the same error, without building again
+        assert status == 500 and "boom" in json.loads(body)["error"] and len(calls) == 1
+        assert _get(srv, "/")[0] == 200  # the page is still served
+    finally:
+        srv.shutdown()
+
+
+def _poll_after(tmp_path, gh, answers):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    path = tmp_path / "live.json"
+    path.write_text(json.dumps({"state": answers, "pr": [{}]}), encoding="utf-8")
+    script = Path(__file__).with_name("mesa_render.js")
+    out = subprocess.run(
+        [node, str(script), "--live", str(mesa.PAGE), str(path), "turn"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_the_page_says_the_server_failed_apart_from_not_reaching_it(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    good = mesa.state([ctx])
+    failed = _poll_after(tmp_path, gh, [good, {"__status": 500, "error": "the state broke: boom"}])["after"][
+        "text"
+    ]
+    assert "The Mesa server failed" in failed and "the state broke: boom" in failed
+    assert "cannot reach vigia" not in failed and "Last good answer at" in failed
+    # a proxy's 502 (the Mesa is not there) is still "cannot reach"
+    gone = _poll_after(tmp_path, gh, [good, {"__status": 502, "error": "bad gateway"}])["after"]["text"]
+    assert "The Mesa cannot reach vigia" in gone and "server failed" not in gone
