@@ -59,3 +59,88 @@ def test_a_merge_in_the_window_is_credited_to_a_builder_that_opened_the_pr_befor
     (b,) = data["builders"]
     assert (b["opened"], b["merged"], b["gate_rounds_per_merge"]) == (0, 1, 1.0)
     assert b["median_minutes_to_merge"] == 8 * 24 * 60
+
+
+def _row_data(**totals):
+    return {
+        "days": 7,
+        "repos": ["a/b"],
+        "totals": {
+            "merged": 0,
+            "p1_gate": 0,
+            "p1_review": 0,
+            "parks": 0,
+            "fix_rounds": 0,
+            "updates": 0,
+            **totals,
+        },
+        "builders": [
+            {
+                "model": "claude · claude-sonnet-5-5",
+                "tiers": ["T0"],
+                "opened": 12,
+                "merged": 10,
+                "first_round_p1_rate": 0.5,
+                "gate_rounds_per_merge": 1.5,
+                "median_minutes_to_merge": 42.0,
+                "parked": 1,
+            }
+        ],
+        "reviewers": [
+            {
+                "model": "codex · gpt-6.1-sol",
+                "as": ["gate"],
+                "verdicts": 30,
+                "p1": 4,
+                "p2": 7,
+                "unavailable": 2,
+            }
+        ],
+    }
+
+
+def test_each_header_word_sits_over_its_column_in_both_tables():
+    lines = report.render(_row_data(merged=10)).splitlines()
+    (bh,) = [ln for ln in lines if ln.lstrip().startswith("Builders")]
+    (rh,) = [ln for ln in lines if ln.lstrip().startswith("Reviewers")]
+    brow = lines[lines.index(bh) + 1]
+    rrow = lines[lines.index(rh) + 1]
+
+    def ends_under(header, head, row, value):
+        # The value's last character sits under the header word's last character, and the value ends there.
+        e = header.index(head) + len(head)
+        return row[e - len(value) : e] == value and (len(row) == e or row[e] == " ")
+
+    for head, value in [
+        ("opened", "12"),
+        ("merged", "10"),
+        ("first-round P1", "50%"),
+        ("gate rounds/merge", "1.50"),
+        ("median min", "42"),
+        ("parked", "1"),
+    ]:
+        assert ends_under(bh, head, brow, value), head
+    for head, value in [("verdicts", "30"), ("P1", "4"), ("P2", "7"), ("no verdict", "2")]:
+        assert ends_under(rh, head, rrow, value), head
+    # Left-aligned columns: header and value start at the same character.
+    assert bh.index("Builders") == brow.index("claude") and bh.index("tiers") == brow.index("T0")
+    assert rh.index("Reviewers") == rrow.index("codex") and rh.index("as") == rrow.index("gate")
+
+
+def test_a_window_with_no_pull_requests_says_so_instead_of_printing_empty_tables(tmp_path):
+    from vigia.ledger import Ledger
+
+    data = report.build({"a/b": Ledger(tmp_path / "l.jsonl")})
+    lines = report.render(data).splitlines()
+    assert lines[0] == "vigia report · last 7 days · a/b"
+    assert lines[-1] == "no pull requests in this window"
+    assert "Builders" not in "\n".join(lines) and "Reviewers" not in "\n".join(lines)
+
+
+def test_counts_of_one_use_the_singular_in_the_totals_line():
+    one = report.render(_row_data(merged=1, p1_gate=1, parks=1, fix_rounds=1, updates=1)).splitlines()[1]
+    assert one == (
+        "1 merged · 1 P1 found by the gate, 0 by tier reviewers · 1 fix round · 1 park · 1 base update"
+    )
+    many = report.render(_row_data(merged=2, parks=2, fix_rounds=2, updates=2)).splitlines()[1]
+    assert "2 merged" in many and "2 fix rounds" in many and "2 parks" in many and "2 base updates" in many
