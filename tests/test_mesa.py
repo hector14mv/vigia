@@ -15,7 +15,7 @@ import pytest
 from fakes import APPROVE, CHANGES, engine, git
 from test_decisions import BODY
 from test_e2e import TICKET, world  # noqa: F401  (world is a fixture)
-from vigia import jobs, mesa
+from vigia import builder, jobs, mesa
 from vigia.config import Labels
 from vigia.proc import CommandError
 from vigia.watch import tick
@@ -288,8 +288,9 @@ def test_decisions_that_cannot_be_read_are_unknown_not_none(world, tmp_path):  #
     s = mesa.state([ctx])
     repo = s["repos"][0]
     assert repo["decisions"] is None and repo["unread"] == ["decisions"]
-    assert repo["prs"][0]["blocked_by"] is None  # whether a decision blocks it is unknown
-    assert mesa.pr_detail(ctx, repo["prs"][0]["number"])["blocked_by"] is None
+    # a PR never depends on the decisions in this vigia, so not reading them leaves the PR as it is
+    assert "blocked_by" not in repo["prs"][0]
+    assert "blocked_by" not in mesa.pr_detail(ctx, repo["prs"][0]["number"])
     shown = _render(tmp_path, s, routes=("turn", "decide"))
     for turn, decide in zip(_views(shown, "turn"), _views(shown, "decide"), strict=True):
         assert "Nothing needs you" not in turn["text"] and "Could not read: decisions" in turn["text"]
@@ -433,7 +434,7 @@ def test_the_real_state_renders_every_card_and_its_detail(world, tmp_path):  # n
         )
         assert "Buy the domain" in turn["text"] and "Nothing needs you" not in turn["text"]
     for view in _views(shown, f"decide/{gh.repo}/{d}"):
-        assert "Isolate the session" in view["text"] and "Answer C on GitHub" in view["text"]
+        assert "Isolate the session" in view["text"] and "Answer on GitHub" in view["text"]
     for view in _views(shown, f"pr/{gh.repo}/{pr}"):
         assert "What was tried" in view["text"] and "Gate round 1" in view["text"]
 
@@ -546,23 +547,91 @@ def test_a_build_shows_its_seat_tier_and_branch(world):  # noqa: F811
     )
 
 
-def test_decisions_tasks_and_blocked_tickets_reach_the_page(world):  # noqa: F811
+def test_decisions_and_tasks_reach_the_page(world):  # noqa: F811
     gh, build = world
     ctx, _ = build([])
-    blocked = gh.add_issue(
-        "Wait for it", TICKET + "\nBlocked by: #99\n", ["vigia:ready", "tier:T0", "vigia:building"]
-    )
-    gh.issues_[blocked]["labels"] = ["tier:T0", "vigia:ready"]
-    d = gh.add_issue("Pick a path", BODY.replace("#38, #39", f"#{blocked}"), ["vigia:decision"])
+    named = gh.add_issue("Wait for it", TICKET, ["vigia:ready", "tier:T0"])
+    d = gh.add_issue("Pick a path", BODY.replace("#38, #39", f"#{named}"), ["vigia:decision"])
     gh.add_issue("Buy the domain", "Time: 10 min\nDue: 2026-10-27\nOrigin: plan\n", ["vigia:human-task"])
     gh.add_issue("Broken", "no shape at all", ["vigia:decision"])
     repo = mesa.state([ctx])["repos"][0]
     good, broken = repo["decisions"]
     assert good["number"] == d and good["rec"] == "C" and not good["malformed"] and good["answered"] is None
     assert broken["malformed"] and broken["question"] == "Broken"
-    assert repo["queue"][0]["blocked_by"] == [d, 99]
+    assert good["blocks"] == [named]  # the issue's own Blocks: line, as text
     task = repo["human_tasks"][0]
     assert (task["time"], task["due"], task["origin"]) == ("10 min", "2026-10-27", "plan")
+
+
+def _a_decision_and_the_ticket_it_names(gh, url=True):
+    """A ready ticket whose body says `Blocked by: #99`, and an open decision whose `Blocks:` names that ticket."""
+    ticket = gh.add_issue("Wait for it", TICKET + "\nBlocked by: #99\n", ["vigia:ready", "tier:T0"])
+    d = gh.add_issue("Pick a path", BODY.replace("#38, #39", f"#{ticket}"), ["vigia:decision"])
+    if url:
+        gh.issues_[d]["url"] = f"https://github.com/{gh.repo}/issues/{d}"
+    return ticket, d
+
+
+def test_the_page_never_offers_a_command_vigia_does_not_read(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    _, d = _a_decision_and_the_ticket_it_names(gh)
+    decide = f"decide/{gh.repo}/{d}"
+    # nothing in this vigia reads `/vigia decide`, so nothing on the page may offer it, clipboard texts included
+    assert "vigia decide" not in mesa.PAGE.read_text(encoding="utf-8")
+    shown = _render(tmp_path, mesa.state([ctx]), routes=("turn", decide, f"{decide}!open-talk", "feed"))
+    for route in ("turn", decide, f"{decide}!open-talk", "feed"):
+        for view in _views(shown, route):
+            assert "vigia decide" not in view["html"], route
+            for claim in ("next tick", "unblocks", "copies the answer", "waits for this answer"):
+                assert claim not in view["text"], (route, claim)
+    for turn, view, talk in zip(
+        _views(shown, "turn"), _views(shown, decide), _views(shown, f"{decide}!open-talk"), strict=True
+    ):
+        assert "Should engine sessions keep a GitHub login?" in turn["text"]
+        assert "Why C" in view["text"] and "◆ Recommended" in view["text"]
+        assert "vigia does not read the answer yet" in view["text"]
+        assert "Nothing is decided until you answer on the issue." in talk["text"]
+        assert "When we agree, I answer on the issue." in talk["text"]  # the brief itself
+
+
+def test_blocked_by_and_blocks_lines_hold_nothing_back(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    ticket, d = _a_decision_and_the_ticket_it_names(gh)
+    repo = mesa.state([ctx])["repos"][0]
+    assert [q["number"] for q in repo["queue"]] == [ticket] and "blocked_by" not in repo["queue"][0]
+    assert repo["decisions"][0]["blocks"] == [ticket]
+    decide = f"decide/{gh.repo}/{d}"
+    shown = _render(tmp_path, mesa.state([ctx]), routes=("turn", "factory", decide))
+    held = ("waits on", "waiting on a decision", "decision #", "blocks 1 ticket", "will not build")
+    for route in ("turn", "factory", decide):
+        for view in _views(shown, route):
+            for claim in held:
+                assert claim not in view["text"], (route, claim)
+    for turn, factory in zip(_views(shown, "turn"), _views(shown, "factory"), strict=True):
+        assert "1 free · 1 ticket ready" in factory["text"] and "○ ready" in factory["text"]
+        # the decision is yours to answer, but it does not stop the factory: Only you, quoting the issue's own line
+        assert "Blocking the factory" not in turn["text"] and "Only you · 1" in turn["text"]
+        assert f"the issue says it blocks #{ticket}" in turn["text"]
+    assert "○ ready · T0" in shown["desk"][decide]["text"]  # the ticket the decision names, as it really is
+    # and that is what vigia does: the builder takes the ticket regardless of either line
+    assert builder.next_issue(ctx)["number"] == ticket
+
+
+def test_the_answer_is_a_link_to_the_decision_issue_on_github(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    _, d = _a_decision_and_the_ticket_it_names(gh)
+    _, bare = _a_decision_and_the_ticket_it_names(gh, url=False)  # GitHub did not say the issue's url
+    issue = f"https://github.com/{gh.repo}/issues/"
+    for n in (d, bare):
+        shown = _render(tmp_path, mesa.state([ctx]), routes=(f"decide/{gh.repo}/{n}",))
+        for view in _views(shown, f"decide/{gh.repo}/{n}"):
+            answer = re.search(r'<a ([^>]*data-k="answer-gh"[^>]*)>(.*?)</a>', view["html"])
+            assert answer and "Answer on GitHub" in answer.group(2)
+            assert f'href="{issue}{n}#new_comment_field"' in answer.group(1)
+            assert 'target="_blank"' in answer.group(1)
 
 
 def test_the_feed_carries_fields_and_more_events(world):  # noqa: F811

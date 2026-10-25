@@ -243,11 +243,6 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
     open_decisions = _decisions(ctx, rows)
     if open_decisions is None:
         unread.append("decisions")
-    waits_on = defaultdict(list)  # issue or PR number -> the open decisions that block it
-    for d in open_decisions or []:
-        if not d["answered"]:
-            for n in d.get("blocks") or []:
-                waits_on[n].append(d["number"])
     prs = []
     for s in sense(ctx, track=False):
         n, head = s.pr["number"], s.pr["head"]
@@ -300,8 +295,6 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
                 "tried": f"{s.state.fix_rounds} fix round(s) and "
                 f"{len({v.sha for v in s.state.verdicts if v.kind == 'gate' and v.content})} gate round(s) since it was last unparked",
                 "tried_total": _tried_total(mine),
-                # unknown when the decisions could not be read
-                "blocked_by": waits_on.get(n, []) if open_decisions is not None else None,
                 "issue_url": f"https://github.com/{cfg.repo}/issues/{issue}" if issue else None,
             }
         )
@@ -311,7 +304,6 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
             "title": i["title"],
             "url": i["url"],
             "tier": tickets.tier(i["labels"], labels.tier_prefix) or "?",
-            "blocked_by": sorted(set(decisions.blocked_by(i["body"])) | set(waits_on.get(i["number"], []))),
         }
         for i in ctx.gh.issues(labels.ready)
         if labels.building not in i["labels"]
@@ -636,12 +628,6 @@ def pr_detail(ctx: Ctx, n: int) -> dict:
                 break
     except CommandError:
         pass
-    open_decisions = _decisions(ctx, ctx.ledger.rows())
-    blocking = (
-        None  # unknown, not none
-        if open_decisions is None
-        else [d["number"] for d in open_decisions if not d["answered"] and n in (d.get("blocks") or [])]
-    )
     return {
         "repo": ctx.cfg.repo,
         "number": n,
@@ -662,7 +648,6 @@ def pr_detail(ctx: Ctx, n: int) -> dict:
         "tried_total": _tried_total(mine),
         "timeline": timeline[::-1],
         "engine_line": engine_line,
-        "blocked_by": blocking,
     }
 
 

@@ -360,8 +360,6 @@ a.ev { min-height: 44px; }
 .dots i { display: block; height: 4px; border-radius: 2px; background: var(--mesa-line); }
 .dots i.past { background: var(--mesa-ink-3); } .dots i.cur { background: var(--mesa-ink); }
 .dm-actions { position: sticky; bottom: 0; margin-top: 18px; padding: 12px 16px max(16px, env(safe-area-inset-bottom)); background: var(--mesa-bg); border-top: 1px solid var(--mesa-line); display: flex; flex-direction: column; gap: 8px; z-index: 5; }
-.cmd { display: block; padding: 14px; border-radius: 10px; background: var(--mesa-surface-2); border: 1px solid var(--mesa-line); font: 600 16px/1.3 var(--mesa-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--mesa-line-strong); background: var(--mesa-surface); color: var(--mesa-ink); font: 400 15px/1.4 var(--mesa-font); resize: vertical; min-height: 52px; }
 .brief { margin: 0; max-height: 300px; overflow: auto; padding: 14px; border-radius: 10px; background: var(--mesa-surface-2); border: 1px solid var(--mesa-line); font: 400 12.5px/1.55 var(--mesa-mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--mesa-ink); user-select: text; -webkit-user-select: text; }
 .check { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; font-size: 14px; color: var(--mesa-ink-2); cursor: pointer; }
 .check input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--mesa-ink); flex: none; }
@@ -376,10 +374,6 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   .sheet { border-radius: 16px; max-width: 600px; width: 100%; padding: 20px 22px; }
   .sheet .grab { display: none; }
 }
-.inline-answer { background: var(--mesa-surface); border: 1px solid var(--mesa-line-strong); border-radius: 14px; padding: 18px 20px; display: flex; flex-wrap: wrap; gap: 16px 28px; max-width: 820px; }
-.inline-answer > .full { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; }
-.inline-answer > .l { flex: 1 1 300px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.inline-answer > .r { flex: 1 1 260px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 
 /* phone shell */
 .ph { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
@@ -489,7 +483,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   var S = {
     state: null, error: null, lastOk: null, sample: false,
     route: null, lastPlace: "turn",
-    picks: {}, reasons: {}, sheet: null, flash: null, manual: null,
+    picks: {}, sheet: null, flash: null, manual: null,
     pr: {}, openFindings: {}, feedFilter: "all", dirty: false
   };
 
@@ -628,7 +622,6 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   function prIn(r, n) { return r ? (r.prs || []).filter(function (p) { return p.number === n; })[0] || null : null; }
   function queueIn(r, n) { return r ? (r.queue || []).filter(function (q) { return q.number === n; })[0] || null : null; }
   function jobFor(r, n) { return r ? (r.jobs || []).filter(function (j) { return j.number === n && !j.issue; })[0] || null : null; }
-  function decisionIn(r, n) { return r ? (r.decisions || []).filter(function (d) { return d.number === n; })[0] || null : null; }
   function label(r, name) { return (r && r.labels && r.labels[name]) || LABELS[name]; }
   function labelCode(r, name) { return h("code", null, label(r, name)); }
   // What could not be read for a repo: the server's own list, plus any list that came back null without being named.
@@ -656,17 +649,13 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     repos().forEach(function (r) {
       (r.decisions || []).forEach(function (d) { if (!d.answered && !d.malformed) out.push({ r: r, d: d }); });
     });
-    return out.sort(function (a, b) {
-      var x = (a.d.blocks || []).length ? 0 : 1, y = (b.d.blocks || []).length ? 0 : 1;
-      return x - y || bySince(a.d, b.d);
-    });
+    return out.sort(function (a, b) { return bySince(a.d, b.d); });
   }
   function talkingKey(r, d) { return "mesa.talking." + r.repo + "#" + d.number; }
-  function blocksText(r, d) {
+  // The issue's own Blocks: line, quoted as its text. vigia holds nothing back because of it.
+  function blocksText(d) {
     var b = d.blocks || [];
-    if (!b.length) return null;
-    var parked = b.some(function (n) { var p = prIn(r, n); return p && p.parked; });
-    return "blocks " + b.map(function (n) { return "#" + n; }).join(", ") + (parked ? " · parked" : "");
+    return b.length ? "the issue says it blocks " + b.map(function (n) { return "#" + n; }).join(", ") : null;
   }
   function firstStep(p) {
     var pl = p.pipeline || {};
@@ -793,10 +782,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     var job = jobFor(r, p.number), tt = p.tried_total || {};
     if (job) return { tone: "now", text: "● " + (job.action === "build" ? "Building" : job.action === "fix" ? "Fixing" : actionLabel(job.action, p.tier)) + (job.model ? " · " + job.model : ""), age: since(job.since) };
     if (p.waiting_for === "human") return { tone: "wait", text: "◆ Waiting for your label on " + sha7(p.head), age: since(p.since) };
-    if (p.parked) {
-      var dec = (p.blocked_by || []).filter(function (n) { var d = decisionIn(r, n); return d && !d.answered; });
-      return { tone: "stop", text: "■ Parked after " + plural(tt.gate_rounds || 0, "gate round") + (dec.length ? " · decision #" + dec.join(", #") + " open" : " · " + (tt.p1 || 0) + " P1"), age: since(p.since) };
-    }
+    if (p.parked) return { tone: "stop", text: "■ Parked after " + plural(tt.gate_rounds || 0, "gate round") + " · " + (tt.p1 || 0) + " P1", age: since(p.since) };
     var step = firstStep(p), st = (p.pipeline || {})[step];
     if (p.next === "merge") return { tone: "now", text: "● Merging · " + shortReason(p.reason) };
     if (st === "now") return { tone: "now", text: "● " + STEP_LABEL[step] + " running" };
@@ -811,7 +797,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
 
   /* ---------- Your turn ---------- */
   function turnModel() {
-    var unknown = [], blocking = [], only = [], decB = [], decO = [], proposed = [], oldest = null, nB = 0, nO = 0;
+    var unknown = [], blocking = [], only = [], decs = [], proposed = [], oldest = null, nB = 0, nO = 0;
     function seen(s) { var t = ms(s); if (t != null && (oldest == null || t < oldest)) oldest = t; }
     repos().forEach(function (r) {
       // What could not be read is unknown, not empty: it gets a card, so "Nothing needs you" never covers it.
@@ -823,19 +809,19 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
       });
       // A build that failed before it opened a PR parks the ticket itself: no PR shows it, only a person resumes it.
       (r.parked_issues || []).forEach(function (i) { blocking.push({ kind: "parked-issue", r: r, i: i, since: i.since }); nB++; seen(i.since); });
+      // A decision holds nothing back in this vigia: it is yours to answer, never "blocking the factory".
       (r.decisions || []).forEach(function (d) {
         if (d.answered) return;
         seen(d.since);
-        if (d.malformed) { only.push({ kind: "malformed", r: r, d: d, since: d.since }); nO++; }
-        else if ((d.blocks || []).length) { decB.push({ r: r, d: d, since: d.since }); nB++; }
-        else { decO.push({ r: r, d: d, since: d.since }); nO++; }
+        if (d.malformed) only.push({ kind: "malformed", r: r, d: d, since: d.since });
+        else decs.push({ r: r, d: d, since: d.since });
+        nO++;
       });
       (r.human_tasks || []).forEach(function (i) { only.push({ kind: "task", r: r, i: i, since: i.since }); nO++; seen(i.since); });
       (r.refused || []).forEach(function (i) { only.push({ kind: "refused", r: r, i: i, since: i.since }); nO++; seen(i.since); });
       (r.proposed || []).forEach(function (i) { proposed.push({ r: r, i: i, since: i.since }); nO++; seen(i.since); });
     });
-    if (decB.length) blocking.push({ kind: "decide", list: decB.sort(bySince), since: decB.slice().sort(bySince)[0].since });
-    if (decO.length) only.push({ kind: "decide", list: decO.sort(bySince), since: decO.slice().sort(bySince)[0].since, loose: true });
+    if (decs.length) only.push({ kind: "decide", list: decs.sort(bySince), since: decs[0].since });
     if (proposed.length) only.push({ kind: "proposed", list: proposed.sort(bySince), since: proposed.slice().sort(bySince)[0].since });
     blocking.sort(bySince); only.sort(bySince);
     unknown.sort(function (a, b) { return (a.kind === "unavailable" ? 0 : 1) - (b.kind === "unavailable" ? 0 : 1); });  // a whole repo first
@@ -898,9 +884,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   }
   function parkedCard(r, p, desk) {
     var issueN = numFromUrl(p.issue_url);
-    var dec = (p.blocked_by || []).filter(function (n) { var d = decisionIn(r, n); return d && !d.answered; });
-    var tried = h("p", { "class": "note", style: "font-size:14px" }, h("strong", { style: "color:var(--mesa-ink);font-weight:600" }, "Tried: "), triedLine(p),
-      dec.length ? " Decision #" + dec.join(", #") + " is open." : null);
+    var tried = h("p", { "class": "note", style: "font-size:14px" }, h("strong", { style: "color:var(--mesa-ink);font-weight:600" }, "Tried: "), triedLine(p));
     var what = nav(prRoute(r.repo, p.number), "What was tried", "btn btn-primary");
     var edit = p.issue_url ? ext(p.issue_url, "Edit ticket" + (issueN ? " #" + issueN : ""), "btn btn-secondary") : ext(p.url, "Open PR #" + p.number, "btn btn-secondary");
     var kick = "■ Parked · " + short(r.repo) + " #" + p.number;
@@ -957,13 +941,9 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     return h("article", { "class": "card" }, kickerRow(kick, "k-danger"), h("h3", { "class": "t-card" }, title), hint, btn);
   }
   function decideCard(c, desk) {
-    var blocked = {};
-    c.list.forEach(function (x) { (x.d.blocks || []).forEach(function (n) { blocked[x.r.repo + "#" + n] = 1; }); });
-    var nb = Object.keys(blocked).length;
-    var right = c.loose ? null : (c.list.length === 1 ? "blocks " : "block ") + plural(nb, "ticket");
     var rows = c.list.map(function (x) {
       var talking = store.get(talkingKey(x.r, x.d));
-      var ref = short(x.r.repo) + " #" + x.d.number + (blocksText(x.r, x.d) ? " · " + blocksText(x.r, x.d) : "");
+      var ref = short(x.r.repo) + " #" + x.d.number + (blocksText(x.d) ? " · " + blocksText(x.d) : "");
       var chips = h("span", { style: "display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none" },
         x.d.rec ? h("span", { "class": "chip s-turn" }, "rec. " + x.d.rec) : null,
         talking ? h("span", { "class": "fact" }, "talking it over") : null);
@@ -973,16 +953,16 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
         h("span", { "class": "stack" }, h("span", { "class": "ref" }, ref), h("span", { "class": "q" }, x.d.question)), chips);
     });
     var first = c.list[0];
-    var go = h("a", { "class": "btn btn-primary " + (desk ? "" : "btn-main"), href: decideRoute(first.r.repo, first.d.number), "data-k": "decide-go" + (c.loose ? "-loose" : "") },
+    var go = h("a", { "class": "btn btn-primary " + (desk ? "" : "btn-main"), href: decideRoute(first.r.repo, first.d.number), "data-k": "decide-go" },
       "Decide one by one", icon("right", desk ? 15 : 16));
-    var kick = "◆ Decide · " + c.list.length + " open" + (desk && right ? " · " + right : "");
+    var kick = "◆ Decide · " + c.list.length + " open";
     if (desk) {
       return h("article", { "class": "card tight", style: "padding:20px" },
         h("div", { "class": "k-row", style: "padding-bottom:8px" }, h("span", { "class": "kicker k-turn" }, kick), h("span", { "class": "grow" }), go),
         h("div", { "class": "rows desk-rows" }, rows));
     }
     return h("article", { "class": "card tight", style: "padding-bottom:14px" },
-      h("div", { "class": "k-row", style: "padding-bottom:6px" }, h("span", { "class": "kicker k-turn" }, kick), h("span", { "class": "grow" }), right ? h("span", { "class": "age" }, right) : null),
+      h("div", { "class": "k-row", style: "padding-bottom:6px" }, h("span", { "class": "kicker k-turn" }, kick), h("span", { "class": "grow" }), h("span", { "class": "age" }, since(c.since))),
       h("div", { "class": "rows" }, rows), h("div", { style: "margin-top:4px;display:flex;flex-direction:column" }, go));
   }
   function taskCard(r, i, desk) {
@@ -1112,7 +1092,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   }
   function freeLine() {
     var free = Math.max(0, slotsTotal() - busyTotal());
-    var ready = repos().reduce(function (n, r) { return n + (r.queue || []).filter(function (q) { return !(q.blocked_by || []).length; }).length; }, 0);
+    var ready = repos().reduce(function (n, r) { return n + (r.queue || []).length; }, 0);
     var unknownQ = unknownRepos("queue").map(function (r) { return short(r.repo); });
     if (!free) return "every slot is busy";
     // a queue that could not be read is unknown: never "nothing ready"
@@ -1129,9 +1109,8 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   /* ---------- phone: Factory ---------- */
   function repoCounts(r) {
     var prs = (r.prs || []).length, builds = (r.jobs || []).filter(function (j) { return j.issue; }).length;
-    var waiting = (r.queue || []).filter(function (q) { return (q.blocked_by || []).length; }).length;
     var merged = (r.merged_today || []).length;
-    return [r.prs === null ? "PRs unknown" : plural(prs, "open PR"), builds ? builds + " building" : null, waiting ? waiting + " waiting on a decision" : null,
+    return [r.prs === null ? "PRs unknown" : plural(prs, "open PR"), builds ? builds + " building" : null,
       r.queue === null ? "queue unknown" : r.queue.length ? null : "queue empty", merged ? merged + " merged today" : null].filter(Boolean).join(" · ");
   }
   function prCard(r, p) {
@@ -1152,11 +1131,9 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   function queueBox(r) {
     var q = r.queue || [];
     var body = q.length ? q.map(function (i) {
-      var blocked = (i.blocked_by || []).map(function (n) { return (decisionIn(r, n) ? "decision #" : "#") + n; });
       return h("a", { "class": "qi", href: okHref(i.url) ? i.url : null, target: "_blank", rel: "noopener noreferrer", "data-k": "q-" + r.repo + i.number },
         h("span", { "class": "mono c-3", style: "font-size:12px;flex:none" }, "#" + i.number), h("span", { "class": "grow" }, i.title), tierChip(i.tier),
-        h("span", { "class": "vh" }, blocked.length ? "waits on " + blocked.join(", ") : "ready"),
-        h("span", { "class": "age", "aria-hidden": "true" }, blocked.length ? "○ " + blocked.join(", ") : "○ ready"));
+        h("span", { "class": "vh" }, "ready"), h("span", { "class": "age", "aria-hidden": "true" }, "○ ready"));
     }) : r.queue === null ? h("span", { "class": "qi" }, "Unknown: vigia cannot read this repo's issues right now.")
       : h("span", { "class": "qi" }, "Empty. Open an issue from the vigia ticket template and add ", labelCode(r, "ready"), ".");
     return h("div", { "class": "queue-box" }, h("span", { "class": "group-h" }, "Queue" + (q.length ? " · " + q.length : r.queue === null ? " · unknown" : "")), body);
@@ -1223,10 +1200,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   function board(r) {
     var cols = COLS.map(function () { return []; });
     (r.queue || []).forEach(function (q) {
-      var blocked = q.blocked_by || [];
-      var dec = blocked.filter(function (n) { var d = decisionIn(r, n); return d && !d.answered && !d.malformed; })[0];
-      var status = blocked.length ? "○ waits on " + blocked.map(function (n) { return (decisionIn(r, n) ? "decision #" : "#") + n; }).join(", ") : "○ ready · next free slot";
-      cols[0].push(dec ? kcard(decideRoute(r.repo, dec), "#" + q.number, q.tier, q.title, "idle", status) : kcard(q.url, "#" + q.number, q.tier, q.title, "idle", status, true));
+      cols[0].push(kcard(q.url, "#" + q.number, q.tier, q.title, "idle", "○ ready · next free slot", true));
     });
     (r.jobs || []).filter(function (j) { return j.issue; }).forEach(function (j) {
       cols[1].push(kcard(issueUrl(r.repo, j.number), "issue #" + j.number, j.tier, j.branch || "Building issue #" + j.number, "now", "● " + (j.model || "building") + " · " + since(j.since), true));
@@ -1235,7 +1209,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
       var step = firstStep(p), idx = Math.max(1, STEPS.indexOf(step) + 1), s = prStatus(r, p);
       var kind = { now: "now", wait: "you", stop: "stop", idle: "idle" }[s.tone];
       var text = s.text + (s.age && s.tone !== "stop" ? " · " + s.age : "");
-      if (s.tone === "stop" && p.parked) text = "■ parked · " + ((p.tried_total || {}).p1 || 0) + " P1" + ((p.blocked_by || []).length ? " · decision #" + p.blocked_by.join(", #") : "");
+      if (s.tone === "stop" && p.parked) text = "■ parked · " + ((p.tried_total || {}).p1 || 0) + " P1";
       if (s.tone === "wait") text = "◆ your label on " + sha7(p.head) + (s.age ? " · " + s.age : "");
       cols[Math.min(idx, 6)].push(kcard(prRoute(r.repo, p.number), "#" + p.number, p.tier, p.title, kind, text));
     });
@@ -1420,10 +1394,6 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   }
   function pickOf(x) { var k = x.r.repo + "#" + x.d.number; return S.picks[k] || x.d.rec || null; }
   function decKey(x) { return x.r.repo + "#" + x.d.number; }
-  function answerText(x) {
-    var reason = String(S.reasons[decKey(x)] || "").trim();
-    return "/vigia decide " + pickOf(x) + (reason ? "\n" + reason : "");
-  }
   function blockedFacts(x) {
     return (x.d.blocks || []).map(function (n) {
       var p = prIn(x.r, n), q = queueIn(x.r, n);
@@ -1432,7 +1402,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   }
   function brief(x) {
     var d = x.d, lines = [];
-    lines.push("Decision " + short(x.r.repo) + " #" + d.number + (blocksText(x.r, d) ? " · " + blocksText(x.r, d) : "") + (dueText(d.due) ? " · " + dueText(d.due) : ""));
+    lines.push("Decision " + short(x.r.repo) + " #" + d.number + (blocksText(d) ? " · " + blocksText(d) : "") + (dueText(d.due) ? " · " + dueText(d.due) : ""));
     lines.push(d.question, "");
     (d.options || []).forEach(function (o) {
       var body = String(o.body || "").replace(/\s+/g, " ").trim();
@@ -1448,11 +1418,11 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
         lines.push((b.p.parked ? "Why it is parked: " : "Where it stands: ") + b.p.reason);
         lines.push("PR: " + b.p.url);
       } else if (b.q) {
-        lines.push("", "#" + b.n + " " + b.q.title + " (" + b.q.tier + ", a ticket that waits for this answer)");
+        lines.push("", "#" + b.n + " " + b.q.title + " (" + b.q.tier + ", a ready ticket: vigia picks it up whatever this decision says)");
         lines.push("Ticket: " + b.q.url);
       }
     });
-    lines.push("", "Issue: " + d.url, "When we agree, I post /vigia decide and the letter.");
+    lines.push("", "Issue: " + d.url, "When we agree, I answer on the issue.");
     return lines.join("\n");
   }
   function optionCards(x, desk) {
@@ -1477,36 +1447,25 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
   }
   function decMeta(x, desk) {
     return h("p", { "class": "dm-meta", style: desk ? "font-size:13px;gap:6px 12px" : null },
-      h("span", { "class": "lead" }, "◆ " + short(x.r.repo) + " #" + x.d.number), blocksText(x.r, x.d) ? h("span", null, blocksText(x.r, x.d)) : null,
+      h("span", { "class": "lead" }, "◆ " + short(x.r.repo) + " #" + x.d.number), blocksText(x.d) ? h("span", null, blocksText(x.d)) : null,
       dueText(x.d.due) ? h("span", null, dueText(x.d.due)) : null, x.d.since ? h("span", null, "open " + since(x.d.since)) : null);
   }
   function goDecision(list, i) { var y = list[(i + list.length) % list.length]; location.hash = decideRoute(y.r.repo, y.d.number); }
-  function answerParts(x, desk) {
-    var picked = pickOf(x), ref = short(x.r.repo) + " #" + x.d.number;
-    var blocksShort = (x.d.blocks || []).map(function (n) { return "#" + n; }).join(", ");
-    var ta = h("textarea", { "class": "reason", id: "why-" + x.d.number, rows: 2, placeholder: "Goes on the line after the command", "data-k": "reason-" + decKey(x),
-      on: { input: function (e) { S.reasons[decKey(x)] = e.target.value; } } });
-    ta.value = S.reasons[decKey(x)] || "";
-    var go = copyLink(commentUrl(x.d.url), "Copy and open " + ref, function () { return answerText(x); }, "answer-" + decKey(x), "btn btn-primary btn-big", "Copied · opening " + ref);
-    return {
-      lead: h("p", { "class": "note", style: "font-size:14px" }, "Your answer is a comment you post on " + ref + ". vigia reads it on its next tick, records it" + (blocksShort ? " and unblocks " + blocksShort : "") + "."),
-      cmd: h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("span", { "class": "group-h" }, "1 · The comment"), h("code", { "class": "cmd", style: desk ? "font-size:17px" : null }, "/vigia decide " + picked)),
-      reason: h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("label", { "for": "why-" + x.d.number, "class": "group-h" }, "Reason, optional"), ta),
-      paste: h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("span", { "class": "group-h" }, "2 · Paste it on " + (desk ? ref : "GitHub")), go),
-      after: h("span", { "class": "note" }, "vigia reads the comment on its next tick, writes ", h("code", null, "decided"), " to the ledger, closes " + ref + (blocksShort ? " and copies the answer into " + blocksShort : "") + "."),
-      why: h("p", { "class": "foot" }, "The Mesa cannot post for you: anything on this machine could press that button. GitHub knows it is you.")
-    };
+  // Answering is a comment you write on the issue itself. This vigia does not read it: it records nothing, holds
+  // nothing back and releases nothing, so the page says what is left to you.
+  function answerLink(x, cls) {
+    return ext(commentUrl(x.d.url) || commentUrl(issueUrl(x.r.repo, x.d.number)), "Answer on GitHub", cls, null, "answer-gh");
   }
-  function answerSheet(x) {
-    var a = answerParts(x, false);
-    return modal("answer-title", "Answer " + pickOf(x) + " on GitHub", [a.lead, a.cmd, a.reason, a.paste, a.why]);
+  function answerNote(x, desk) {
+    return h("p", { "class": "note", style: desk ? "font-size:14px;max-width:820px" : "font-size:14px" },
+      "vigia does not read the answer yet. Once it is decided, update the tickets it touches yourself, or ratify them with ", labelCode(x.r, "ready"), ".");
   }
   function talkParts(x) {
     var text = brief(x), ref = short(x.r.repo) + " #" + x.d.number, key = talkingKey(x.r, x.d);
     var cb = h("input", { type: "checkbox", "data-k": "talking-" + decKey(x), on: { change: function (e) { if (e.target.checked) store.set(key, "1"); else store.del(key); } } });
     cb.checked = !!store.get(key);
     return [
-      h("p", { "class": "note", style: "font-size:14.5px" }, "Take " + ref + " into a chat with everything vigia knows about it. Nothing is decided until you post ", h("code", null, "/vigia decide"), " on the issue."),
+      h("p", { "class": "note", style: "font-size:14.5px" }, "Take " + ref + " into a chat with everything the Mesa knows about it. Nothing is decided until you answer on the issue."),
       h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("span", { "class": "group-h" }, "The brief · " + text.length.toLocaleString("en-US") + " characters"), h("pre", { "class": "brief" }, text)),
       copyLink(CLAUDE_NEW, "Copy brief and open Claude", text, "talk-open-" + decKey(x), "btn btn-primary btn-big", "Copied · opening Claude"),
       h("div", { "class": "btn-row" }, copyButton("Copy brief", "Copied", text, "talk-copy-" + decKey(x), "btn btn-ghost btn-tall"), ext(x.d.url, "Discuss on #" + x.d.number, "btn btn-ghost btn-tall")),
@@ -1530,7 +1489,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
       h("span", { "class": "tx" }, h("b", null, "Decisions unknown for " + unknown.join(", ")),
         h("span", null, "vigia could not read the vigia:decision issues there. Check the issues on GitHub, or ", h("code", null, "gh auth status"), " where vigia runs."))) :
       h("div", { "class": "empty on-surface" }, h("span", { "class": "ic ok", "aria-hidden": "true" }, "✓"),
-      h("span", { "class": "tx" }, h("b", null, "No open decisions"), h("span", null, "Every decision issue is answered, or none is open. New ones arrive with the vigia:decision label.")));
+      h("span", { "class": "tx" }, h("b", null, "No open decisions"), h("span", null, "No issue with the vigia:decision label is open. New ones arrive with that label.")));
     return desk ? box : h("div", { "class": "gut", style: "padding-top:20px" }, box);
   }
   function phoneDecision() {
@@ -1544,20 +1503,17 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     if (!x) return [head, noDecisions(false)];
     var dots = h("div", { "class": "dots gut", "aria-hidden": "true", style: "grid-template-columns:repeat(" + list.length + ",minmax(0,1fr))" },
       list.map(function (_, k) { return h("i", { "class": k === c.i ? "cur" : k < c.i ? "past" : null }); }));
-    var picked = pickOf(x);
     var main = h("main", { "class": "gut", style: "flex:1;display:flex;flex-direction:column;gap:14px;padding-top:20px" },
       decMeta(x), h("h1", { "class": "dm-q" }, x.d.question),
       x.d.title && x.d.title !== x.d.question ? h("p", { "class": "t-sub" }, x.d.title) : null,
       h("fieldset", { "class": "opts" }, h("legend", { "class": "group-h" }, "Options"), optionCards(x, false)),
-      whyBox(x, false));
+      whyBox(x, false), answerNote(x, false));
     var actions = h("div", { "class": "dm-actions" },
-      h("button", { type: "button", "class": "btn btn-primary btn-big", disabled: picked ? null : true, "data-k": "open-answer",
-        on: { click: function () { S.sheet = "answer"; S.flash = null; S.focusSheet = !DESK.matches; renderNow(); } } }, picked ? "Answer " + picked + " on GitHub" : "Pick an option to answer"),
+      answerLink(x, "btn btn-primary btn-big"),
       h("div", { "class": "btn-row" },
         h("button", { type: "button", "class": "btn btn-secondary btn-tall", style: "background:var(--mesa-surface)", "data-k": "open-talk", on: { click: function () { S.sheet = "talk"; S.flash = null; S.focusSheet = true; renderNow(); } } }, icon("chat", 18, 1.8), "Talk it over"),
         h("button", { type: "button", "class": "btn btn-ghost btn-tall", style: "flex:0 0 96px", "data-k": "later", on: { click: function () { if (list.length > 1) goDecision(list, c.i + 1); else location.hash = "#/turn"; } } }, "Later")));
-    var sheet = S.sheet === "answer" ? answerSheet(x) : S.sheet === "talk" ? modal("talk-title", "Talk it over", talkParts(x)) : null;
-    return [head, dots, main, actions, sheet];
+    return [head, dots, main, actions, S.sheet === "talk" ? modal("talk-title", "Talk it over", talkParts(x)) : null];
   }
   function deskDecision() {
     var c = currentDecision(), x = c.x, list = c.list;
@@ -1570,15 +1526,8 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
       list.length ? h("span", { "class": "mono", style: "font-weight:600;font-size:13px;color:var(--mesa-ink-2)" }, (c.i + 1) + " of " + list.length) : null,
       list.length > 1 ? h("button", { type: "button", "class": "icon-btn boxed", "aria-label": "Next decision", "data-k": "dnext", on: { click: function () { goDecision(list, c.i + 1); } } }, icon("chevR", 18)) : null);
     if (!x) return [top, h("div", { "class": "dk-body focus dm" }, h("main", { "class": "dk-main focus" }, noDecisions(true)))];
-    var picked = pickOf(x);
-    var inline = null;
-    if (S.sheet === "answer") {
-      var a = answerParts(x, true);
-      inline = h("section", { "class": "inline-answer", "aria-labelledby": "ans-h" },
-        h("div", { "class": "full" }, h("h2", { id: "ans-h", style: "flex:1;font:650 18px/1.2 var(--mesa-font)" }, "Answer " + picked + " on GitHub"),
-          h("button", { type: "button", "class": "icon-btn", "aria-label": "Close", "data-k": "ans-close", on: { click: function () { S.sheet = null; S.flash = null; renderNow(); } } }, icon("close", 18))),
-        h("div", { "class": "l" }, a.cmd, a.reason), h("div", { "class": "r" }, a.paste, a.after, a.why));
-    }
+    var answer = answerLink(x, "btn btn-primary btn-main");
+    answer.setAttribute("style", "border-radius:12px;padding:0 22px;font-size:15.5px");
     var main = h("main", { "class": "dk-main focus" }, decMeta(x, true),
       h("h1", { "class": "dm-q", style: "font-size:34px;line-height:1.15;letter-spacing:-0.025em;max-width:26ch" }, x.d.question),
       x.d.title && x.d.title !== x.d.question ? h("p", { style: "font-size:17px;line-height:1.5;color:var(--mesa-ink-2);max-width:66ch" }, x.d.title) : null,
@@ -1586,17 +1535,16 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
         h("legend", { "class": "group-h", style: "padding-bottom:10px" }, "Options · the recommendation is preselected"), optionCards(x, true)),
       whyBox(x, true),
       h("div", { style: "display:flex;flex-wrap:wrap;gap:10px;padding-top:6px" },
-        h("button", { type: "button", "class": "btn btn-primary btn-main", style: "border-radius:12px;padding:0 22px;font-size:15.5px", disabled: picked ? null : true, "data-k": "open-answer",
-          on: { click: function () { S.sheet = "answer"; S.flash = null; S.focusSheet = !DESK.matches; renderNow(); } } }, picked ? "Answer " + picked + " on GitHub" : "Pick an option to answer"),
+        answer,
         h("button", { type: "button", "class": "btn btn-secondary btn-main", style: "border-radius:12px;padding:0 20px;font-size:15.5px;background:var(--mesa-surface)", "data-k": "open-talk",
           on: { click: function () { S.sheet = "talk"; S.flash = null; S.focusSheet = true; renderNow(); } } }, icon("chat", 18, 1.8), "Talk it over"),
         h("button", { type: "button", "class": "btn btn-ghost btn-main", style: "border-radius:12px;padding:0 20px;font-size:15.5px", "data-k": "later",
           on: { click: function () { if (list.length > 1) goDecision(list, c.i + 1); else location.hash = "#/turn"; } } }, "Later")),
-      inline);
+      answerNote(x, true));
     var aside = h("aside", { "class": "dk-aside", style: "gap:14px" }, blockedFacts(x).map(function (b) { return aboutCard(x, b); }),
       h("section", { "class": "card dashed", style: "padding:14px 18px;gap:6px" }, h("span", { "class": "group-h" }, "Where this came from"),
         h("span", { "class": "note", style: "font-size:14px" }, x.d.origin || "The decision does not say."),
-        h("span", { "class": "meta" }, "Labelled vigia:decision. Answered only by a comment from one of checks.humans.")));
+        h("span", { "class": "meta" }, "Labelled vigia:decision. The Mesa only reads it; the answer is yours to write on GitHub.")));
     return [top, h("div", { "class": "dk-body focus dm" }, main, aside), S.sheet === "talk" ? modal("talk-title", "Talk it over", talkParts(x)) : null];
   }
   function aboutCard(x, b) {
@@ -1607,11 +1555,11 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
       name = p.title;
       state = (p.parked ? "■ Parked at the " + STEP_LABEL[firstStep(p)].toLowerCase() : s.text) + " · " + p.tier + (p.since ? " · " + since(p.since) : "");
       stateCls = p.parked ? "c-danger" : s.tone === "wait" ? "c-turn" : s.tone === "now" ? "c-live" : "c-3";
-      line = plural(tt.heads || 0, "head") + " · " + (tt.p1 || 0) + " P1 found · " + plural(tt.parks || 0, "park") + ". Waits for this answer.";
+      line = plural(tt.heads || 0, "head") + " · " + (tt.p1 || 0) + " P1 found · " + plural(tt.parks || 0, "park") + ". vigia does not hold it for this decision.";
       link = nav(prRoute(r.repo, p.number), "What was tried on #" + p.number, "btn btn-secondary");
     } else if (q) {
-      name = q.title; state = "○ Not ready · " + q.tier + " · waits for this answer";
-      line = "The ticket is written; vigia will not build it until this is decided.";
+      name = q.title; state = "○ ready · " + q.tier;
+      line = ["vigia picks it up when a slot is free, whatever this decision says. If the answer changes it, edit the ticket or remove ", labelCode(r, "ready"), " first."];
       link = ext(q.url, "Open ticket #" + q.number, "btn btn-secondary");
     } else {
       name = "#" + b.n; state = "○ not an open PR or a ready ticket";
@@ -1740,23 +1688,15 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     return h("section", { "class": "stand", style: desk ? "max-width:760px" : null },
       h("span", { "class": "kicker" }, "vigia's next step · " + actionLabel(d.next, d.tier).toLowerCase()), h("p", null, d.reason));
   }
-  function blockingDecisions(d, r) {
-    return (d.blocked_by || []).map(function (n) { return decisionIn(r, n); }).filter(function (x) { return x && !x.answered && !x.malformed; });
-  }
   function asks(d, r, desk) {
-    var out = [], decs = blockingDecisions(d, r), nf = allFindings(d).length, issueN = isInt(d.issue) ? d.issue : null;
-    decs.forEach(function (x) {
-      var o = (x.options || []).filter(function (o) { return o.key === x.rec; })[0];
-      out.push({ you: true, title: "Decision #" + x.number + " is open: " + x.question, text: x.rec ? "Recommended: " + x.rec + (o ? ", " + o.title : "") + "." : null,
-        btn: nav(decideRoute(r ? r.repo : d.repo, x.number), "Decide #" + x.number, "btn btn-primary") });
-    });
+    var out = [], nf = allFindings(d).length, issueN = isInt(d.issue) ? d.issue : null;
     if (d.waiting_for === "human") out.push({ you: true, title: "Approve this head", text: ["Adding ", labelCode(r, "human_ok"), " on GitHub lets vigia merge " + sha7(d.head) + ". A new push needs a new label."],
       btn: h("div", { "class": "btn-row" }, ext(filesUrl(d.url), "Read the diff", "btn btn-secondary"), ext(d.url, "Approve on GitHub", "btn btn-primary")) });
     if (d.parked) out.push({ you: true, title: "Edit the ticket, then unpark", text: ["Narrow the scope or turn the findings into acceptance criteria. Removing ", labelCode(r, "parked"), " restarts every counter."],
-      btn: issueN ? ext(issueUrl(d.repo, issueN), "Edit ticket #" + issueN, "btn " + (decs.length ? "btn-secondary" : "btn-primary")) : ext(d.url, "Open the PR", "btn btn-secondary") });
+      btn: issueN ? ext(issueUrl(d.repo, issueN), "Edit ticket #" + issueN, "btn btn-primary") : ext(d.url, "Open the PR", "btn btn-secondary") });
     if (nf) out.push({ title: "Use the " + nf + " findings as a test list", text: "Each one names a file and a line, and says whether it is still open on this head.",
       btn: copyButton("Copy the " + nf + " findings", "Copied " + nf + " findings", function () { return findingsText(d); }, "findings-" + d.repo + d.number, "btn btn-secondary") });
-    if (d.parked || decs.length) out.push({ title: "Not sure? Talk it over", text: "Copies a brief with the ticket, the history and the open findings, then opens Claude.",
+    if (d.parked) out.push({ title: "Not sure? Talk it over", text: "Copies a brief with the ticket, the history and the open findings, then opens Claude.",
       btn: copyLink(CLAUDE_NEW, "Copy brief and open Claude", function () { return prBrief(d, r); }, "prtalk-" + d.repo + d.number, "btn btn-secondary", "Copied · opening Claude") });
     return out;
   }
@@ -1968,7 +1908,7 @@ textarea.reason { box-sizing: border-box; width: 100%; padding: 12px; border-rad
     while (app.firstChild) app.removeChild(app.firstChild);
     app.appendChild(node);
     if (S.manual) app.appendChild(manualSheet());
-    document.body.classList.toggle("locked", !!(S.manual || (S.sheet && !(DESK.matches && S.sheet === "answer"))));
+    document.body.classList.toggle("locked", !!(S.manual || S.sheet));
     if (S.focusSheet) {  // a sheet that just opened takes the focus
       S.focusSheet = false;
       fk = S.manual ? "manual-close" : "sheet-close";

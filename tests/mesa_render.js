@@ -5,7 +5,8 @@
 // attributes, listeners, and the few document and window calls the page makes. Every route renders twice, at
 // phone width and at desktop width, each in a fresh context with the state embedded as the page's sample (so the
 // page never fetches). It prints {"phone": {route: view}, "desk": {route: view}}, where a view is the #app subtree
-// as `html` (attributes kept, text escaped), as `text` (one line per block), and its `links` and `tags`.
+// as `html` (attributes kept, text escaped), as `text` (one line per block), and its `links` and `tags`. A route
+// written `route!key` renders `route`, then clicks the element whose data-k is `key` once (a sheet opening, say).
 // With `--live` first, it instead runs the page against a scripted server, as served (no embedded sample), and shows
 // the route before and after one poll: node mesa_render.js --live <mesa.html> <live.json> <route>, where live.json is
 // {"state": [state, ...], "pr": [detail, ...]} and each fetch of that kind answers with the next entry (the last one
@@ -136,10 +137,11 @@ function lines(node) {
 }
 
 function render(desk, route) {
+  const [path, click] = route.split("!");
   const { doc, app } = makeDocument();
   const win = {
     document: doc,
-    location: { hash: "#/" + route },
+    location: { hash: "#/" + path },
     navigator: {},
     isSecureContext: false,
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
@@ -155,6 +157,12 @@ function render(desk, route) {
   win.window = win;
   const context = vm.createContext(win);
   scripts.forEach((code, i) => vm.runInContext(code, context, { filename: `mesa.html <script> #${i + 1}` }));
+  if (click) {
+    const target = walk(app).find((el) => el.getAttribute("data-k") === click);
+    if (!target) throw new Error(`nothing to click: no data-k="${click}" on ${path}`);
+    const event = { target, preventDefault() {}, stopPropagation() {} };
+    (target.listeners.click || []).forEach((fn) => fn(event));
+  }
   const els = walk(app);
   return {
     html: serialize(app),
