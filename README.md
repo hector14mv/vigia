@@ -15,12 +15,32 @@ vigia turns GitHub issues into merged pull requests with three rules that do not
    calls a model. It merges only when every rule holds on the exact head, with
    `gh pr merge --match-head-commit`, and writes every step to an append-only ledger.
 
-It is the small, runnable core of the private factory described in
-[Dos laboratorios y un vigía](https://hectormoyanovelez.com/fabrica) (in Spanish): 360 pull
-requests merged between 7 and 21 October 2026, written by Claude or Codex, reviewed by a model from
-the other lab and merged by a Python program that calls no model. That watcher is about 11,700
-lines woven into one machine and one person's tools; vigia is a clean rewrite of its core that you
-can point at your own repository in fifteen minutes.
+It is the private factory described in
+[Dos laboratorios y un vigía](https://hectormoyanovelez.com/fabrica) (in Spanish), rewritten to run anywhere:
+that factory merged 360 pull requests between 7 and 21 October 2026, written by Claude or Codex, reviewed by a
+model from the other lab and merged by a Python program that calls no model. Its watcher was about 11,700 lines
+woven into one machine and one person's tools. vigia brings over the factory, not just its core:
+
+- **parallel engine sessions**, and one workspace that drives several repositories with a shared budget;
+- **the Mesa**, a read-only control desk for your laptop or your phone: what needs you, every PR on its path,
+  what just happened, how much quota is left;
+- **a planner** that turns a goal into tickets in the template, for you to ratify;
+- **an engine report** from the ledger, and a guide to run it all on an always-on server.
+
+You can point it at your own repository in fifteen minutes.
+
+![One issue becomes a merged pull request: Claude builds it, Codex reviews the exact commit, a script merges it](docs/demo.gif)
+
+*Recorded live on [vigia-demo](https://github.com/hector14mv/vigia-demo): issue #18 became PR #19, built by
+Claude, gated by Codex on its exact commit and merged by `vigia watch`. Idle time is compressed; nothing else
+is edited.*
+
+**vigia built vigia.** From 23 to 25 October 2026 this repository and vigia-demo ran on vigia itself. Their
+ledgers, read by `vigia report`, count 35 pull requests merged by the watcher: 27 written by vigia's own builder
+sessions, the rest by a conductor session, every one gated on its exact commit by a model from the other lab.
+That gate returned 97 P1 findings across 95 verdicts, and no head with an open P1 merged; 25 times a PR used up
+its rounds and was parked for a person. Several designs in this release changed because of what the gate
+found, and one feature, bringing a moved base into a PR, stayed out of v0.1 for the same reason.
 
 ```mermaid
 flowchart LR
@@ -72,6 +92,15 @@ vigia init
 `init` checks the four tools, asks which lab builds (the other one reviews), proposes models per
 tier, writes `vigia.toml`, adds `.vigia/` to `.gitignore`, writes the ticket template to
 `.github/ISSUE_TEMPLATE/vigia-ticket.md`, and creates the labels on GitHub. Commit those files.
+
+Then protect the base branch on GitHub (branch rules need a public repository, or a paid plan for a private
+one), because vigia v0.1 does not re-review a PR whose base moved after its review: in the repository's
+**Settings → Branches**, add a rule for `main` with **Require status checks to pass
+before merging** (pick your CI check) and **Require branches to be up to date before merging**, and turn on
+**Do not allow bypassing the above settings**: vigia merges with your login, and an admin's merge would
+otherwise skip the rule. GitHub then refuses to merge a stale head; press **Update branch** on the PR and vigia
+reviews the new head like any other (a T2 needs your label again on the new head). Do not require approving reviews: vigia's reviews are comments, and a T2
+approval is a label.
 
 Then open an issue from the template — Outcome, Scope with `Not touched:` and `Must still hold:`,
 acceptance criteria, a done-test, risks — and give it one tier label and `vigia:ready`. Either
@@ -281,11 +310,18 @@ What comes next is in the [roadmap](docs/roadmap.md).
 
 - Tested on macOS and Linux, with GitHub, Claude Code 2.1.294 and Codex CLI 0.159–0.164. No Windows, no
   GitLab, no other engines yet.
+- Engine sessions run without your GitHub login, but as your OS user, with your files and your other logins:
+  read [SECURITY.md](SECURITY.md) first, and give vigia its own OS user for real isolation.
 - Parallel sessions share one machine: there are no memory, disk or load gates yet beyond the slot count.
-- A PR that conflicts with its base is parked, not rebased.
+- A base that conflicts with a PR parks it; vigia does not resolve conflicts.
+- vigia v0.1 does not re-review a PR whose base moved after its review. The guard is GitHub's own rule,
+  **Require branches to be up to date before merging** (with at least one required check): turn it on, as the
+  Quickstart says. Without it, a PR can merge onto base changes no reviewer saw together with it. With it,
+  a stale PR is not parked yet: vigia's merge is refused, logged as an error and tried again on every tick
+  until someone presses **Update branch** ([#59](https://github.com/hector14mv/vigia/issues/59)).
+- The planner only proposes: you ratify every ticket it writes.
+- The Mesa only reads: every action is a link to GitHub, where your own login decides.
 - Fix rounds use the tier's builder engine, so they stay in the builder's lab.
-- The ledger lives in the clone you run vigia from; run it from one place.
-- Engines run with your credentials and permissions — read [SECURITY.md](SECURITY.md) first.
 - Not on PyPI yet: install from git.
 
 ## Development
