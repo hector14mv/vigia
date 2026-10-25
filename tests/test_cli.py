@@ -1,8 +1,11 @@
 """The command line on first contact: help, a busy port, the watch summary, `vigia ticket`."""
 
+import argparse
 import contextlib
 import io
 import socket
+
+import pytest
 
 from test_e2e import TICKET, world  # noqa: F401  (world is a fixture)
 from vigia import cli, report, watch
@@ -101,13 +104,46 @@ def test_ticket_lists_each_missing_item_and_exits_1(tmp_path, capsys):
     body.write_text("## Outcome\nx\n", encoding="utf-8")
     assert cli.main(["ticket", str(body)]) == 1
     lines = capsys.readouterr().out.splitlines()
-    assert "section `## Scope`" in lines and "section `## Risks`" in lines and "ok" not in lines
+    assert lines[0] == "missing:"
+    assert "  - section `## Scope`" in lines and "  - section `## Risks`" in lines and "ok" not in lines
+
+
+def test_ticket_unreadable_file_prints_the_os_reason_and_exits_2(tmp_path, capsys):
+    assert cli.main(["ticket", str(tmp_path / "nope.md")]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"vigia: cannot read {tmp_path / 'nope.md'}: No such file or directory\n"
+
+
+def test_every_argument_has_help(capsys):
+    def walk(p):
+        for action in p._actions:
+            if action.dest == "help":
+                continue
+            if isinstance(action, argparse._SubParsersAction):
+                for name, sub in action.choices.items():
+                    if name != "job":  # the internal command is hidden on purpose
+                        walk(sub)
+            else:
+                assert action.help, f"{p.prog}: {action.dest} has no help"
+
+    walk(cli.parser())
+    with pytest.raises(SystemExit):
+        cli.main(["doctor", "--help"])
+    assert "--json" in capsys.readouterr().out
+
+
+def test_mesa_help_names_the_status_page(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "the read-only status page: what needs you, every PR's next step, recent events, quota" in out
 
 
 def test_ticket_reads_stdin_with_a_dash(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("## Outcome\nx\n"))
     assert cli.main(["ticket", "-"]) == 1
-    assert "section `## Scope`" in capsys.readouterr().out
+    assert "  - section `## Scope`" in capsys.readouterr().out
     monkeypatch.setattr("sys.stdin", io.StringIO(TICKET))
     assert cli.main(["ticket", "-"]) == 0
     assert capsys.readouterr().out == "ok\n"

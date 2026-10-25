@@ -141,8 +141,10 @@ def init(
 
     say("Checking tools")
     results = preflight(runner)
+    width = max(len(name) for name, _, _ in results)
     for name, ok, detail in results:
-        say(f"  {'ok ' if ok else 'NO '} {name}" + ("" if ok else f" — {detail}"))
+        shown = "" if ok and detail == "ok" else detail
+        say(f"  {'ok ' if ok else 'NO '} {name:<{width}}  {shown}".rstrip())
     if not all(ok for _, ok, _ in results):
         raise SystemExit("vigia needs git, gh and both engines logged in: one lab builds, the other reviews")
 
@@ -262,7 +264,7 @@ def init(
         )
         if where.strip().lower().startswith("s"):
             say(
-                "Server: follow docs/server.md (systemd, logins over SSH, the Mesa on your phone via Tailscale)."
+                "Server: follow https://github.com/hector14mv/vigia/blob/main/docs/server.md (systemd, logins over SSH, the Mesa on your phone via Tailscale)."
             )
     say("")
     say("Next: commit vigia.toml, .gitignore and the ticket template; open an issue from the template")

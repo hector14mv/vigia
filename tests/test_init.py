@@ -125,6 +125,9 @@ def test_init_stops_when_an_engine_is_not_logged_in(tmp_path, kwargs):
         )
     assert not (tmp_path / "vigia.toml").exists()
     assert any(m.strip().startswith("NO ") for m in messages)
+    # the name column is padded, so the detail starts in one column whatever the tool
+    rows = [m for m in messages if m.strip().startswith(("ok ", "NO "))]
+    assert [m[6:22].strip() for m in rows] == ["git", "gh logged in", "claude logged in", "codex logged in"]
 
 
 def test_init_builder_codex_gates_with_claude(tmp_path):

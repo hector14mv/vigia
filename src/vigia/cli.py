@@ -280,7 +280,7 @@ def cmd_mesa(args: argparse.Namespace) -> int:
     print(f"vigia Mesa for {names}: http://{args.host}:{srv.server_address[1]}/  (read-only; Ctrl-C to stop)")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(
-            "Warning: the Mesa has no login of its own. Prefer 127.0.0.1 behind `tailscale serve` (docs/server.md)."
+            "Warning: the Mesa has no login of its own. Prefer 127.0.0.1 behind `tailscale serve` (https://github.com/hector14mv/vigia/blob/main/docs/server.md)."
         )
     try:
         srv.serve_forever()
@@ -293,10 +293,15 @@ def cmd_ticket(args: argparse.Namespace) -> int:
     try:
         body = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise SystemExit(f"vigia: cannot read {args.file}: {exc}") from exc
+        reason = (exc.strerror or str(exc)) if isinstance(exc, OSError) else str(exc)
+        print(f"vigia: cannot read {args.file}: {reason}", file=sys.stderr)
+        return 2
     gaps = tickets.missing(body)
-    print("\n".join(gaps) if gaps else "ok")
-    return 1 if gaps else 0
+    if gaps:
+        print("\n".join(["missing:", *(f"  - {gap}" for gap in gaps)]))
+        return 1
+    print("ok")
+    return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -348,13 +353,20 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser(
         "review", help="run the cross-lab gate (or the tier reviewer) on a PR's exact head now"
     )
-    s.add_argument("--pr", type=int, required=True)
-    s.add_argument("--kind", choices=["gate", "review"], default="gate")
+    s.add_argument("--pr", type=int, required=True, help="the pull request number")
+    s.add_argument(
+        "--kind",
+        choices=["gate", "review"],
+        default="gate",
+        help="gate: the other lab; review: the tier's reviewer",
+    )
     s.set_defaults(func=cmd_review)
 
     s = sub.add_parser("fix", help="run one fix round on a PR now")
-    s.add_argument("--pr", type=int, required=True)
-    s.add_argument("--stage", choices=["gate", "review", "ci"], default="gate")
+    s.add_argument("--pr", type=int, required=True, help="the pull request number")
+    s.add_argument(
+        "--stage", choices=["gate", "review", "ci"], default="gate", help="what failed: gate, review or ci"
+    )
     s.set_defaults(func=cmd_fix)
 
     s = sub.add_parser("watch", help="the loop: decide with the rules, review, fix, merge, park, build")
@@ -381,7 +393,7 @@ def parser() -> argparse.ArgumentParser:
         "report", help="the engine table: per model, PRs, first-round P1s, rounds, time to merge"
     )
     s.add_argument("--days", type=int, default=7, help="how far back (default 7)")
-    s.add_argument("--json", action="store_true")
+    s.add_argument("--json", action="store_true", help="print JSON instead of a table")
     s.set_defaults(func=cmd_report)
 
     s = sub.add_parser(
@@ -393,7 +405,7 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_plan)
 
     s = sub.add_parser(
-        "mesa", help="the control desk in a browser: what needs you, every PR's next step, events, fuel"
+        "mesa", help="the read-only status page: what needs you, every PR's next step, recent events, quota"
     )
     s.add_argument("--host", default="127.0.0.1", help="interface to listen on (default 127.0.0.1)")
     s.add_argument("--port", type=int, default=8790, help="port (default 8790)")
@@ -415,7 +427,7 @@ def parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("status", help="queue, open PRs and their next step, parked reasons, recent events")
     out = s.add_mutually_exclusive_group()
-    out.add_argument("--json", action="store_true")
+    out.add_argument("--json", action="store_true", help="print JSON instead of text")
     out.add_argument(
         "--html", metavar="PATH", help="write a self-contained HTML page here and print its path"
     )
@@ -428,7 +440,7 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser(
         "doctor", help="check that vigia can work in this clone, with the fix for each problem"
     )
-    s.add_argument("--json", action="store_true")
+    s.add_argument("--json", action="store_true", help="print JSON instead of text")
     s.set_defaults(func=cmd_doctor)
     # the usage line lists the commands a person types; `job` still parses, it is just not offered
     sub.metavar = "{" + ",".join(name for name in sub.choices if name != "job") + "}"

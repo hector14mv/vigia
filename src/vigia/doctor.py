@@ -59,7 +59,7 @@ def _repo(runner: Runner, repo: str) -> Check:
 
 def _labels(runner: Runner, cfg: Config, reachable: bool) -> Check:
     if not reachable:
-        return Check("labels", FAIL, "not checked: repo unreachable", "fix the github repo check first")
+        return Check("labels", FAIL, "not checked: repo unreachable", "resolve the github repo check first")
     # Every page: a label past any fixed limit must not be reported missing (its create command would fail).
     r = _run(runner, ["gh", "api", "--paginate", f"repos/{cfg.repo}/labels?per_page=100", "--jq", ".[].name"])
     if not (r and r.code == 0):
@@ -180,6 +180,7 @@ def collect(start: Path, runner: Runner = proc.run) -> list[Check]:
     checks = _tools(runner)
     clone: Path | None = None
     cfg: Config | None = None
+    path: Path | None = None
     try:
         path = config_mod.find(start)
         clone = path.parent
@@ -187,7 +188,7 @@ def collect(start: Path, runner: Runner = proc.run) -> list[Check]:
         checks.append(Check("vigia.toml", OK, str(path)))
     except ConfigError as exc:
         checks.append(
-            Check("vigia.toml", FAIL, str(exc), "run `vigia init` in a clone, or fix the file named")
+            Check("vigia.toml", FAIL, str(exc), f"correct {path}" if path else "run `vigia init` in a clone")
         )
     if cfg and clone:
         repo = _repo(runner, cfg.repo)
