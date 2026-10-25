@@ -774,3 +774,23 @@ def test_the_cap_counts_everything_already_filed_for_the_pr(world):  # noqa: F81
     handoff_with(gh, pr, "\n## Follow-ups\n- a newer note\n")
     file_follow_ups(ctx, pr)
     assert len(follow_up_issues(gh)) == MAX_FOLLOW_UPS  # never a sixth
+
+
+def test_crash_leftovers_count_toward_the_cap_even_when_their_bullet_is_gone(world):
+    from vigia.watch import file_follow_ups
+
+    five = "\n".join(f"- item {k}" for k in range(1, 6))
+    gh, ctx, pr = ready_to_merge(world, f"\n## Follow-ups\n{five}\n")
+    tick(ctx, build=False)
+    tick(ctx, build=False)  # merge: five issues filed
+    assert len(follow_up_issues(gh)) == 5
+    # a crash lost the ledger row of the fifth issue; the handoff now carries a new note instead of its bullet
+    last = ctx.ledger.events("followup_filed", pr=pr)[-1]
+    keep = [r for r in ctx.ledger.rows() if r != last and r["event"] != "follow_ups_done"]
+    ctx.ledger.path.write_text("".join(json.dumps(r) + "\n" for r in keep))
+    for comment in gh.thread[pr]:
+        comment["body"] = comment["body"].replace("- item 5", "- a brand new note")
+    file_follow_ups(ctx, pr)
+    assert len(follow_up_issues(gh)) == 5  # the leftover was adopted, so no room is left for the new note
+    assert "a brand new note" not in [i["title"] for i in follow_up_issues(gh)]
+    assert len(ctx.ledger.events("followup_filed", pr=pr)) == 5

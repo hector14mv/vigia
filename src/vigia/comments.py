@@ -12,6 +12,7 @@ ENGINE_LINE = re.compile(r"^Engine:\s*(claude|codex)\b", re.M)
 FOLLOW_UPS_HEAD = re.compile(r"^##\s+Follow-ups\s*$", re.I)
 BULLET = re.compile(r"^[-*+]\s+(.*\S)")
 TITLE_MAX = 70
+MARKER = re.compile(r"^<!-- vigia:follow-up pr=(\d+) hash=([0-9a-f]{12}) -->$", re.M)
 
 
 def handoff(
@@ -102,6 +103,11 @@ def follow_up_title(text: str) -> str:
 
 def follow_up_marker(pr: int, digest: str) -> str:
     return f"<!-- vigia:follow-up pr={pr} hash={digest} -->"
+
+
+def marked_follow_ups(body: str, pr: int) -> set[str]:
+    """Hashes of the follow-up markers an issue body carries for PR `pr` (a quoted bullet cannot fake one)."""
+    return {digest for number, digest in MARKER.findall(body) if int(number) == pr}
 
 
 def follow_up_issue(text: str, pr: int, pr_url: str, sha: str) -> tuple[str, str]:

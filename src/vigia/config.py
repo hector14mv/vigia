@@ -270,7 +270,7 @@ def parse(data: dict, path: Path | None = None) -> Config:
         raise ConfigError(f"labels: unknown keys {sorted(unknown)}")
     labels = Labels(**{k: str(v) for k, v in labels_t.items()})
     names = [labels.ready, labels.building, labels.review, labels.parked, labels.human_ok, labels.follow_up]
-    if len(set(names)) != len(names):
+    if len({n.casefold() for n in names}) != len(names):  # GitHub compares label names ignoring case
         raise ConfigError("labels: every label must be different")
     if labels.collisions():
         raise ConfigError(f"labels: {labels.collisions()} are reserved for the planner and the tiers")

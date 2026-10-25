@@ -192,10 +192,11 @@ def file_follow_ups(ctx: Ctx, n: int) -> None:
             found.setdefault(comments.follow_up_hash(text), text)
     filed = {r.get("hash") for r in ctx.ledger.events("followup_filed", pr=n)}
     for issue in ctx.gh.issues_by(ctx.gh.login(), since):
-        for h in found.keys() - filed:
-            if comments.follow_up_marker(n, h) in issue["body"]:  # created, but not recorded: adopt it
-                ctx.ledger.append("followup_filed", pr=n, hash=h, issue=issue["number"])
-                filed.add(h)
+        # every marker for this PR counts, whether or not its bullet is still in a handoff:
+        # created but not recorded, so adopt it
+        for h in sorted(comments.marked_follow_ups(issue["body"], n) - filed):
+            ctx.ledger.append("followup_filed", pr=n, hash=h, issue=issue["number"])
+            filed.add(h)
     room = max(0, MAX_FOLLOW_UPS - len(filed))
     todo = [(h, t) for h, t in found.items() if h not in filed][:room]
     pr_url = f"https://github.com/{ctx.cfg.repo}/pull/{n}"

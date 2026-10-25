@@ -164,3 +164,11 @@ def test_the_follow_up_label_must_differ_from_the_ready_label():
     doc["labels"] = {"follow_up": "vigia:ready"}
     with pytest.raises(ConfigError, match="different"):
         parse(doc)
+
+
+@pytest.mark.parametrize("key", ["follow_up", "ready"])
+def test_labels_that_differ_only_in_case_are_the_same_label(key):
+    doc = base_doc()
+    doc["labels"] = {"follow_up": "VIGIA:READY"} if key == "follow_up" else {"ready": "Vigia:Follow-Up"}
+    with pytest.raises(ConfigError, match="different"):
+        parse(doc)
