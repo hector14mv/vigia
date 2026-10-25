@@ -991,6 +991,89 @@ def test_a_failing_github_is_asked_less_and_less_often_and_a_good_answer_resets_
     assert len(reads_ok) == 2  # back to a read every 15 s
 
 
+def test_the_backoff_counts_from_when_a_slow_refresh_finished_not_from_when_it_started(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    clock = _Clock()
+    cache = mesa._Cache([ctx], 15, clock=clock)
+    attempts = []
+
+    def slow_failure(*args, **kwargs):
+        attempts.append(1)
+        clock.now += 45  # GitHub takes 45 s to say no
+        raise CommandError(["gh", "pr", "list"], 1, "", "HTTP 502: bad gateway")
+
+    gh.prs = slow_failure
+    assert "bad gateway" in json.loads(cache.get())["repos"][0]["error"] and clock.now == 45
+    clock.now = 45 + 29  # the 30 s backoff started when the answer arrived, so it has not run out
+    cache.get()
+    assert len(attempts) == 1
+    clock.now = 45 + 30
+    cache.get()
+    assert len(attempts) == 2
+    # a refresh that raises an unexpected error is timed the same way
+    broken = []
+
+    def slow_crash(*args, **kwargs):
+        broken.append(1)
+        clock.now += 400  # longer than the longest backoff
+        raise RuntimeError("boom")
+
+    fresh = mesa._Cache([ctx], 15, clock=clock)
+    fresh.entries.clear()
+    mesa_state, mesa.state = mesa.state, slow_crash
+    try:
+        start = clock.now
+        with pytest.raises(RuntimeError):
+            fresh.get()
+        clock.now = start + 400 + 29
+        with pytest.raises(RuntimeError):
+            fresh.get()
+        assert len(broken) == 1
+        clock.now = start + 400 + 30
+        with pytest.raises(RuntimeError):
+            fresh.get()
+        assert len(broken) == 2
+    finally:
+        mesa.state = mesa_state
+
+
+def test_a_partial_read_failure_backs_off_and_does_not_count_as_a_good_read(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    clock = _Clock()
+    cache = mesa._Cache([ctx], 15, clock=clock)
+    first = json.loads(cache.get())
+    assert not first["repos"][0]["unread"]
+    healthy, attempts = gh.issues, []
+
+    def human_tasks_unreadable(label):
+        if label == "vigia:human-task":
+            attempts.append(1)
+            raise CommandError(["gh", "issue", "list"], 1, "", "HTTP 403: API rate limit exceeded")
+        return healthy(label)
+
+    gh.issues = human_tasks_unreadable
+    clock.now = 15
+    partial = json.loads(cache.get())["repos"][0]
+    assert "error" not in partial and partial["human_tasks"] is None and partial["unread"] == ["human tasks"]
+    assert partial["last_ok"] == first["generated"]  # the failed read did not move the last good one
+    assert cache.last_ok[gh.repo] == first["generated"]
+    # the page polls every 15 s: inside the 30 s backoff GitHub is not asked again
+    for moment in (16, 30, 44):
+        clock.now = moment
+        cache.get()
+    assert len(attempts) == 1
+    clock.now = 45
+    cache.get()
+    assert len(attempts) == 2
+    # once every list reads again, the cache is back to 15 s and the last good read moves
+    gh.issues = healthy
+    clock.now = 45 + 60
+    recovered = json.loads(cache.get())
+    assert cache.last_ok[gh.repo] == recovered["generated"] and not recovered["repos"][0]["unread"]
+
+
 def test_an_unreadable_repo_says_when_it_was_last_read_ok(world, tmp_path):  # noqa: F811
     gh, build = world
     ctx, _ = build([])

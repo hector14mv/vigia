@@ -665,6 +665,11 @@ BACKOFF_START = 30.0  # seconds to wait after the first failed refresh; doubles 
 BACKOFF_MAX = 300.0  # ... up to this
 
 
+def _degraded(repo: dict) -> bool:
+    """GitHub could not be read for this repo, whole (`error`) or in part (`unread` names the lists that failed)."""
+    return bool(repo.get("error") or repo.get("unread"))
+
+
 class _Entry:
     """What one key last built: its body (or the error it raised), when, and how many refreshes in a row failed."""
 
@@ -676,7 +681,7 @@ class _Cache:
     def __init__(self, contexts: list[Ctx], seconds: float, slots: int | None = None, clock=time.monotonic):
         self.contexts, self.seconds, self.slots, self.clock = contexts, seconds, slots, clock
         self.lock, self.entries = threading.Lock(), {}  # key -> _Entry
-        self.last_ok: dict[str, str] = {}  # repo -> when GitHub was last read for it without an error
+        self.last_ok: dict[str, str] = {}  # repo -> when GitHub was last read for it in full
 
     def _wait(self, entry: _Entry) -> float:
         """How long the entry stands before a refresh: the cache time, or the backoff after failed refreshes."""
@@ -687,7 +692,8 @@ class _Cache:
     def _get(self, key: str, build, degraded=lambda value: False) -> bytes:
         """The body of `build()`, rebuilt at most once per cache time. A refresh that fails (it raised, or `degraded`
         says GitHub could not be read) makes the next one wait longer, so a slow or rate-limiting GitHub is not
-        hammered; inside that wait, the same answer (or the same error) is served."""
+        hammered; inside that wait, the same answer (or the same error) is served. The wait counts from when the
+        refresh finished, not when it started: a slow GitHub must not use up its own backoff while answering."""
         with self.lock:
             entry, now = self.entries.get(key), self.clock()
             if entry and now - entry.at < self._wait(entry):
@@ -698,23 +704,23 @@ class _Cache:
             try:
                 value = build()
             except Exception as exc:
-                self.entries[key] = _Entry(now, b"", fails, exc)
+                self.entries[key] = _Entry(self.clock(), b"", fails, exc)
                 raise
             body = json.dumps(value, ensure_ascii=False).encode("utf-8")
-            self.entries[key] = _Entry(now, body, fails if degraded(value) else 0, None)
+            self.entries[key] = _Entry(self.clock(), body, fails if degraded(value) else 0, None)
             return body
 
     def _state(self) -> dict:
         s = state(self.contexts, slots=self.slots)
         for repo in s["repos"]:
-            if repo.get("error"):
+            if _degraded(repo):
                 repo["last_ok"] = self.last_ok.get(repo["repo"])  # null: not read OK since the Mesa started
             else:
                 self.last_ok[repo["repo"]] = s["generated"]
         return s
 
     def get(self) -> bytes:
-        return self._get("state", self._state, lambda s: any(r.get("error") for r in s["repos"]))
+        return self._get("state", self._state, lambda s: any(_degraded(r) for r in s["repos"]))
 
     def pr(self, repo: str, n: int) -> bytes | None:
         """The detail of PR `n` in `repo`, or None when no context drives that repo."""
