@@ -6,10 +6,10 @@ description: Use when writing or completing a ticket for vigia, e.g. "write a ti
 # Write a vigia ticket
 
 vigia builds GitHub issues with an AI builder. **The issue body is the builder's whole prompt.**
-Say *what* changes and what must keep working. Leave *how* to the builder, which reads the code;
-you only remember it. If you must suggest a how, put it on one `Suggested approach:` line in
-`## Scope`, and have it rest on a verified fact or mark it `(unverified)`. Tickets that told the
-builder how without checking the code caused most serious findings.
+Say *what* changes and what must keep working. Leave *how* to the builder: it reads the code, and you
+are working from memory. If you must suggest a how, put it on one `Suggested approach:` line in
+`## Scope`, and have it rest on a verified fact or mark it `(unverified)`. In the factory vigia comes
+from, 31 of 43 serious findings traced back to the ticket: 17 to a false claim about the code, 14 to an omission.
 
 ## 1. Check the code first
 

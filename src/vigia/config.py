@@ -370,7 +370,7 @@ def _seat_toml(seat: Seat) -> str:
 def render(cfg: Config) -> str:
     """vigia.toml text for `cfg`. `parse(tomllib.loads(render(cfg)))` gives `cfg` back."""
     out = [
-        "# vigia — AI agents write the code. A different lab reviews it. A script with no AI merges it.",
+        "# vigia — Agents build. The other lab reviews. A deterministic decision table merges only the reviewed commit.",
         "# Docs: https://github.com/hector14mv/vigia/blob/main/docs/operating-model.md",
         "",
         "[repo]",

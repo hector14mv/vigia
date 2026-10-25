@@ -29,7 +29,8 @@ this file only orders the work.
    `codex login --device-auth` on a server (or `codex login` on a laptop). Check: `gh auth status`,
    `claude auth status`, `codex login status`.
 4. **Repositories.** Ask which GitHub repositories vigia should work on and which lab should build (the other
-   one reviews). Clone them side by side in one folder (e.g. `~/factory`), run `vigia init` in each (answer its
+   one reviews). Each needs a CI workflow that runs on `pull_request`: vigia merges only with CI green, so
+   if one has none, say so and ask the person whether to add one. Clone them side by side in one folder (e.g. `~/factory`), run `vigia init` in each (answer its
    questions with the person), commit and push the files it writes if the person agrees, then run
    `vigia workspace` in the folder. Then ask the person to protect each base branch on GitHub (Settings →
    Branches, a rule for `main`: "Require status checks to pass before merging" with their CI check, and
@@ -39,7 +40,7 @@ this file only orders the work.
 5. **Check.** `vigia doctor` in each clone. Every check should say ok.
 6. **Server only.** Write the two systemd user units from `docs/server.md` §4, enable linger, start them, and
    show the first lines of `journalctl --user -u vigia`. Ask before installing Tailscale; if the person wants
-   the Mesa (`vigia mesa`, a read-only status desk) on their phone, follow §5 and give them the `https://….ts.net` address.
+   the Mesa (`vigia mesa`, a read-only status page) on their phone, follow §5 and give them the `https://….ts.net` address.
 7. **First ticket.** Offer to write one small T0 ticket with the person (the template is
    `.github/ISSUE_TEMPLATE/vigia-ticket.md`) and add `tier:T0` and `vigia:ready`, so they see a full loop.
 

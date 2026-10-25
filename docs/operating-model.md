@@ -1,7 +1,7 @@
 # The operating model in seven rules
 
-vigia is an AI software factory, rewritten to run anywhere, from one that merged 360 pull requests in two
-weeks (7–21 October 2026): written by Claude or Codex, reviewed by a model from the other lab, and merged by
+vigia is a rewrite, to run anywhere, of a private AI software factory that merged 360 pull requests in two
+weeks (7–21 October 2026), written by Claude or Codex, reviewed by a model from the other lab, and merged by
 `rules.decide()`, a pure function (no model, no I/O) over CI status, verdicts and labels on the exact head. That factory's written process
 once had 79 rules; an audit cut them to thirteen. These are the seven that carry the weight, each
 with the place in this repository where it is enforced.
@@ -45,7 +45,7 @@ says why on the issue. The template is `.github/ISSUE_TEMPLATE/vigia-ticket.md`,
 ## 3. A different lab reviews every change
 
 *Design assumption:* models from one lab tend to share blind spots. One measurement points that way: of 16
-defects the Codex connector had found and that were later fixed, Claude Sonnet 5.5 found 1 and Claude Opus 5.5
+defects Codex's GitHub code-review bot had found and that were later fixed, Claude Sonnet 5.5 found 1 and Claude Opus 5.5
 found 5 ([the article](https://hectormoyanovelez.com/fabrica), 9 October). So the reviewer of every change — the **gate** — comes from the
 other lab: Claude's work is gated by Codex, Codex's work by Claude. The gate reads
 the exact head commit, in a read-only checkout, and must return content: a verdict with findings,
@@ -63,7 +63,7 @@ A review covers exactly one commit. While it runs nobody pushes; if the head mov
 no longer covers the PR. The gate runs once per round, and a second round exists only after a fix
 for an accepted finding has been pushed. After the second round there is no third: the PR is parked
 and a human decides. On one measured night (29–30 September) the factory spent 1,373 million tokens on 8
-merges, and 15 % of them went to writing code; review rounds, the watch and waiting sessions took the rest.
+merges, and 15% of them went to writing code; review rounds, the watch and waiting sessions took the rest.
 
 A review covers the PR's head, not the base it lands on: when the base moves after the review, the squash
 merge combines reviewed code with base changes nobody reviewed together. In v0.1 the guard is GitHub's own:
@@ -136,7 +136,9 @@ the watcher before the session starts, so no two sessions ever work on the same 
 ## What a human still does
 
 - **Ratifies planned tickets** that wait as `vigia:proposed`, and does the `vigia:human-task` issues.
-- **Decides what to build**: writes, or approves, the ticket and its tier.
+- **Decides what to build**: writes, or approves, the ticket and its tier, and adds `vigia:ready`. vigia builds
+  only a label added by someone with write access, on the ticket as it was then; an edit after it needs the label
+  again, and removing it withdraws the approval (`builder.authorize`).
 - **Owns T2**: adds `vigia:human-ok` on the exact head of every T2 change. A label added before the
   head moved never counts (`watch.human_approved` compares GitHub's own event order, not clocks).
 - **Unparks**: reads the reason, deals with it, removes `vigia:parked`. The round and fix counters
