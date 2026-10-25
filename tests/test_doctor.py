@@ -148,6 +148,7 @@ def test_no_config_fails_and_skips_the_repo_checks(tmp_path, monkeypatch):
     assert checks["vigia.toml"].status == "fail"
     assert "vigia init" in checks["vigia.toml"].fix
     assert not checks["vigia.toml"].fix.endswith(("named", "the"))
+    assert "vigia init" not in checks["vigia.toml"].detail  # the hint is in the fix line only
     assert "labels" not in checks and "lock" not in checks
 
 

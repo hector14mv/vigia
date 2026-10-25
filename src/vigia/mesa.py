@@ -1,4 +1,4 @@
-"""`vigia mesa`: the factory's control desk in a browser, on a laptop or a phone.
+"""`vigia mesa`: the read-only status page in a browser, on a laptop or a phone.
 
 It answers what a person would otherwise ask in a chat: what needs me, how is each PR doing and why, what just
 happened, how much quota is left, is the watcher alive. It is read-only on purpose. Every action is a link to

@@ -76,6 +76,7 @@ def test_t0_issue_to_merged_pr_with_one_fix_round(world):
     assert tick(ctx) == []  # no PRs yet: this tick builds the issue
     pr = next(iter(gh.prs_))
     head1 = gh.branch_sha(gh.prs_[pr]["branch"])
+    assert gh.prs_[pr]["branch"] == f"vigia/{n}-add-a-helper"
     assert gh.prs_[pr]["body"].startswith(f"Closes #{n}")
     assert set(gh.prs_[pr]["labels"]) == {"vigia:review", "tier:T0"}
     assert gh.bodies(pr)[0].startswith(f"## Handoff {head1}\nEngine: claude · claude-sonnet-5-5")
@@ -835,3 +836,14 @@ def test_recovery_finds_an_issue_created_in_the_merge_second(world):  # noqa: F8
     file_follow_ups(ctx, pr)
     assert len(follow_up_issues(gh)) == 1  # adopted, not filed a second time
     assert len(ctx.ledger.events("followup_filed", pr=pr)) == 1
+
+
+def test_a_long_title_gives_a_branch_that_ends_on_a_word(world):
+    gh, build = world
+    ctx, _ = build([APPROVE])
+    n = gh.add_issue(
+        "feat: every textkit function imports straight from the package", TICKET, ["vigia:ready", "tier:T0"]
+    )
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    assert gh.prs_[pr]["branch"] == f"vigia/{n}-feat-every-textkit-function-imports"

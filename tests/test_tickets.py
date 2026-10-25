@@ -61,6 +61,21 @@ def test_tier_needs_exactly_one_label():
 def test_slug_and_linked_issue():
     assert slug("Add truncate() — with ellipsis!") == "add-truncate-with-ellipsis"
     assert slug("!!!") == "change"
+
+
+def test_slug_cuts_on_a_word_boundary():
+    title = "feat: every textkit function imports straight from the package"
+    assert slug(title) == "feat-every-textkit-function-imports"
+    assert slug(title, 40) == "feat-every-textkit-function-imports"
+    assert slug("one two three", 7) == "one-two"
+    assert slug("one two three", 8) == "one-two"  # the next character is "-": a whole word already
+    assert slug("one two three", 9) == "one-two"
+    assert slug("one two three", 13) == "one-two-three"
+    assert slug("abcdefghij klm", 5) == "abcde"  # one word longer than the limit is still hard-cut
+    assert slug("ab cdefghij", 4) == "ab"
+    for limit in range(1, 30):
+        got = slug(title, limit)
+        assert got and len(got) <= limit
     assert linked_issue("Closes #12\n\nmore") == 12
     assert linked_issue("fixes #3") == 3
     assert linked_issue("see #4") is None

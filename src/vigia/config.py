@@ -377,10 +377,10 @@ def render(cfg: Config) -> str:
         f"name = {_q(cfg.repo)}",
         f"base = {_q(cfg.base)}",
         "",
-        "# One table per damage tier. The gate must come from the other lab than the builder.",
+        "# One table per damage tier. The gate must come from the other lab, not the builder's.",
         "# T0: cosmetic, docs, tests, internal tooling — builder + gate.",
         "# T1: product logic with no money and no other people's data — + a stronger reviewer.",
-        "# T2: money, auth, data, migrations, messages to customers, credentials — + a human label.",
+        "# T2: money, auth, personal data, migrations, messages to customers, credentials — + a human label.",
     ]
     for tier in TIERS:
         p = cfg.tiers[tier]
