@@ -39,6 +39,10 @@ permission on the repository, and only when neither the body nor the title chang
 else is refused, with the reason written on the issue. The ticket template adds no label: a maintainer reads the
 ticket and adds `vigia:ready`. Give write access only to people you would let run commands as your user.
 
+The tier label sets how deep the review goes, and v0.1 does not yet notice a tier changed after the ready
+label ([#79](https://github.com/hector14mv/vigia/issues/79)). The triage role can edit labels without write
+access, so grant it only to people you would trust to set a ticket's tier.
+
 ## The sandboxing vigia applies
 
 The flags live in `DEFAULT_ENGINE_ARGS` in `src/vigia/config.py` and are passed by
