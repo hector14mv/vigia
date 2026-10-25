@@ -31,9 +31,21 @@ session opens exports it again. `gh` does not need such a line (it keeps its own
 only in `~/.zshrc`, which non-interactive shells do not read. To rule this out, run vigia under a separate OS
 user or in a container (see [Run it safely](#run-it-safely)).
 
-Engine sessions also start with the MCP servers you configured for Claude Code and Codex on this machine, so a
-session can see those tools; whether it may call one depends on that CLI's own permission settings. Starting
-sessions without them is [#89](https://github.com/hector14mv/vigia/issues/89).
+Engine sessions start without your MCP servers, so a builder or a reviewer cannot reach your mail, calendar,
+browser or other connected tools. Claude Code runs with `--strict-mcp-config` and no `--mcp-config`. Codex runs
+with `--ignore-user-config -c features.apps=false -c features.plugins=false`, because no single flag removes
+every source of servers. A `vigia.toml` override cannot add MCP servers back. That has two consequences:
+
+- Codex sessions do not read `~/.codex/config.toml`. If your Codex login needs a setting from it (a custom
+  `model_provider`, a proxy `base_url`), add it as `-c key=value` to each role's arguments in `vigia.toml`. A
+  role's list replaces its defaults, so keep them in it:
+
+  ```toml
+  [engines.codex]
+  builder = ["--sandbox", "workspace-write", "-c", "model_provider=\"azure\""]
+  reviewer = ["--sandbox", "read-only", "-c", "model_provider=\"azure\""]
+  ```
+- v0.1 has no way to give a session MCP tools, for example documentation lookups or a browser for UI checks.
 
 ## Who can start a build
 

@@ -386,6 +386,8 @@ What comes next is in the [roadmap](docs/roadmap.md).
   no other engines yet.
 - Engine sessions run without your GitHub login, but as your OS user, with your files and your other logins:
   read [SECURITY.md](SECURITY.md) first, and give vigia its own OS user for real isolation.
+- Engine sessions run without MCP servers, and Codex sessions without `~/.codex/config.toml`: there is no way
+  yet to give a session MCP tools ([SECURITY.md](SECURITY.md)).
 - Parallel sessions share one machine: there are no memory, disk or load gates yet beyond the slot count.
 - A base that conflicts with a PR parks it; vigia does not resolve conflicts.
 - vigia v0.1 does not re-review a PR whose base moved after its review
