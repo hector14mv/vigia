@@ -187,8 +187,9 @@ def collect(start: Path, runner: Runner = proc.run) -> list[Check]:
         cfg = config_mod.load(path)
         checks.append(Check("vigia.toml", OK, str(path)))
     except ConfigError as exc:
+        detail = str(exc) if path else str(exc).removesuffix(" — run `vigia init` first")
         checks.append(
-            Check("vigia.toml", FAIL, str(exc), f"correct {path}" if path else "run `vigia init` in a clone")
+            Check("vigia.toml", FAIL, detail, f"correct {path}" if path else "run `vigia init` in a clone")
         )
     if cfg and clone:
         repo = _repo(runner, cfg.repo)

@@ -36,7 +36,11 @@ def label_specs(labels: Labels) -> list[tuple[str, str, str]]:
         ("vigia:human-task", "D4C5F9", "Only a person can do this; vigia will not build it"),
         (labels.tier("T0"), "C2E0C6", "Cosmetic, docs, tests, internal tooling"),
         (labels.tier("T1"), "FEF2C0", "Product logic with no money and no other people's data"),
-        (labels.tier("T2"), "F9D0C4", "Money, auth, data, migrations, customer messages, credentials"),
+        (
+            labels.tier("T2"),
+            "F9D0C4",
+            "Money, auth, personal data, migrations, customer messages, credentials",
+        ),
     ]
 
 
@@ -144,7 +148,7 @@ def init(
     width = max(len(name) for name, _, _ in results)
     for name, ok, detail in results:
         shown = "" if ok and detail == "ok" else detail
-        say(f"  {'ok ' if ok else 'NO '} {name:<{width}}  {shown}".rstrip())
+        say(f"  {'ok  ' if ok else 'fail'} {name:<{width}}  {shown}".rstrip())
     if not all(ok for _, ok, _ in results):
         raise SystemExit("vigia needs git, gh and both engines logged in: one lab builds, the other reviews")
 
@@ -267,6 +271,10 @@ def init(
                 "Server: follow https://github.com/hector14mv/vigia/blob/main/docs/server.md (systemd, logins over SSH, the Mesa on your phone via Tailscale)."
             )
     say("")
-    say("Next: commit vigia.toml, .gitignore and the ticket template; open an issue from the template")
-    say("with a tier label and `vigia:ready`; then run `vigia run` (one build) or `vigia watch` (the loop).")
+    say("Next:")
+    say("  1. Run `vigia doctor`.")
+    say("  2. Commit and push vigia.toml, .gitignore and the ticket template.")
+    say(f"  3. Protect {base} on GitHub, as the README's Quickstart says.")
+    say("  4. Open an issue from the template, give it a tier label and `vigia:ready`, then run")
+    say("     `vigia run` (one build) or `vigia watch` (the loop).")
     return target

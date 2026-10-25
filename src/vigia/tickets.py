@@ -1,7 +1,7 @@
 """Tickets are GitHub issues written in a fixed template. The body is the builder's whole prompt.
 
 A ticket says *what* changes and what must keep working; *how* is the builder's job, because the
-builder reads the code and the ticket writer only remembers it. vigia refuses to build a ticket
+builder reads the code and the ticket writer works from memory. vigia refuses to build a ticket
 that is missing a section or the two lines that most often prevent a bad PR (`Not touched:` and
 `Must still hold:`).
 """
@@ -32,10 +32,10 @@ Must still hold: <existing behaviour this change could break and must not, each 
 - [ ] <verifiable criterion>
 
 ## Done-test
-<The command or steps a human runs to see it works.>
+<The command or steps a human runs to see that it works.>
 
 ## Risks
-<What could go wrong; data, money or security surfaces touched (if any, the tier is T2).>
+<What could go wrong; personal data, money or security surfaces touched (if any, the tier is T2).>
 """
 
 _HEADER = re.compile(r"^##\s+(.+?)\s*$", re.M)
@@ -137,7 +137,12 @@ def tier(labels: list[str] | set[str] | frozenset[str], prefix: str = "tier:") -
 
 def slug(title: str, limit: int = 40) -> str:
     text = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    return (text[:limit].rstrip("-")) or "change"
+    if len(text) > limit:
+        cut = text[:limit]
+        if text[limit] != "-" and "-" in cut:  # the cut would split a word: end on the last whole one
+            cut = cut.rsplit("-", 1)[0]
+        text = cut
+    return text.strip("-") or "change"
 
 
 _CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", re.I)

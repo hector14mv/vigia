@@ -172,3 +172,9 @@ def test_labels_that_differ_only_in_case_are_the_same_label(key):
     doc["labels"] = {"follow_up": "VIGIA:READY"} if key == "follow_up" else {"ready": "Vigia:Follow-Up"}
     with pytest.raises(ConfigError, match="different"):
         parse(doc)
+
+
+def test_render_comments_read_carefully():
+    text = render(Config(repo="acme/app", base="main", tiers=default_tiers("claude")))
+    assert "The gate must come from the other lab, not the builder's." in text
+    assert "T2: money, auth, personal data, migrations" in text
