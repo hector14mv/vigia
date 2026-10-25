@@ -35,6 +35,13 @@ You can point it at your own repository in fifteen minutes.
 Claude, gated by Codex on its exact commit and merged by `vigia watch`. Idle time is compressed; nothing else
 is edited.*
 
+**vigia built vigia.** From 23 to 25 October 2026 this repository and vigia-demo ran on vigia itself. Their
+ledgers, read by `vigia report`, count 35 pull requests merged by the watcher: 27 written by vigia's own builder
+sessions, the rest by a conductor session, every one gated on its exact commit by a model from the other lab.
+That gate returned 97 P1 findings across 95 verdicts, and no head with an open P1 merged; 25 times a PR used up
+its rounds and was parked for a person. Several designs in this release changed because of what the gate
+found, and one feature, bringing a moved base into a PR, stayed out of v0.1 for the same reason.
+
 ```mermaid
 flowchart LR
     I["Issue<br/>vigia:ready + tier"] --> B["Builder<br/>lab A · own worktree"]
