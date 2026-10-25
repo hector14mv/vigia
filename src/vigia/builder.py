@@ -7,6 +7,7 @@ writes the handoff, so the steps that touch GitHub are deterministic and the sam
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 
 from . import comments, jobs, prompts, tickets
@@ -42,12 +43,13 @@ def _run_tests(ctx: Ctx, wt: Path) -> str:
     return f"`{cmd}` → {status}" + (f" — {summary[:160]}" if summary else "")
 
 
-def refuse(ctx: Ctx, issue: dict, gaps: list[str]) -> None:
+def refuse(ctx: Ctx, issue: dict, gaps: list[str], message: str = "") -> None:
     """A ready issue that cannot be built: say why once, and take it out of the queue."""
     labels = ctx.cfg.labels
     ctx.gh.comment(
         issue["number"],
-        "vigia cannot build this ticket yet. Missing:\n"
+        message
+        or "vigia cannot build this ticket yet. Missing:\n"
         + "\n".join(f"- {g}" for g in gaps)
         + f"\n\nAdd what is missing and put the `{labels.ready}` label back.\n",
     )
@@ -65,6 +67,96 @@ def gaps(ctx: Ctx, issue: dict) -> list[str]:
     return found
 
 
+MAINTAINER = ("admin", "write")  # GitHub reads maintain as write and triage as read
+
+
+def _not_before(edited: str, labeled: str) -> bool:
+    """True when the edit at `edited` may have come at or after the label at `labeled` (both GitHub's clock, to the
+    second). A time that cannot be read counts as after: an unknown order never lets an edit through."""
+    try:
+        return datetime.fromisoformat(edited.replace("Z", "+00:00")) >= datetime.fromisoformat(
+            labeled.replace("Z", "+00:00")
+        )
+    except ValueError:
+        return True
+
+
+def authorize(ctx: Ctx, issue: dict) -> dict | None:
+    """`issue` with the title and body this check covered, if a maintainer started its build; else None.
+
+    The latest `ready` label event must come from a user with write, maintain or admin permission, and neither the
+    body nor the title may have changed since: vigia builds the ticket that person saw, nothing an author or a
+    triager wrote later. One GraphQL read gives the title, the body, the body's last edit and the events together,
+    so the text that will be built is exactly the text whose edit time was compared. A ticket that fails is refused.
+    When GitHub cannot be read nothing is built and nothing is removed: an `error` row, and the next tick tries again.
+    """
+    labels, n = ctx.cfg.labels, issue["number"]
+    try:
+        seen = ctx.gh.ticket(n)
+        events = seen["events"]
+        at = max(
+            (i for i, e in enumerate(events) if e["event"] == "labeled" and e["label"] == labels.ready),
+            default=None,
+        )
+        added = events[at] if at is not None else None
+        actor = (added or {}).get("actor") or ""
+        permission = ctx.gh.permission(actor) if added and added["user"] and actor else "none"
+    except CommandError as exc:
+        ctx.ledger.append("error", issue=n, action="check_ready", detail=str(exc)[:500])
+        ctx.say(f"#{n}: could not read who added `{labels.ready}` — retrying next tick")
+        return None
+    if added is None or not added["user"] or permission not in MAINTAINER:
+        if added is None:
+            why = f"no `{labels.ready}` label event among the issue's latest 100 label and rename events"
+        elif not added["user"]:
+            why = f"`{labels.ready}` was added by `{actor or 'a deleted account'}`, which is not a user"
+        else:
+            why = f"`{labels.ready}` was added by `{actor}`, whose permission on this repository is `{permission}`"
+        refuse(
+            ctx,
+            issue,
+            [why],
+            f"vigia did not build this ticket: {why}.\n\n"
+            "Only a person with write, maintain or admin access to this repository can start a build: a maintainer "
+            f"has to add `{labels.ready}`. vigia removed the label.\n",
+        )
+        return None
+    changed = []
+    if seen["edited"] and _not_before(seen["edited"], added["ts"]):
+        changed.append(f"the body was edited after `{actor}` added `{labels.ready}`")
+    if any(e["event"] == "renamed" for e in events[at + 1 :]):
+        changed.append(f"the title was changed after `{actor}` added `{labels.ready}`")
+    if changed:
+        refuse(
+            ctx,
+            issue,
+            changed,
+            "vigia did not build this ticket: "
+            + " and ".join(changed)
+            + ".\n\nvigia builds only the ticket a maintainer saw, so any change after the label, a typo fix "
+            f"included, needs a maintainer to read the ticket again and add `{labels.ready}` back.\n",
+        )
+        return None
+    return {**issue, "title": seen["title"], "body": seen["body"]}
+
+
+def launchable(ctx: Ctx, issue: dict) -> dict | None:
+    """The issue to build, as `authorize` read it, or None. The one check every build path makes before a session
+    starts: a ticket with gaps or without a maintainer's `ready` is refused on the way."""
+    problems = gaps(ctx, issue)
+    if problems:
+        refuse(ctx, issue, problems)
+        return None
+    checked = authorize(ctx, issue)
+    if checked is None:
+        return None
+    problems = gaps(ctx, checked)  # the body that will be built, if it is newer than the one listed
+    if problems:
+        refuse(ctx, checked, problems)
+        return None
+    return checked
+
+
 def next_issue(ctx: Ctx, skip: set[int] | frozenset[int] = frozenset()) -> dict | None:
     """The oldest ready issue that is launchable, other than those in `skip` (already being built).
     Non-launchable ones are refused on the way."""
@@ -72,11 +164,9 @@ def next_issue(ctx: Ctx, skip: set[int] | frozenset[int] = frozenset()) -> dict 
     for issue in ctx.gh.issues(labels.ready):
         if issue["number"] in skip or labels.building in issue["labels"] or labels.parked in issue["labels"]:
             continue
-        problems = gaps(ctx, issue)
-        if problems:
-            refuse(ctx, issue, problems)
-            continue
-        return issue
+        checked = launchable(ctx, issue)
+        if checked is not None:
+            return checked
     return None
 
 

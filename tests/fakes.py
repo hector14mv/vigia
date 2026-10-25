@@ -61,6 +61,11 @@ class FakeGitHub:
         self.prs_: dict[int, dict] = {}
         self.thread: dict[int, list[dict]] = {}
         self.label_events: dict[int, list[tuple[str, str, str, int]]] = {}  # (label, actor, ts, event id)
+        self.timeline: dict[
+            int, list[dict]
+        ] = {}  # labeled and renamed events, oldest first, as `ticket()` reads them
+        self.edited: dict[int, str] = {}  # issue -> when its body was last edited (GitHub's lastEditedAt)
+        self.permissions: dict[str, str] = {login: "write"}  # anyone else reads as `read`, like a public repo
         self.event_ids = 0
         self.ci: dict[str, str] = {}  # sha -> ci state (default passing)
         self.merged: list[tuple[int, str]] = []
@@ -68,26 +73,52 @@ class FakeGitHub:
         self.known_labels: set[str] | None = None  # None: every label exists
 
     # helpers for tests
-    def add_issue(self, title: str, body: str, labels: list[str]) -> int:
+    def add_issue(self, title: str, body: str, labels: list[str], by: str | None = None) -> int:
+        """An issue opened by `by` (default: this login) with `labels`: GitHub records a `labeled` event by the
+        author for each of them, the template's labels included."""
         n = self.next
         self.next += 1
         self.issues_[n] = {
             "number": n,
             "title": title,
             "body": body,
-            "labels": sorted(labels),
+            "labels": [],
             "url": "",
             "state": "OPEN",
         }
+        self.add_labels(n, *labels, by=by)
         return n
+
+    def edit(self, n: int, body: str | None = None, title: str | None = None) -> None:
+        """Edit an issue the way a person does on GitHub: a body edit moves `lastEditedAt`, a title change is a
+        `renamed` event."""
+        if body is not None:
+            self.issues_[n]["body"] = body
+            self.edited[n] = self.clock()
+        if title is not None:
+            self.issues_[n]["title"] = title
+            self.timeline.setdefault(n, []).append({"event": "renamed", "ts": self.clock()})
 
     def branch_sha(self, branch: str) -> str:
         return git("rev-parse", f"refs/heads/{branch}", cwd=self.origin)
 
     def human_label(self, n: int, actor: str = "owner") -> None:
-        self.add_labels(n, "vigia:human-ok")
+        self.add_labels(n, "vigia:human-ok", by=actor)
+        self._labeled(n, "vigia:human-ok", actor)  # a new event even when the label was already on
+
+    def _labeled(self, n: int, label: str, actor: str) -> None:
         self.event_ids += 1
-        self.label_events.setdefault(n, []).append(("vigia:human-ok", actor, self.clock(), self.event_ids))
+        ts = self.clock()
+        self.label_events.setdefault(n, []).append((label, actor, ts, self.event_ids))
+        self.timeline.setdefault(n, []).append(
+            {
+                "event": "labeled",
+                "label": label,
+                "actor": actor,
+                "user": not actor.endswith("[bot]"),
+                "ts": ts,
+            }
+        )
 
     def bodies(self, n: int) -> list[str]:
         return [c["body"] for c in self.thread.get(n, [])]
@@ -119,8 +150,11 @@ class FakeGitHub:
             )
         return self.add_issue(title, body, labels)
 
-    def add_labels(self, n: int, *labels: str) -> None:
+    def add_labels(self, n: int, *labels: str, by: str | None = None) -> None:
+        """Like GitHub: a `labeled` event, by `by` (default: this login), for each label not already on."""
         item = self._item(n)
+        for label in sorted(set(labels) - set(item["labels"])):
+            self._labeled(n, label, by or self._login)
         item["labels"] = sorted(set(item["labels"]) | set(labels))
 
     def remove_label(self, n: int, label: str) -> None:
@@ -137,6 +171,18 @@ class FakeGitHub:
     def label_event(self, n: int, label: str) -> dict | None:
         found = [(a, ts, i) for name, a, ts, i in self.label_events.get(n, []) if name == label]
         return {"actor": found[-1][0], "ts": found[-1][1], "id": found[-1][2]} if found else None
+
+    def ticket(self, n: int) -> dict:
+        i = self.issues_[n]
+        return {
+            "title": i["title"],
+            "body": i["body"],
+            "edited": self.edited.get(n),
+            "events": [dict(e) for e in self.timeline.get(n, [])][-100:],
+        }
+
+    def permission(self, login: str) -> str:
+        return self.permissions.get(login, "read")
 
     def ensure_label(self, name: str, color: str, description: str) -> None:
         if self.known_labels is not None:

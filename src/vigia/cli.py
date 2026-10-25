@@ -72,6 +72,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                 problems = builder.gaps(ctx, issue)
                 if problems:
                     raise SystemExit(f"#{number} is not launchable: " + "; ".join(problems))
+                # the same check as the watcher's: a maintainer's `ready` on the ticket as it is now
+                issue = builder.launchable(ctx, issue)
+                if issue is None:
+                    raise SystemExit(f"#{number} was not built (the reason is above)")
             else:
                 due, issue, _ = jobs.still_due(ctx, "build", number)
                 if not due:

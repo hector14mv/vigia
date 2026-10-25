@@ -259,3 +259,98 @@ def test_issues_by_without_a_lower_bound_asks_for_every_issue():
     run = Runner("[]")
     GitHub("o/r", runner=run).issues_by("vigia-bot", None)
     assert "since=" not in " ".join(run.calls[0]["args"])
+
+
+# -- ticket / permission: what decides whether a ready issue may be built --
+
+
+def test_ticket_reads_text_edit_time_and_events_in_one_graphql_call():
+    issue = {
+        "title": "feat: x",
+        "body": "## Outcome\nx",
+        "lastEditedAt": "2026-10-24T10:00:00Z",
+        "timelineItems": {
+            "nodes": [
+                {
+                    "__typename": "LabeledEvent",
+                    "createdAt": "2026-10-24T09:00:00Z",
+                    "label": {"name": "vigia:ready"},
+                    "actor": {"__typename": "User", "login": "owner"},
+                },
+                {"__typename": "RenamedTitleEvent", "createdAt": "2026-10-24T09:30:00Z"},
+                {
+                    "__typename": "LabeledEvent",
+                    "createdAt": "2026-10-24T09:40:00Z",
+                    "label": {"name": "vigia:ready"},
+                    "actor": {"__typename": "Bot", "login": "helper"},
+                },
+                {
+                    "__typename": "LabeledEvent",
+                    "createdAt": "2026-10-24T09:50:00Z",
+                    "label": None,
+                    "actor": None,
+                },
+            ]
+        },
+    }
+    runner = Runner(json.dumps({"data": {"repository": {"issue": issue}}}))
+    seen = GitHub("acme/app", runner=runner).ticket(7)
+    assert seen["title"] == "feat: x" and seen["body"] == "## Outcome\nx"
+    assert seen["edited"] == "2026-10-24T10:00:00Z"
+    assert seen["events"] == [
+        {
+            "event": "labeled",
+            "label": "vigia:ready",
+            "actor": "owner",
+            "user": True,
+            "ts": "2026-10-24T09:00:00Z",
+        },
+        {"event": "renamed", "ts": "2026-10-24T09:30:00Z"},
+        {
+            "event": "labeled",
+            "label": "vigia:ready",
+            "actor": "helper",
+            "user": False,
+            "ts": "2026-10-24T09:40:00Z",
+        },
+        {"event": "labeled", "label": None, "actor": None, "user": False, "ts": "2026-10-24T09:50:00Z"},
+    ]
+    [call] = runner.calls
+    args = call["args"]
+    assert args[:3] == ["gh", "api", "graphql"]
+    assert "owner=acme" in args and "name=app" in args and "number=7" in args
+    query = next(a for a in args if a.startswith("query="))
+    assert (
+        "lastEditedAt" in query
+        and "body" in query
+        and "LABELED_EVENT" in query
+        and "RENAMED_TITLE_EVENT" in query
+    )
+
+
+def test_ticket_of_a_never_edited_issue_has_no_edit_time():
+    issue = {"title": "t", "body": None, "lastEditedAt": None, "timelineItems": {"nodes": []}}
+    seen = GitHub("acme/app", runner=Runner(json.dumps({"data": {"repository": {"issue": issue}}}))).ticket(7)
+    assert seen == {"title": "t", "body": "", "edited": None, "events": []}
+
+
+def test_ticket_of_something_that_is_not_an_issue_is_an_error():
+    runner = Runner(json.dumps({"data": {"repository": {"issue": None}}}))
+    with pytest.raises(CommandError):
+        GitHub("acme/app", runner=runner).ticket(7)
+
+
+def test_permission_reads_the_collaborator_permission_endpoint():
+    runner = Runner(json.dumps({"permission": "read", "role_name": "triage"}))
+    assert GitHub("acme/app", runner=runner).permission("someone") == "read"
+    assert (
+        runner.calls[0]["args"][:4]
+        == [
+            "gh",
+            "api",
+            "--method",
+            "GET",
+        ]
+        and runner.calls[0]["args"][4] == "repos/acme/app/collaborators/someone/permission"
+    )
+    assert GitHub("acme/app", runner=Runner("{}")).permission("someone") == "none"
