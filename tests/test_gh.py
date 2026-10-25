@@ -278,10 +278,11 @@ def labeled(at, login="owner", kind="User", name="vigia:ready"):
     }
 
 
-def timeline_page(nodes, before=None, edited=None):
+def timeline_page(nodes, before=None, edited=None, labels=()):
     return graphql_issue(
         {
             "lastEditedAt": edited,
+            "labels": {"nodes": [{"name": name} for name in labels]},
             "timelineItems": {
                 "pageInfo": {"hasPreviousPage": before is not None, "startCursor": before},
                 "nodes": nodes,
@@ -314,23 +315,25 @@ def test_approval_is_the_latest_ready_event_and_what_came_after_it():
         labeled("09:40", name="tier:T0"),
         labeled("09:50", login=None, name=None),
     ]
-    runner = Runner(timeline_page(nodes, edited="2026-10-24T10:00:00Z"))
+    runner = Runner(timeline_page(nodes, edited="2026-10-24T10:00:00Z", labels=("tier:T0", "vigia:ready")))
     seen = GitHub("acme/app", runner=runner).approval(7, "vigia:ready")
     assert seen == {
         "ready": {"id": "LE_09:20", "actor": "helper", "user": False, "ts": "2026-10-24T09:20:00Z"},
         "renamed": True,
         "edited": "2026-10-24T10:00:00Z",
+        "present": True,
     }
     [call] = runner.calls
     query = next(a for a in call["args"] if a.startswith("query="))
     assert "lastEditedAt" in query and "LABELED_EVENT" in query and "RENAMED_TITLE_EVENT" in query
+    assert "labels(first: 100)" in query
     assert not any(a.startswith("before=") for a in call["args"])
 
 
 def test_approval_pages_back_past_other_label_events_to_the_ready_one():
     churn = [labeled(f"10:{m:02d}", name="needs-info") for m in range(50)]
     runner = Runner(
-        timeline_page(churn, before="C2", edited=None),  # the newest page: no ready event
+        timeline_page(churn, before="C2", edited=None, labels=("vigia:ready",)),  # the newest: no ready event
         timeline_page(churn, before="C1"),  # nor the one before it
         timeline_page([labeled("09:00"), *churn[:3]], before="C0"),  # here it is
     )
@@ -339,6 +342,7 @@ def test_approval_pages_back_past_other_label_events_to_the_ready_one():
         "ready": {"id": "LE_09:00", "actor": "owner", "user": True, "ts": "2026-10-24T09:00:00Z"},
         "renamed": False,
         "edited": None,
+        "present": True,  # read from the newest page, whatever the older ones hold
     }
     assert [next((a for a in c["args"] if a.startswith("before=")), None) for c in runner.calls] == [
         None,

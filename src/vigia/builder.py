@@ -124,6 +124,9 @@ def authorize(ctx: Ctx, issue: dict) -> dict | None:
         ctx.ledger.append("error", issue=n, action="check_ready", detail=detail)
         ctx.say(f"#{n}: {detail} — retrying next tick")
         return None
+    if not since["present"]:  # a maintainer withdrew the approval: their call, nothing to refuse or remove
+        ctx.say(f"#{n}: `{labels.ready}` is no longer on the issue — not building it")
+        return None
     changed = []
     if since["edited"] and _not_before(since["edited"], added["ts"]):
         changed.append(f"the body was edited after `{actor}` added `{labels.ready}`")

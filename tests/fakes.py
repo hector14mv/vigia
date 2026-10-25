@@ -187,6 +187,7 @@ class FakeGitHub:
             "ready": {k: e[k] for k in ("id", "actor", "user", "ts")} if e else None,
             "renamed": at is not None and any(x["event"] == "renamed" for x in events[at + 1 :]),
             "edited": self.edited.get(n),
+            "present": label in self.issues_[n]["labels"],
         }
 
     def permission(self, login: str) -> str:

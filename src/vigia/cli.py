@@ -69,6 +69,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                     raise SystemExit(f"#{number} is closed")
                 if ctx.cfg.labels.building in issue["labels"]:
                     raise SystemExit(f"#{number} is being built; try again when that ends")
+                if ctx.cfg.labels.ready not in issue["labels"]:
+                    raise SystemExit(
+                        f"#{number} is not ready: a maintainer adds `{ctx.cfg.labels.ready}` to build it"
+                    )
                 problems = builder.gaps(ctx, issue)
                 if problems:
                     raise SystemExit(f"#{number} is not launchable: " + "; ".join(problems))

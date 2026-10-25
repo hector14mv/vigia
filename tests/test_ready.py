@@ -309,3 +309,36 @@ def test_vigia_run_refuses_an_outsiders_ticket(world, monkeypatch, capsys):  # n
     n = gh.add_issue("Add a helper", TICKET, READY, by="outsider")
     assert cli.main(["run"]) == 0
     assert started(ctx, n) == [] and run.calls == [] and ctx.ledger.events("refused", issue=n)
+
+
+def test_vigia_run_on_a_number_needs_the_ready_label_on_it_now(world, monkeypatch):  # noqa: F811
+    """A maintainer who removes `ready` withdraws the approval: `vigia run --issue N` must not build on the old
+    label event, just as the watcher and the detached job do not."""
+    gh, build = world
+    ctx, run = build([])
+    monkeypatch.setattr(cli.Ctx, "load", classmethod(lambda cls, root: ctx))
+    n = gh.add_issue("Add a helper", TICKET, READY)  # labelled by `owner`, who has write access...
+    gh.remove_label(n, "vigia:ready")  # ...who then withdraws it
+    with pytest.raises(SystemExit, match="is not ready"):
+        cli.main(["run", "--issue", str(n)])
+    assert started(ctx, n) == [] and run.calls == []
+    assert builder.next_issue(ctx) is None and jobs.still_due(ctx, "build", n)[0] is False
+
+
+def test_ready_removed_while_the_text_is_read_is_not_built(world):  # noqa: F811
+    gh, build = world
+    ctx, run = build([APPROVE])
+    n = gh.add_issue("Add a helper", TICKET, READY)
+    real = gh.ticket
+
+    def read_then_withdrawn(number):
+        seen = real(number)
+        gh.remove_label(number, "vigia:ready")  # the maintainer changes their mind mid-read
+        return seen
+
+    gh.ticket = read_then_withdrawn
+    # the check every build path shares must see the withdrawal itself, not rely on a later re-read
+    assert builder.launchable(ctx, gh.issue(n)) is None
+    assert ctx.ledger.events("refused") == [] and gh.bodies(n) == []  # their call: nothing refused or said
+    tick(ctx)
+    assert started(ctx, n) == [] and run.calls == []

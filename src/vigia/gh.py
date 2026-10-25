@@ -74,6 +74,7 @@ query($owner: String!, $name: String!, $number: Int!, $before: String) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
       lastEditedAt
+      labels(first: 100) { nodes { name } }
       timelineItems(last: 100, before: $before, itemTypes: [LABELED_EVENT, RENAMED_TITLE_EVENT]) {
         pageInfo { hasPreviousPage startCursor }
         nodes {
@@ -288,18 +289,21 @@ class GitHub:
         """The latest time `label` was added to issue `number`, and what changed the ticket since.
 
         {'ready': {'id', 'actor', 'user', 'ts'} | None, 'renamed': a title change came after it,
-        'edited': when the body was last edited (ISO time on GitHub's clock, None if never)}. The label and rename
+        'edited': when the body was last edited (ISO time on GitHub's clock, None if never), 'present': the label is
+        on the issue now, so an approval withdrawn by removing the label counts for nothing}. The label and rename
         events are paged backwards from the newest until that label event is found, so any number of other label
         events cannot hide it. `id` is GitHub's node id of the event; `user` is False when the actor is a bot, an
-        app or gone. `edited` comes from the first page: a body read before this call is covered by it.
+        app or gone. `edited` and `present` come from the first page: a body read before this call is covered by
+        them.
         """
-        ready, renamed, before = None, False, None
+        ready, renamed, before, present = None, False, None, False
         while True:
             issue = self._issue_graphql(
                 APPROVAL_QUERY, number, *(["-f", f"before={before}"] if before else [])
             )
             if before is None:
                 edited = issue.get("lastEditedAt")
+                present = label in {x.get("name") for x in (issue.get("labels") or {}).get("nodes") or []}
             items = issue.get("timelineItems") or {}
             for node in reversed(items.get("nodes") or []):
                 if node.get("__typename") == "RenamedTitleEvent":
@@ -320,7 +324,7 @@ class GitHub:
             before = info.get("startCursor")
             if ready is not None or not info.get("hasPreviousPage") or not before:
                 break
-        return {"ready": ready, "renamed": renamed, "edited": edited}
+        return {"ready": ready, "renamed": renamed, "edited": edited, "present": present}
 
     def permission(self, login: str) -> str:
         """`login`'s permission on the repository: admin, write, read or none (maintain reads as write, triage as
