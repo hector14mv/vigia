@@ -67,8 +67,7 @@ in `## Facts`. Otherwise create the issue without `vigia:ready` and say what is 
 - [ ] every acceptance criterion can be checked by running or reading something
 - [ ] every factual claim is in `## Facts` as verified (with its command) or as a hypothesis
 - [ ] exactly one tier label, the higher if two fit
-- [ ] the body passes vigia's check and prints `[]`:
-      `python3 -c "import sys; from vigia.tickets import missing; print(missing(sys.stdin.read()))" < body.md`
+- [ ] the body passes vigia's check and prints `ok`: `vigia ticket body.md`
 
 ## 5. Create it
 
