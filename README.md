@@ -1,35 +1,42 @@
 # vigia
 
-**AI agents write the code. A different lab reviews it. A script with no AI merges it.**
+**Agents build. The other lab reviews. A deterministic decision table merges only the reviewed commit.**
 
-vigia turns GitHub issues into merged pull requests with three rules that do not bend:
+vigia is a deterministic control plane that takes tiered GitHub issues to merged pull requests, using coding
+agents from two labs (Claude Code and Codex CLI). Each issue's damage tier, T0 to T2, picks the builder's model
+and effort and how deep the review goes: a gate from the other lab on every change, a stronger reviewer on T1
+and T2, and a person's label on T2, so no engine approves its own work. Every step goes into an append-only
+ledger. Three rules do not bend:
 
-1. **Review depth is set by damage.** Every ticket has a tier — T0 (docs, tests, tooling), T1
-   (product logic), T2 (money, auth, personal data, migrations, messages to customers). The tier,
-   not the model that wrote the change, decides how much review it gets.
+1. **Review depth is set by damage.** Every ticket has one tier, T0 to T2, defined in
+   [the operating model](docs/operating-model.md#1-damage-sets-the-review-not-the-author). The tier, not the model that wrote the change, decides how much review it
+   gets.
 2. **The gate is always from the other lab.** A model from the other lab reviews every change on
    the exact commit, in a read-only checkout: Codex gates Claude's work, and Claude gates Codex's
    work when a tier's builder is Codex (`vigia init --builder codex`). T1 and T2 add a stronger
    reviewer after the gate, by default from the builder's lab. No verdict means no merge.
-3. **The merge is a decision table, not a judgement.** `vigia watch` is plain Python that never
-   calls a model. It merges only when every rule holds on the exact head, with
-   `gh pr merge --match-head-commit`, and writes every step to an append-only ledger.
+3. **The merge is a decision table, not a judgement.** `rules.decide()` is a pure function (no model, no I/O)
+   over CI status, verdicts and labels on the exact head, tested row by row in `tests/test_rules.py`. vigia
+   merges only when it says so, with `gh pr merge --match-head-commit`.
 
 It is the private factory described in
 [Dos laboratorios y un vigía](https://hectormoyanovelez.com/fabrica) (in Spanish), rewritten to run anywhere:
 that factory merged 360 pull requests between 7 and 21 October 2026, written by Claude or Codex, reviewed by a
-model from the other lab and merged by a Python program that calls no model. Its watcher was about 11,700 lines
-woven into one machine and one person's tools. vigia brings over the factory, not just its core:
+model from the other lab and merged by a decision table. It also kept a quality count: of the 117
+problems found in the 49 pull requests it merged from 7 to 11 October, 43 were serious (P1), and 31 of those
+came from the ticket, not the builder: 17 from a ticket that stated something false about the code, 14 from one
+that left out something that mattered ([the article](https://hectormoyanovelez.com/fabrica)). Its watcher was about 11,700 lines woven into
+one machine and one person's tools. vigia brings over the factory, not just its core:
 
 - **parallel engine sessions**, and one workspace that drives several repositories with a shared budget;
-- **the Mesa**, a read-only control desk for your laptop or your phone: what needs you, every PR on its path,
+- **the Mesa** (`vigia mesa`), a read-only status desk for your laptop or your phone: what needs you, every PR on its path,
   what just happened, how much quota is left;
 - **a planner** that turns a goal into tickets in the template, for you to ratify;
 - **an engine report** from the ledger, and a guide to run it all on an always-on server.
 
 You can point it at your own repository in fifteen minutes.
 
-![One issue becomes a merged pull request: Claude builds it, Codex reviews the exact commit, a script merges it](docs/demo.gif)
+![One issue becomes a merged pull request: Claude builds it, Codex reviews the exact commit, the decision table merges it](docs/demo.gif)
 
 *Recorded live on [vigia-demo](https://github.com/hector14mv/vigia-demo): issue #18 became PR #19, built by
 Claude, gated by Codex on its exact commit and merged by `vigia watch`. Idle time is compressed; nothing else
@@ -58,6 +65,10 @@ flowchart LR
     R -- "approve · T2" --> H["Human label<br/>on exact head"] --> M
     G -. "two rounds used" .-> K["Parked<br/>with a written reason"]
 ```
+
+Only four steps run a model, each in a fresh, headless session capped in time: **build**, **fix**, **gate** and
+the **stronger review**. Everything else is deterministic code: ticket validation, commit, push, PR and handoff,
+verdict parsing, caps and parking, the merge decision, and the ledger.
 
 ## Quickstart (about fifteen minutes)
 
@@ -195,6 +206,24 @@ decisions read; the comments on GitHub are the public copy.
 The seven rules behind all of this, and where each one lives in the code, are in
 [docs/operating-model.md](docs/operating-model.md).
 
+## Failure modes
+
+- **No parsable verdict**: `GATE_UNAVAILABLE`. It holds the merge and is never read as a pass.
+- **The head moves**: verdicts and a T2 label count only for the commit they were given on, so a new head is
+  reviewed again from CI on.
+- **A cap is hit** (gate rounds, fix rounds, review passes, failed sessions, session length): the PR is parked
+  with the reason written on it, and a person decides.
+- **A crash mid-step**: every paid step is in the ledger before its effect on GitHub, and the next tick repairs
+  from it: an interrupted build is parked, a half-enrolled PR is finished, leftover worktrees are removed.
+- **The base moves after the review**: v0.1 does not review the PR again
+  ([#39](https://github.com/hector14mv/vigia/issues/39)). With GitHub's "Require branches to be up to date"
+  rule, the stale merge is refused and tried again every tick until someone presses Update branch
+  ([#59](https://github.com/hector14mv/vigia/issues/59)).
+- **The issue body is the builder's prompt**: whoever can add `vigia:ready` decides what an engine is told to
+  do. That label is the trust boundary.
+- **It is not a sandbox**: engine sessions run as your OS user, with your files and your other logins. Read
+  [SECURITY.md](SECURITY.md).
+
 ## Configuration
 
 `vigia init` writes a `vigia.toml` like this one (every model is an exact id, never an alias):
@@ -273,7 +302,7 @@ that is already an open issue's is not filed twice. `--dry-run` prints the plan 
 
 ## The Mesa
 
-`vigia mesa` serves the factory's control desk at http://127.0.0.1:8790, for a laptop or a phone:
+`vigia mesa` serves the factory's status desk at http://127.0.0.1:8790, for a laptop or a phone:
 
 - **Your turn** — only what needs a person: a T2 change waiting for `vigia:human-ok` with the evidence on its
   exact head, a parked PR with the reason and what was tried, a ticket refused for missing sections.
@@ -296,7 +325,7 @@ folder to see every repository.
 | `vigia watch [--once] [--interval SECONDS] [--no-build] [--slots N]` | the loop, until Ctrl-C; merges and parks for every PR, and runs or starts engine sessions up to `watch.slots`; `--once` runs one tick, `--interval` sets the seconds between ticks (default `watch.interval_seconds`), `--no-build` only moves open PRs, `--slots` overrides the slots; in a workspace folder, every repo |
 | `vigia report [--days N] [--json]` | the engine table: per builder and reviewer model, PRs, first-round P1s, gate rounds and minutes to merge |
 | `vigia plan "<goal>" [--max N] [--dry-run]` | turn a goal into proposed tickets for you to ratify |
-| `vigia mesa [--host H] [--port P] [--allow-host NAME]` | the read-only control desk in a browser (default http://127.0.0.1:8790) |
+| `vigia mesa [--host H] [--port P] [--allow-host NAME]` | the read-only status desk in a browser (default http://127.0.0.1:8790) |
 | `vigia workspace [--slots N] [--force]` | write `vigia.workspace.toml` for the clones below this folder |
 | `vigia status [--json \| --html PATH]` | queue, open PRs with their next step, parked reasons, recent ledger; `--json` prints JSON, `--html PATH` writes a self-contained HTML page and prints its path |
 | `vigia doctor [--json]` | check that vigia can work in this clone (tools, `vigia.toml`, repo, labels, CI workflow, test command, work root, lock); every problem comes with the command that fixes it; exit code 1 if any check fails |
