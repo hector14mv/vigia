@@ -13,7 +13,10 @@ Order of the checks, and why:
    reviews the new head. At most `caps.gate_rounds` heads are ever gated.
 5. T1/T2: a stronger reviewer reviews the same exact head.
 6. T2: a human adds the human label on that exact head.
-7. Merge, with `--match-head-commit`, so only the head that was judged can land.
+7. Merge, with `--match-head-commit`, so only the head that was judged can land, and only where GitHub
+   refuses a merge onto a base that moved after vigia's last check.
+Wherever 4-7 would review or merge a head whose base moved, the step is `update` instead: the base is
+brought in first and the new head is reviewed.
 """
 
 from __future__ import annotations
@@ -61,6 +64,8 @@ class PRState:
     human_ok: bool = False
     on_base: bool = True  # the PR targets the configured base branch
     behind: bool = False  # the base moved since this head branched off it (read only when it matters)
+    # GitHub itself refuses to merge this PR onto a base that moved after vigia's last check (read before a merge)
+    base_guarded: bool = True
     # Everything below counts only since the PR was last unparked: unparking is a human's fresh start.
     verdicts: tuple[Verdict, ...] = field(default_factory=tuple)
     fix_rounds: int = 0
@@ -122,6 +127,13 @@ def decide(pr: PRState, cfg: Config) -> Decision:
     # A head that only brought the moved base in is reviewed again, but it does not use up a round.
     gate_rounds_left = len([h for h in gated if h not in pr.updated_heads]) < caps.gate_rounds
 
+    # The base moved since this head: bring it in before any review, a human's approval or a merge, so what is
+    # reviewed is what the merge produces. The new head is reviewed again without using up a round.
+    update = Decision("update", "the base moved since this head: bring it in and review again", head)
+
+    def update_first(d: Decision) -> Decision:
+        return update if pr.behind else d
+
     def fix_or_park(stage: str, why: str) -> Decision:
         if pr.fix_rounds >= caps.fix_rounds:
             return park(f"{why}; fix rounds used up ({pr.fix_rounds}/{caps.fix_rounds})")
@@ -148,7 +160,9 @@ def decide(pr: PRState, cfg: Config) -> Decision:
             )
         if not gate_rounds_left and head not in pr.updated_heads:
             return park(f"gate rounds used up ({caps.gate_rounds}) and the head moved after the last one")
-        return Decision("gate", f"gate round {len(gated) + 1} on head", head, str(len(gated) + 1))
+        return update_first(
+            Decision("gate", f"gate round {len(gated) + 1} on head", head, str(len(gated) + 1))
+        )
     gate = with_content[-1]
     if not gate.passes:
         return fix_or_park("gate", f"gate round {gated.index(head) + 1}: {gate.p1} P1 finding(s) on head")
@@ -168,15 +182,13 @@ def decide(pr: PRState, cfg: Config) -> Decision:
                 return park(
                     f"review rounds used up ({caps.review_rounds}) and the head moved after the last one"
                 )
-            return Decision("review", f"{pr.tier} review on head", head, str(len(reviewed) + 1))
+            return update_first(Decision("review", f"{pr.tier} review on head", head, str(len(reviewed) + 1)))
         review = with_content_r[-1]
         if not review.passes:
             return fix_or_park("review", f"{pr.tier} reviewer: {review.p1} P1 finding(s) on head")
 
-    # The base moved since this head: bring it in before a human approves or anything merges, so what was
-    # reviewed is what the merge produces. The new head is reviewed again without using up a round.
     if pr.behind:
-        return Decision("update", "the base moved since this head: bring it in and review again", head)
+        return update
 
     # 6 — T2: a human on the exact head.
     if policy.human and not pr.human_ok:
@@ -185,4 +197,11 @@ def decide(pr: PRState, cfg: Config) -> Decision:
     # 7 — merge.
     if pr.mergeable != "MERGEABLE":
         return wait("GitHub has not computed mergeability yet")
+    # vigia's own check of the base is a moment old by the merge; only GitHub can hold it at the merge itself.
+    if not pr.base_guarded:
+        return wait(
+            f"GitHub would merge onto a `{cfg.base}` that moved after vigia's last check: require branches to be "
+            "up to date before merging (branch protection including administrators, or a ruleset vigia's login "
+            "cannot bypass)"
+        )
     return Decision("merge", f"{pr.tier} requirements hold on head", head)

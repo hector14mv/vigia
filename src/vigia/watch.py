@@ -109,17 +109,28 @@ def state(ctx: Ctx, pr: dict) -> PRState:
 
 
 def _with_base(ctx: Ctx, pr: dict, st: PRState) -> tuple[PRState, Decision]:
-    """Decide, and when the PR is about to be merged or approved by a person, also ask GitHub whether the base
-    moved since its head: only then, so a tick does not pay one API call per PR."""
+    """Decide, and when the PR is about to be reviewed, approved by a person or merged, also ask GitHub whether the
+    base moved since its head: only then, so a tick does not pay one API call per PR. Right before a merge, also
+    ask whether GitHub itself will refuse it if the base moves after that check."""
     d = decide(st, ctx.cfg)
-    if d.action == "merge" or (d.action == "wait" and "waiting for a human" in d.reason):
+    if d.action in ("gate", "review", "merge") or (d.action == "wait" and "waiting for a human" in d.reason):
         try:
             if ctx.gh.behind(ctx.cfg.base, pr["head"]) > 0:
                 st = replace(st, behind=True)
                 d = decide(st, ctx.cfg)
-        except CommandError as exc:  # unknown is not "up to date": hold the merge this tick
+        except CommandError as exc:  # unknown is not "up to date": hold the step this tick
             ctx.ledger.append("error", pr=pr["number"], action="behind", detail=str(exc)[:300])
             return st, Decision("wait", "could not check whether the base moved", pr["head"])
+    if d.action == "merge":
+        try:
+            if not ctx.gh.guards_base(ctx.cfg.base):
+                st = replace(st, base_guarded=False)
+                d = decide(st, ctx.cfg)
+        except CommandError as exc:  # unknown is not "guarded": hold the merge this tick
+            ctx.ledger.append("error", pr=pr["number"], action="guards_base", detail=str(exc)[:300])
+            return st, Decision(
+                "wait", "could not check that GitHub refuses a merge onto a moved base", pr["head"]
+            )
     return st, d
 
 

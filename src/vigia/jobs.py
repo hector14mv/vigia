@@ -162,7 +162,8 @@ def still_due(ctx: Ctx, action: str, number: int) -> tuple[bool, object, object]
     pr = ctx.gh.pr(number)
     if pr["state"] != "OPEN" or labels.review not in pr["labels"]:
         return False, pr, None
-    decision = watch.decide(watch.state(ctx, pr), ctx.cfg)
+    # As the watcher decides: a review never runs on a head whose base moved.
+    _, decision = watch._with_base(ctx, pr, watch.state(ctx, pr))
     return decision.action == action, pr, decision
 
 

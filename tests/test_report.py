@@ -32,3 +32,20 @@ def test_an_empty_ledger_reports_nothing_without_failing(tmp_path):
     data = report.build({"a/b": Ledger(tmp_path / "l.jsonl")})
     assert data["builders"] == [] and data["totals"]["merged"] == 0
     assert "0 merged" in report.render(data)
+
+
+def test_a_merge_in_the_window_is_credited_to_a_builder_that_opened_the_pr_before_it(tmp_path):
+    from datetime import UTC, datetime
+
+    from vigia.ledger import Ledger
+
+    stamps = iter(["2026-10-16T10:00:00Z", "2026-10-16T11:00:00Z", "2026-10-24T10:00:00Z"])
+    ledger = Ledger(tmp_path / "l.jsonl", clock=lambda: next(stamps))
+    ledger.append("pr_opened", pr=5, issue=1, engine="claude", model="claude-sonnet-5-5", tier="T0")
+    ledger.append("verdict", pr=5, kind="gate", sha="a" * 40, verdict="APPROVE", engine="codex", model="m")
+    ledger.append("merged", pr=5, sha="a" * 40, tier="T0")
+    data = report.build({"a/b": ledger}, days=7, now=datetime(2026, 10, 25, tzinfo=UTC))
+    assert data["totals"]["merged"] == 1
+    (b,) = data["builders"]
+    assert (b["opened"], b["merged"], b["gate_rounds_per_merge"]) == (0, 1, 1.0)
+    assert b["median_minutes_to_merge"] == 8 * 24 * 60

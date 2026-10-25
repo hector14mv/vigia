@@ -295,6 +295,31 @@ class GitHub:
         )
         return int(out.strip() or 0)
 
+    def guards_base(self, base: str) -> bool:
+        """True when GitHub itself refuses to merge a PR whose branch is behind `base`, for vigia's login too.
+
+        `merge()` can pin the head but not the base, so a base that moves between vigia's last compare and the
+        merge would land under the reviewed head; only GitHub can hold that at the merge. It does with a ruleset
+        whose status-check rule requires up-to-date branches and that this login can never bypass, or with
+        branch protection that requires it and includes administrators.
+        """
+        b = quote(base, safe="")
+        for rule in self._api("GET", f"repos/{self.repo}/rules/branches/{b}", paginate=True) or []:
+            if rule.get("type") == "required_status_checks" and (rule.get("parameters") or {}).get(
+                "strict_required_status_checks_policy"
+            ):
+                ruleset = self._api("GET", f"repos/{self.repo}/rulesets/{rule['ruleset_id']}") or {}
+                if ruleset.get("current_user_can_bypass") == "never":
+                    return True
+        try:
+            protection = self._api("GET", f"repos/{self.repo}/branches/{b}/protection") or {}
+        except CommandError as exc:
+            if "404" not in str(exc) and "Not Found" not in (exc.stderr or ""):
+                raise
+            return False  # not protected
+        strict = (protection.get("required_status_checks") or {}).get("strict")
+        return bool(strict and (protection.get("enforce_admins") or {}).get("enabled"))
+
     def delete_branch(self, branch: str) -> None:
         # Already gone, or protected: not worth failing a merge over.
         with contextlib.suppress(CommandError):

@@ -384,6 +384,9 @@ def update(ctx: Ctx, pr: dict) -> bool:
         ctx.say(f"PR #{n}: head moved; the update waits for the next tick")
         return True
     base_sha = ctx.git.remote_branch_sha(cfg.base)
+    # Updates run inside the tick, under its lock: a worktree already at this path is what an interrupted update
+    # left behind, and keeping it would fail every later attempt on this head.
+    ctx.git.remove_worktree(ctx.root / f"update-{n}-{sha[:8]}")
     wt = ctx.git.worktree_detached(ctx.root / f"update-{n}-{sha[:8]}", sha)
     try:
         if not ctx.git.merge_in(wt, base_sha, f"chore: merge {cfg.base} into #{n} (vigia)"):

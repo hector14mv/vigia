@@ -233,3 +233,48 @@ def test_open_issues_reads_every_page_and_leaves_out_pull_requests():
     issues = GitHub("o/r", runner=run).open_issues()
     assert issues == [{"number": 1, "title": "a", "url": "u1", "labels": ["tier:T1"]}]
     assert "--paginate" in run.calls[0]["args"] and "--slurp" in run.calls[0]["args"]
+
+
+# -- guards_base: GitHub refuses a merge onto a moved base --
+
+
+def _not_found():
+    return CommandError(["gh", "api"], 1, "", "gh: Branch not protected (HTTP 404)")
+
+
+def test_guards_base_with_a_strict_ruleset_nobody_bypasses():
+    rule = {
+        "type": "required_status_checks",
+        "ruleset_id": 9,
+        "parameters": {"strict_required_status_checks_policy": True},
+    }
+    runner = Runner(json.dumps([[rule]]), json.dumps({"current_user_can_bypass": "never"}))
+    assert GitHub("o/r", runner=runner).guards_base("main") is True
+    assert "repos/o/r/rulesets/9" in runner.calls[1]["args"]
+
+
+def test_guards_base_not_with_a_ruleset_vigia_can_bypass_and_no_protection():
+    rule = {
+        "type": "required_status_checks",
+        "ruleset_id": 9,
+        "parameters": {"strict_required_status_checks_policy": True},
+    }
+    runner = Runner(json.dumps([[rule]]), json.dumps({"current_user_can_bypass": "always"}), _not_found())
+    assert GitHub("o/r", runner=runner).guards_base("main") is False
+
+
+@pytest.mark.parametrize(
+    "strict,admins,expected", [(True, True, True), (True, False, False), (False, True, False)]
+)
+def test_guards_base_with_branch_protection(strict, admins, expected):
+    protection = {"required_status_checks": {"strict": strict}, "enforce_admins": {"enabled": admins}}
+    runner = Runner(json.dumps([[]]), json.dumps(protection))
+    assert GitHub("o/r", runner=runner).guards_base("main") is expected
+
+
+def test_guards_base_raises_when_protection_cannot_be_read():
+    runner = Runner(
+        json.dumps([[]]), CommandError(["gh", "api"], 1, "", "gh: Must have admin rights (HTTP 403)")
+    )
+    with pytest.raises(CommandError):
+        GitHub("o/r", runner=runner).guards_base("main")

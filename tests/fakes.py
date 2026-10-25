@@ -66,6 +66,7 @@ class FakeGitHub:
         self.merged: list[tuple[int, str]] = []
         self.next = 1
         self.known_labels: set[str] | None = None  # None: every label exists
+        self.base_guarded = True  # GitHub refuses a merge onto a moved base (strict up-to-date branches)
 
     # helpers for tests
     def add_issue(self, title: str, body: str, labels: list[str]) -> int:
@@ -175,11 +176,16 @@ class FakeGitHub:
         p = self.prs_[n]
         if self.branch_sha(p["branch"]) != sha:
             raise AssertionError("merge with a stale --match-head-commit")
+        if self.base_guarded and self.behind(p["base"], sha) > 0:  # GitHub's strict up-to-date check
+            raise CommandError(["gh", "pr", "merge", str(n)], 1, "", "Head branch is out of date")
         p["state"], p["head"] = "MERGED", sha
         self.merged.append((n, sha))
 
     def behind(self, base: str, sha: str) -> int:
         return int(git("rev-list", "--count", f"{sha}..refs/heads/{base}", cwd=self.origin) or 0)
+
+    def guards_base(self, base: str) -> bool:
+        return self.base_guarded
 
     def delete_branch(self, branch: str) -> None:
         pass

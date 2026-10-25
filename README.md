@@ -150,11 +150,16 @@ over to a later push (vigia also removes the stale label, as a courtesy).
 [`tests/test_rules.py`](tests/test_rules.py). In order: closed, parked or draft PRs are left alone;
 a PR aimed at another branch than the base, a missing tier, an unknown builder, a same-lab gate or a
 conflict parks; CI must be green on the head before any review; then the gate, the reviewer and the
-human label, each on the exact head and each counted only for the PR's current tier; if the base moved
-since that head, vigia first merges the base into the PR and the new head is reviewed again (without using up a
-round), so what was reviewed is what the merge produces; then
+human label, each on the exact head and each counted only for the PR's current tier; whenever the base
+moved since that head, vigia first merges the base into the PR, before any review, approval or merge, and the
+new head is reviewed again (without using up a round), so what was reviewed is what the merge produces; then
 `gh pr merge --squash --match-head-commit <sha>`. Right before merging, vigia re-reads the PR and
 decides again.
+
+`--match-head-commit` pins the head, not the base, so vigia merges only where GitHub itself refuses a
+merge onto a base that moved after vigia's last check: turn on **Require branches to be up to date before
+merging** on the base, in a ruleset vigia's login cannot bypass or in branch protection with **Do not allow
+bypassing the above settings** (administrators included). Without it, an approved PR waits and says why.
 
 **Crashes** are expected, not exceptional. Every paid step writes the ledger before its side effects
 on GitHub, so a verdict is never paid for twice; at the start of each tick vigia parks a build that
