@@ -1587,7 +1587,7 @@ a.ev { min-height: 44px; }
     S.pr[key] = keep ? { data: keep, asking: true } : { loading: true, asking: true };
     var parts = rt.repo.split("/");
     if (parts.length !== 2 || !NAME.test(parts[0]) || !NAME.test(parts[1])) { S.pr[key] = { error: "Not a repo name." }; return; }
-    function failed(msg) { S.pr[key] = keep ? { data: keep } : { error: msg }; render(); }
+    function failed(msg) { S.pr[key] = keep ? { data: keep, error: msg } : { error: msg }; render(); }
     fetch("/api/pr/" + encodeURIComponent(parts[0]) + "/" + encodeURIComponent(parts[1]) + "/" + rt.n, { cache: "no-store", credentials: "same-origin" })
       .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, status: res.status, b: b }; }, function () { return { ok: false, status: res.status, b: null }; }); })
       .then(function (x) {
@@ -1703,7 +1703,15 @@ a.ev { min-height: 44px; }
   function prData(rt) {
     var r = repoOf(rt.repo), base = prIn(r, rt.n), got = S.pr[prKey(rt)] || {};
     var d = got.data || (base ? Object.assign({ repo: rt.repo, timeline: null }, base) : null);
-    return { r: r, d: d, loading: !!got.loading, error: got.error || null };
+    // A failed refresh keeps the last good detail on screen, so it must say so; a head that moved since makes it unsafe to act on.
+    var stale = !!(got.data && got.error), moved = !!(stale && base && base.head && got.data.head && base.head !== got.data.head);
+    return { r: r, d: d, loading: !!got.loading, error: got.error || null, stale: stale, moved: moved, now: moved ? base.head : null };
+  }
+  function staleNote(x, rt) {
+    if (!x.stale) return null;
+    return h("div", { "class": "empty github", "data-k": "stale" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
+      h("span", { "class": "tx" }, h("b", null, "This is the last detail the Mesa could read" + (x.moved ? ", and the head has moved since" : "")),
+        h("span", { "class": "err-detail" }, x.error + (x.moved ? " Shown: " + sha7(x.d.head) + ". vigia is now on " + sha7(x.now) + "." : " Refreshing again every 15 s."))));
   }
   function prLoadingOrError(x, rt) {
     if (x.error) return h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
@@ -1735,11 +1743,12 @@ a.ev { min-height: 44px; }
           h("span", { "class": "tile" }, h("b", { "class": tt.p1 ? "c-danger" : null }, String(tt.p1 || 0)), h("span", null, "P1 found")),
           h("span", { "class": "tile" }, h("b", null, String(tt.parks || 0)), h("span", null, "parks"))),
         d.timeline ? timeline(d, false, x.r) : prLoadingOrError(x, rt))];
-    var as = asks(d, x.r, false);
+    var as = x.moved ? [] : asks(d, x.r, false);
+    if (x.stale) out.splice(1, 0, h("div", { "class": "gut", style: "padding-top:4px" }, staleNote(x, rt)));
     out.push(h("div", { "class": "gut", style: "margin-top:8px" }, h("section", { "class": "card tight", "aria-labelledby": "next-h" },
       h("h2", { id: "next-h", style: "font:650 18px/1.2 var(--mesa-font);margin-bottom:8px" }, as.length ? "What you can do" : "Nothing for you right now"),
       as.length ? as.map(function (a) { return h("div", { "class": "ask" }, h("b", null, a.title), a.text ? h("p", null, a.text) : null, a.btn); }) :
-        h("div", { "class": "ask" }, h("p", null, "vigia's next step is " + actionLabel(d.next, d.tier).toLowerCase() + ": " + d.reason + ".")))));
+        h("div", { "class": "ask" }, h("p", null, x.moved ? "The head moved and the detail could not be refreshed, so nothing is offered for " + sha7(d.head) + "." : "vigia's next step is " + actionLabel(d.next, d.tier).toLowerCase() + ": " + d.reason + ".")))));
     if (d.engine_line) out.push(h("div", { "class": "gut", style: "margin-top:16px" }, h("section", { "class": "card dashed", style: "padding:14px 16px;gap:6px" },
       h("span", { "class": "group-h" }, "Latest handoff · " + sha7(d.head)), h("span", { "class": "meta", style: "font-size:12.5px;color:var(--mesa-ink-2)" }, d.engine_line),
       ext(d.url, "Read it on GitHub", "btn btn-quiet", null, "handoff"))));
@@ -1760,7 +1769,7 @@ a.ev { min-height: 44px; }
     var meta = [d.built_by ? "built by " + model(d.built_by) : null, isInt(d.issue) ? "from issue #" + d.issue : null, d.opened ? "opened " + dayTime(d.opened) : null, opened && opened.branch ? "branch " + opened.branch : null].filter(Boolean).join(" · ");
     var gate = tl.filter(function (e) { return e.event === "verdict" && e.kind === "gate"; })[0];
     var rev = tl.filter(function (e) { return e.event === "verdict" && e.kind === "review"; })[0];
-    var main = h("main", { "class": "dk-main focus" }, chips(d, x.r),
+    var main = h("main", { "class": "dk-main focus" }, staleNote(x, rt), chips(d, x.r),
       h("h1", { style: "font:650 32px/1.15 var(--mesa-font);letter-spacing:-0.025em;max-width:30ch;overflow-wrap:anywhere" }, d.title),
       meta ? h("p", { "class": "meta", style: "font-size:13px" }, meta) : null,
       track(d, true), standBox(d, true),
@@ -1768,12 +1777,12 @@ a.ev { min-height: 44px; }
         h("span", { "class": "mono", style: "font-size:13px;color:var(--mesa-ink-2)" }, plural(tt.heads || 0, "head") + " · " + plural(tt.gate_rounds || 0, "gate round") + " · " + plural(reviews, "review") + " · ",
           h("strong", { "class": "c-danger", style: "font-weight:600" }, (tt.p1 || 0) + " P1"), " · " + plural(tt.fix_rounds || 0, "fix round") + " · " + plural(tt.parks || 0, "park"))),
       d.timeline ? timeline(d, true, x.r) : prLoadingOrError(x, rt));
-    var as = asks(d, x.r, true), mine = as.filter(function (a) { return a.you; });
+    var as = x.moved ? [] : asks(d, x.r, true), mine = as.filter(function (a) { return a.you; });
     var next = h("section", { "class": "card", style: "padding:18px;gap:10px;" + (mine.length ? "border:1.5px solid var(--mesa-turn)" : "") },
       h("span", { "class": "kicker " + (mine.length ? "k-turn" : "") }, mine.length ? "◆ Next step is yours" : "Next step is vigia's"),
       as.length ? as.map(function (a, i) { return h("div", { style: "display:flex;flex-direction:column;gap:8px;" + (i ? "padding-top:10px;border-top:1px solid var(--mesa-line)" : "") },
         h("span", { style: "font:600 16px/1.35 var(--mesa-font);overflow-wrap:anywhere" }, a.title), a.text ? h("span", { "class": "note", style: "font-size:14px" }, a.text) : null, a.btn); }) :
-        h("span", { "class": "note", style: "font-size:14px" }, actionLabel(d.next, d.tier) + ": " + d.reason + "."));
+        h("span", { "class": "note", style: "font-size:14px" }, x.moved ? "The head moved and the detail could not be refreshed, so nothing is offered for " + sha7(d.head) + "." : actionLabel(d.next, d.tier) + ": " + d.reason + "."));
     function fact(k, v) { return v ? h("div", null, h("span", { "class": "k" }, k), h("span", { "class": "v" }, v)) : null; }
     var facts = h("section", { "class": "side-card", style: "padding:18px" }, h("h2", { style: "margin-bottom:8px" }, "Facts"),
       h("div", { "class": "facts" }, fact("Tier", d.tier), fact("Head", String(d.head || "").slice(0, 8)), fact("Built by", d.built_by),

@@ -10,7 +10,7 @@
 // With `--live` first, it instead runs the page against a scripted server, as served (no embedded sample), and shows
 // the route before and after one poll: node mesa_render.js --live <mesa.html> <live.json> <route>, where live.json is
 // {"state": [state, ...], "pr": [detail, ...]} and each fetch of that kind answers with the next entry (the last one
-// repeats). It prints {"before": view, "after": view} for the desktop layout.
+// repeats; an entry with "__status" answers with that HTTP error). It prints {"before": view, "after": view} for the desktop layout.
 // Anything the page must never do (innerHTML, document.write, a fetch) throws, and so fails the test.
 "use strict";
 const fs = require("fs");
@@ -186,7 +186,8 @@ async function renderLive(route) {
   const answer = (kind, url) => {
     const list = script[kind];
     const body = list[Math.min(seen[kind]++, list.length - 1)];
-    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body), url });
+    const status = body && body.__status; // an entry {"__status": 502, ...} answers with that HTTP error
+    return Promise.resolve({ ok: !status, status: status || 200, json: () => Promise.resolve(body), url });
   };
   let poll = null;
   const win = {
