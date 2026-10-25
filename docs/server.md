@@ -2,10 +2,9 @@
 
 vigia works on a laptop, but a factory wants to be always on. On a small Linux server:
 
-- the watcher keeps ticking at night and at weekends, when most of the merges in the factory this comes from
-  happened;
-- your laptop stays free, cool and closed;
-- you approve T2 changes and read the Mesa from your phone.
+- the watcher keeps ticking at night and at weekends: in the factory this comes from, 81 of 360 merges landed
+  between 00:00 and 08:00, and 97 at weekends ([the article](https://hectormoyanovelez.com/fabrica));
+- you approve T2 changes and read the Mesa (`vigia mesa`, a read-only status desk) from your phone.
 
 Any always-on Linux machine works: a small cloud VM, a home server, a spare mini PC. Engine sessions are the
 heavy part: plan on about two CPU cores and two GB of RAM per session at once (`vigia init` proposes a slot

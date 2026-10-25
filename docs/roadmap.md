@@ -27,7 +27,9 @@ the rest, in roughly the order below. This page gives an order, never dates.
   retried every tick ([#59](https://github.com/hector14mv/vigia/issues/59)).
 - A T2 change waiting for its human label holds the merges that would make it conflict, so a person's approval
   is never thrown away by an unrelated merge ([#49](https://github.com/hector14mv/vigia/issues/49)).
-- A final full CI run on the exact accepted head, so what merges is what was reviewed and tested.
+- CI on the merge result when the base moved after the review: today CI and every review run on the PR's head,
+  so a base that moved since is combined with it untested ([#39](https://github.com/hector14mv/vigia/issues/39),
+  [#59](https://github.com/hector14mv/vigia/issues/59)).
 - A classifier that parks any database migration that is not purely additive, because those need a person.
 
 ## Sessions
@@ -45,24 +47,24 @@ the rest, in roughly the order below. This page gives an order, never dates.
 - The planner promoting independent T0/T1 tickets to the queue by itself, with the dependency and duplicate
   rules its review found; in v0.1 you ratify every planned ticket.
 - Follow-ups from a merged PR's handoff filed as issues ([#41](https://github.com/hector14mv/vigia/pull/41)).
-- A "Probar" tray to confirm a change works or file a bug, so checking a result is one tap.
-- Buttons on the Mesa once it has its own login, so you can act where you read.
+- A post-merge check queue to confirm a change works or file a bug, so checking a result is one tap.
+- Actions in the status desk (the Mesa) once it has its own login, so you can act where you read.
 
 ## Notifications
 
 - Messages through your own Telegram bot when something needs you ([#44](https://github.com/hector14mv/vigia/issues/44)).
-- Phone cards with buttons, so you can answer without opening a laptop.
+- Mobile notifications with actions, so you can answer without opening a laptop.
 
-## Fuel and cost
+## Quota and cost
 
-- Claude quota reading, so vigia knows how much is left in each tank.
-- A fuel rule that holds or reroutes work when a tank runs low, instead of failing mid-session.
+- Claude quota tracking, so vigia knows how much is left.
+- A quota rule that holds or reroutes work when one lab runs low, instead of failing mid-session.
 - Tokens and cost per merged PR, so you can see what the factory costs.
 
 ## QA
 
 - Visual QA at phone and desktop widths, so layout breaks are caught before merge.
-- Capture cards after merge, so you can see what shipped.
+- Post-merge screenshots, so you can see what shipped.
 - Automatic mutation checks, so tests that cannot fail are found without a person looking.
 
 ## Records

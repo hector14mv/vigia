@@ -36,11 +36,10 @@ this file only orders the work.
    "Require branches to be up to date before merging", "Do not allow bypassing the above settings", no required
    approving reviews). Do not change repository
    settings yourself: vigia v0.1 relies on this rule to keep a stale head from merging, and it is theirs to set.
-5. **Check.** `vigia doctor` in each clone, if this version has it; otherwise `vigia status`. Everything should
-   be ok.
+5. **Check.** `vigia doctor` in each clone. Every check should say ok.
 6. **Server only.** Write the two systemd user units from `docs/server.md` §4, enable linger, start them, and
    show the first lines of `journalctl --user -u vigia`. Ask before installing Tailscale; if the person wants
-   the Mesa on their phone, follow §5 and give them the `https://….ts.net` address.
+   the Mesa (`vigia mesa`, a read-only status desk) on their phone, follow §5 and give them the `https://….ts.net` address.
 7. **First ticket.** Offer to write one small T0 ticket with the person (the template is
    `.github/ISSUE_TEMPLATE/vigia-ticket.md`) and add `tier:T0` and `vigia:ready`, so they see a full loop.
 

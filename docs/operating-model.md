@@ -1,8 +1,8 @@
 # The operating model in seven rules
 
-vigia is the small, runnable core of an AI software factory that merged 360 pull requests in two
-weeks (7–21 October 2026): written by Claude or Codex, reviewed by a model from the other lab, and
-merged by a Python program that never calls a model. That factory's written process
+vigia is an AI software factory, rewritten to run anywhere, from one that merged 360 pull requests in two
+weeks (7–21 October 2026): written by Claude or Codex, reviewed by a model from the other lab, and merged by
+`rules.decide()`, a pure function (no model, no I/O) over CI status, verdicts and labels on the exact head. That factory's written process
 once had 79 rules; an audit cut them to thirteen. These are the seven that carry the weight, each
 with the place in this repository where it is enforced.
 
@@ -44,8 +44,10 @@ says why on the issue. The template is `.github/ISSUE_TEMPLATE/vigia-ticket.md`,
 
 ## 3. A different lab reviews every change
 
-Models from one lab tend to share blind spots, so the reviewer of every change — the **gate** —
-comes from the other lab: Claude's work is gated by Codex, Codex's work by Claude. The gate reads
+*Design assumption:* models from one lab tend to share blind spots. One measurement points that way: of 16
+defects the Codex connector had found and that were later fixed, Claude Sonnet 5.5 found 1 and Claude Opus 5.5
+found 5 ([the article](https://hectormoyanovelez.com/fabrica), 9 October). So the reviewer of every change — the **gate** — comes from the
+other lab: Claude's work is gated by Codex, Codex's work by Claude. The gate reads
 the exact head commit, in a read-only checkout, and must return content: a verdict with findings,
 or a clean pass that names the commit it reviewed. A same-lab read never substitutes for it, and
 no verdict is **`GATE_UNAVAILABLE`**, which holds the merge. Absence never expires into a pass.
@@ -60,7 +62,8 @@ or without edit tools (Claude), whatever the config says.
 A review covers exactly one commit. While it runs nobody pushes; if the head moves, the old verdict
 no longer covers the PR. The gate runs once per round, and a second round exists only after a fix
 for an accepted finding has been pushed. After the second round there is no third: the PR is parked
-and a human decides. Repeated review rounds were the factory's single largest waste of quota.
+and a human decides. On one measured night (29–30 September) the factory spent 1,373 million tokens on 8
+merges, and 15 % of them went to writing code; review rounds, the watch and waiting sessions took the rest.
 
 A review covers the PR's head, not the base it lands on: when the base moves after the review, the squash
 merge combines reviewed code with base changes nobody reviewed together. In v0.1 the guard is GitHub's own:
@@ -89,14 +92,14 @@ The builder works in its own worktree, writes a **handoff** (what changed, the t
 deviations from the ticket, risks, follow-ups) and stops. It does not wait for review. When a round
 returns accepted findings, a **new** session gets a closed brief — the PR, the exact head, the
 findings with file and line, the checks to run — repairs, hands off and stops. Long-lived sessions
-that wait for their own reviews re-read an ever-growing context; in the factory that was most of
-the token bill.
+that wait for their own reviews re-read an ever-growing context; in the factory such sessions were found
+re-reading contexts that had grown to 868,000 tokens.
 
 *Where:* `builder.build()` and `builder.fix()`. The engine only edits files; vigia commits, pushes,
 opens the PR and posts the handoff (`## Handoff <full sha>` with the `Engine:` line), so every step
 that touches GitHub is deterministic and identical for every engine.
 
-## 7. A script merges, never a model
+## 7. A pure decision table merges
 
 The merge is a decision table, not a judgement: CI green on the head, the gate approved that head,
 the tier's extra requirements hold on that head, no conflicts. If all hold, `gh pr merge --squash

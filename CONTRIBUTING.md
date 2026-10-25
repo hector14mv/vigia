@@ -19,11 +19,9 @@ created in a temporary directory, with GitHub and the engines replaced by the fa
 ## Propose work
 
 Open an issue from the vigia ticket template (`.github/ISSUE_TEMPLATE/vigia-ticket.md`). The body is
-the builder's whole prompt, so say what should change, not how. Give it one tier label:
-
-- `tier:T0`: cosmetic, docs, tests, internal tooling
-- `tier:T1`: product logic with no money and no other people's data
-- `tier:T2`: money, auth, data, migrations, messages to customers, credentials
+the builder's whole prompt, so say what should change, not how. Give it one tier label, `tier:T0`,
+`tier:T1` or `tier:T2`, as [the operating model's table](docs/operating-model.md#1-damage-sets-the-review-not-the-author) defines them; when two
+fit, the higher wins.
 
 Maintainers add `vigia:ready` when the ticket is ready to build.
 
@@ -32,7 +30,8 @@ Maintainers add `vigia:ready` when the ticket is ready to build.
 - vigia builds the pull request from the issue.
 - A model from the other lab reviews it on the exact head commit. T1 and T2 get a stronger
   reviewer too, and T2 also needs a human label.
-- `vigia watch` merges it only if every rule holds. The merge is a script with no AI.
+- `vigia watch` merges it only when `rules.decide()`, a pure function (no model, no I/O) over CI status,
+  verdicts and labels on the exact head, says so; it is tested row by row in `tests/test_rules.py`.
 
 Hand-written pull requests are welcome and join the same flow. A handoff comment starts with
 `## Handoff <full 40-character head sha>` and has an `Engine:` line naming who wrote the change, for
