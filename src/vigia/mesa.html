@@ -459,6 +459,7 @@ a.ev { min-height: 44px; }
   var PLACE_IDS = PLACES.map(function (p) { return p.id; });
   var NB = " ";
   var POLL_MS = 15000;
+  var SOON_MS = 1500; // while the Mesa reads GitHub for the first time
   var CLAUDE_NEW = "https://claude.ai/new";
   var NAME = /^[A-Za-z0-9_.-]+$/;
   var REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -481,7 +482,7 @@ a.ev { min-height: 44px; }
 
   /* ---------- in-memory view state (never sent anywhere) ---------- */
   var S = {
-    state: null, error: null, serverFailed: false, lastOk: null, sample: false,
+    state: null, error: null, serverFailed: false, lastOk: null, sample: false, soon: null,
     route: null, lastPlace: "turn",
     picks: {}, sheet: null, flash: null, manual: null,
     pr: {}, openFindings: {}, feedFilter: "all", dirty: false
@@ -624,13 +625,17 @@ a.ev { min-height: 44px; }
   function jobFor(r, n) { return r ? (r.jobs || []).filter(function (j) { return j.number === n && !j.issue; })[0] || null : null; }
   function label(r, name) { return (r && r.labels && r.labels[name]) || LABELS[name]; }
   function labelCode(r, name) { return h("code", null, label(r, name)); }
+  // GitHub has not been read for this repo yet (the Mesa just started): its lists are on their way, not unknown.
+  function reading(r) { return !!(r && r.pending); }
   // What could not be read for a repo: the server's own list, plus any list that came back null without being named.
   function unreadOf(r) {
+    if (reading(r)) return [];
     var names = (r.unread || []).slice();
     GH_LISTS.forEach(function (x) { if (r[x[0]] === null && !r.error && names.indexOf(x[1]) < 0) names.push(x[1]); });
     return names;
   }
-  function unknownRepos(key) { return repos().filter(function (r) { return r[key] === null; }); }
+  function unknownRepos(key) { return repos().filter(function (r) { return r[key] === null && !reading(r); }); }
+  function readingRepos() { return repos().filter(reading); }
   // A workspace shares one limit between its repos (state.slots); on its own, a repo has its own watch.slots.
   function slotsTotal() {
     var busy = busyTotal();
@@ -806,11 +811,12 @@ a.ev { min-height: 44px; }
 
   /* ---------- Your turn ---------- */
   function turnModel() {
-    var unknown = [], blocking = [], only = [], decs = [], proposed = [], oldest = null, nB = 0, nO = 0;
+    var unknown = [], blocking = [], only = [], decs = [], proposed = [], pending = [], oldest = null, nB = 0, nO = 0;
     function seen(s) { var t = ms(s); if (t != null && (oldest == null || t < oldest)) oldest = t; }
     repos().forEach(function (r) {
       // What could not be read is unknown, not empty: it gets a card, so "Nothing needs you" never covers it.
-      if (r.error) unknown.push({ kind: "unavailable", r: r });
+      if (reading(r)) pending.push(r);
+      else if (r.error) unknown.push({ kind: "unavailable", r: r });
       else if (unreadOf(r).length) unknown.push({ kind: "partial", r: r, names: unreadOf(r) });
       (r.prs || []).forEach(function (p) {
         if (p.waiting_for === "human") { blocking.push({ kind: "approve", r: r, p: p, since: p.since }); nB++; seen(p.since); }
@@ -835,7 +841,7 @@ a.ev { min-height: 44px; }
     blocking.sort(bySince); only.sort(bySince);
     unknown.sort(function (a, b) { return (a.kind === "unavailable" ? 0 : 1) - (b.kind === "unavailable" ? 0 : 1); });  // a whole repo first
     var nU = unknown.length;
-    return { unknown: unknown, blocking: blocking, only: only, nU: nU, nB: nB, nO: nO, count: nU + nB + nO, oldest: oldest };
+    return { unknown: unknown, blocking: blocking, only: only, pending: pending, nU: nU, nB: nB, nO: nO, count: nU + nB + nO, oldest: oldest };
   }
   function turnLine(m, desk) {
     if (!m.count) return null;
@@ -1027,6 +1033,16 @@ a.ev { min-height: 44px; }
       h("span", { "class": "tx" }, h("b", null, "Nothing needs you"),
         h("span", null, (n ? "The factory is running " + plural(n, "session") + ". " : "The factory is idle. ") + "This page lights up when it stops for you.")));
   }
+  // The Mesa just started and is reading GitHub: what this machine knows shows already, the rest is on its way.
+  function readingNote(list) {
+    return h("div", { "class": "empty on-surface", role: "status" }, h("span", { "class": "ic idle", "aria-hidden": "true" }, "○"),
+      h("span", { "class": "tx" }, h("b", null, "Reading GitHub for " + list.map(function (r) { return short(r.repo); }).join(", ") + "…"),
+        h("span", null, "Pull requests, tickets and decisions show in a few seconds. Running sessions and today's merges already show: they come from this machine.")));
+  }
+  function prsUnknown(r) {
+    return reading(r) ? h("p", { "class": "note" }, "Reading its pull requests from GitHub…")
+      : h("p", { "class": "note c-danger" }, "! Pull requests unknown: vigia cannot read this repo.");
+  }
   function emptyCaptures() {
     return h("div", { "class": "empty on-surface" }, h("span", { "class": "ic idle", "aria-hidden": "true" }, "○"),
       h("span", { "class": "tx" }, h("b", null, "No UI changes to look at"),
@@ -1044,7 +1060,8 @@ a.ev { min-height: 44px; }
   function turnGroups(m, desk) {
     var out = [];
     // "Nothing needs you" only when every list was read and all of them are empty
-    if (!m.count && !m.nU) out.push(emptyTurn());
+    if (!m.count && !m.nU && !m.pending.length) out.push(emptyTurn());
+    if (m.pending.length) out.push(readingNote(m.pending));
     if (m.unknown.length) out.push(groupHead("Could not read · " + m.nU, desk, true), m.unknown.map(function (c) { return cardFor(c, desk); }));
     if (m.blocking.length) out.push(groupHead("Blocking the factory · " + m.nB, desk, !m.unknown.length), m.blocking.map(function (c) { return cardFor(c, desk); }));
     if (m.only.length) out.push(groupHead("Only you · " + m.nO, desk, !m.unknown.length && !m.blocking.length), m.only.map(function (c) { return cardFor(c, desk); }));
@@ -1103,10 +1120,12 @@ a.ev { min-height: 44px; }
     var free = Math.max(0, slotsTotal() - busyTotal());
     var ready = repos().reduce(function (n, r) { return n + (r.queue || []).length; }, 0);
     var unknownQ = unknownRepos("queue").map(function (r) { return short(r.repo); });
+    var readingQ = readingRepos().map(function (r) { return short(r.repo); });
     if (!free) return "every slot is busy";
-    // a queue that could not be read is unknown: never "nothing ready"
-    var known = ready ? plural(ready, "ticket") + " ready" : unknownQ.length ? null : "nothing ready to build";
-    return free + " free · " + [known, unknownQ.length ? "queue unknown for " + unknownQ.join(", ") : null].filter(Boolean).join(" · ");
+    // a queue that could not be read is unknown, and one being read is not known yet: never "nothing ready"
+    var known = ready ? plural(ready, "ticket") + " ready" : unknownQ.length || readingQ.length ? null : "nothing ready to build";
+    return free + " free · " + [known, unknownQ.length ? "queue unknown for " + unknownQ.join(", ") : null,
+      readingQ.length ? "reading the queue for " + readingQ.join(", ") : null].filter(Boolean).join(" · ");
   }
   function sessionRow(s) {
     return h("div", { "class": "sess" + (s.over ? " over" : "") },
@@ -1119,8 +1138,8 @@ a.ev { min-height: 44px; }
   function repoCounts(r) {
     var prs = (r.prs || []).length, builds = (r.jobs || []).filter(function (j) { return j.issue; }).length;
     var merged = (r.merged_today || []).length;
-    return [r.prs === null ? "PRs unknown" : plural(prs, "open PR"), builds ? builds + " building" : null,
-      r.queue === null ? "queue unknown" : r.queue.length ? null : "queue empty", merged ? merged + " merged today" : null].filter(Boolean).join(" · ");
+    return [r.prs === null ? (reading(r) ? "reading GitHub…" : "PRs unknown") : plural(prs, "open PR"), builds ? builds + " building" : null,
+      r.queue === null ? (reading(r) ? null : "queue unknown") : r.queue.length ? null : "queue empty", merged ? merged + " merged today" : null].filter(Boolean).join(" · ");
   }
   function prCard(r, p) {
     var s = prStatus(r, p);
@@ -1143,9 +1162,9 @@ a.ev { min-height: 44px; }
       return h("a", { "class": "qi", href: okHref(i.url) ? i.url : null, target: "_blank", rel: "noopener noreferrer", "data-k": "q-" + r.repo + i.number },
         h("span", { "class": "mono c-3", style: "font-size:12px;flex:none" }, "#" + i.number), h("span", { "class": "grow" }, i.title), tierChip(i.tier),
         h("span", { "class": "vh" }, "ready"), h("span", { "class": "age", "aria-hidden": "true" }, "○ ready"));
-    }) : r.queue === null ? h("span", { "class": "qi" }, "Unknown: vigia cannot read this repo's issues right now.")
+    }) : r.queue === null ? h("span", { "class": "qi" }, reading(r) ? "Reading GitHub…" : "Unknown: vigia cannot read this repo's issues right now.")
       : h("span", { "class": "qi" }, "Empty. Open an issue from the vigia ticket template and add ", labelCode(r, "ready"), ".");
-    return h("div", { "class": "queue-box" }, h("span", { "class": "group-h" }, "Queue" + (q.length ? " · " + q.length : r.queue === null ? " · unknown" : "")), body);
+    return h("div", { "class": "queue-box" }, h("span", { "class": "group-h" }, "Queue" + (q.length ? " · " + q.length : r.queue === null && !reading(r) ? " · unknown" : "")), body);
   }
   function mergedRows() {
     var rows = [];
@@ -1185,7 +1204,7 @@ a.ev { min-height: 44px; }
         .concat((r.prs || []).map(function (p) { return prCard(r, p); }));
       out.push(h("section", { "class": "gut", style: "margin-top:26px;display:flex;flex-direction:column;gap:10px" },
         h("div", { style: "display:flex;align-items:baseline;gap:10px;flex-wrap:wrap" }, h("h2", { "class": "t-section" }, short(r.repo)), h("span", { "class": "meta" }, repoCounts(r))),
-        r.prs === null ? h("p", { "class": "note c-danger" }, "! Pull requests unknown: vigia cannot read this repo.") : null,
+        r.prs === null ? prsUnknown(r) : null,
         cards.length ? cards : r.prs === null ? null : h("p", { "class": "note" }, "No open pull requests."), queueBox(r)));
     });
     var mt = mergedToday();
@@ -1230,7 +1249,7 @@ a.ev { min-height: 44px; }
       var cards = cols[i];
       // a column fed by a list that could not be read is unknown, not empty
       var unknown = i === 0 ? r.queue === null : i < 6 && r.prs === null;
-      var empty = !cards.length ? (unknown ? h("span", { "class": "col-empty c-danger" }, "unknown")
+      var empty = !cards.length ? (unknown ? (reading(r) ? h("span", { "class": "col-empty" }, "…") : h("span", { "class": "col-empty c-danger" }, "unknown"))
         : i === 5 && allSkipHuman ? h("span", { "class": "col-skip" }, "skip") : h("span", { "class": "col-empty" }, "—")) : null;
       return h("div", { "class": "col" + (i === 5 && cards.length ? " you" : "") },
         h("span", { "class": "col-h" }, name, h("span", null, cards.length ? String(cards.length) : "")), cards, empty);
@@ -1259,7 +1278,7 @@ a.ev { min-height: 44px; }
       repos().map(function (r) {
         return h("section", { style: "display:flex;flex-direction:column;gap:10px" },
           h("div", { style: "display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px" }, h("h2", { "class": "t-section mono" }, short(r.repo)), h("span", { "class": "meta", style: "font-size:12.5px" }, repoCounts(r))),
-          r.prs === null ? h("p", { "class": "note c-danger" }, "! Pull requests unknown: vigia cannot read this repo.") : null,
+          r.prs === null ? prsUnknown(r) : null,
           board(r));
       }),
       h("p", { "class": "foot", style: "font-size:13px" }, "● running · ◆ waiting for you · ■ parked · ○ waiting · ✓ merged. T0 skips Review and Human; T1 skips Human. A card sits in the column of its next step.")
@@ -1493,8 +1512,9 @@ a.ev { min-height: 44px; }
   }
   function noDecisions(desk) {
     var unknown = unknownRepos("decisions").map(function (r) { return short(r.repo); });
-    // decisions that could not be read are unknown: never "No open decisions"
-    var box = unknown.length ? h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
+    var pending = readingRepos();
+    // decisions that could not be read are unknown, and ones being read are not known yet: never "No open decisions"
+    var box = !unknown.length && pending.length ? readingNote(pending) : unknown.length ? h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
       h("span", { "class": "tx" }, h("b", null, "Decisions unknown for " + unknown.join(", ")),
         h("span", null, "vigia could not read the vigia:decision issues there. Check the issues on GitHub, or ", h("code", null, "gh auth status"), " where vigia runs."))) :
       h("div", { "class": "empty on-surface" }, h("span", { "class": "ic ok", "aria-hidden": "true" }, "✓"),
@@ -1738,6 +1758,7 @@ a.ev { min-height: 44px; }
     return null;
   }
   function noPR(x, rt) {
+    if (x.r && x.r.prs === null && reading(x.r)) return h("p", { "class": "note" }, "Reading the pull requests of " + rt.repo + " from GitHub…");
     if (x.r && x.r.prs === null) return h("p", { "class": "note c-danger" }, "! The pull requests of " + rt.repo + " are unknown: vigia cannot read this repo.");
     return h("p", { "class": "note" }, "No open PR #" + rt.n + " in " + rt.repo + ".");
   }
@@ -2011,6 +2032,7 @@ a.ev { min-height: 44px; }
       .then(function (s) {
         var polled = !!S.lastOk; // the first read comes with the route's own fetch of the detail
         S.state = s; S.error = null; S.serverFailed = false; S.lastOk = Date.now();
+        if (readingRepos().length && !S.soon) S.soon = setTimeout(function () { S.soon = null; load(); }, SOON_MS);
         if (polled && S.route && S.route.name === "pr") fetchPR(S.route, true); // the open screen follows the watcher too
         render();
       },
