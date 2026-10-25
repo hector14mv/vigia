@@ -373,10 +373,10 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
     }
 
 
-def _unreadable(ctx: Ctx, rows: list[dict], now: datetime, exc: CommandError) -> dict:
-    """A repo GitHub did not answer for: every list read from GitHub is unknown (null), never empty, so the page
-    cannot say there is nothing to do. What this machine knows on its own still shows: the running sessions, the
-    labels and today's merges from the ledger."""
+def _local(ctx: Ctx, rows: list[dict], now: datetime) -> dict:
+    """What this machine knows about a repo on its own: the running sessions, the labels and today's merges from
+    the ledger. Every list read from GitHub is unknown (null), never empty, so the page cannot say there is nothing
+    to do."""
     return {
         "repo": ctx.cfg.repo,
         "slots": ctx.cfg.slots,
@@ -391,8 +391,12 @@ def _unreadable(ctx: Ctx, rows: list[dict], now: datetime, exc: CommandError) ->
         "decisions": None,
         "merged_today": _merged_today(rows, now),
         "labels": _labels(ctx),
-        "error": str(exc)[:300],
     }
+
+
+def _unreadable(ctx: Ctx, rows: list[dict], now: datetime, exc: CommandError) -> dict:
+    """A repo GitHub did not answer for: only what this machine knows, and why the rest is unknown."""
+    return {**_local(ctx, rows, now), "error": str(exc)[:300]}
 
 
 FEED_EVENTS = {
@@ -469,11 +473,14 @@ def _sessions(rows: list[dict]) -> list[dict]:
     return [r for r in rows if r["event"] in ("build_started", "fix_started", "verdict")]
 
 
-def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = None) -> dict:
+def state(
+    contexts: list[Ctx], now: datetime | None = None, slots: int | None = None, github: bool = True
+) -> dict:
     """Everything the page shows, for every repo. Anything that cannot be read is null, never zero.
 
     `slots` is the workspace's shared limit on engine sessions, when the repos run as one workspace: then
-    the total is that limit, not the sum of each repo's `watch.slots`."""
+    the total is that limit, not the sum of each repo's `watch.slots`. With `github=False` nothing is read from
+    GitHub: each repo is what this machine knows, marked `pending`, for the page to show while GitHub is read."""
     now = now or datetime.now(UTC)
     repos, feed, minutes, errors, beats = [], [], [], 0, []
     week, day, today = now - timedelta(days=7), now - timedelta(days=1), _local_day(now)
@@ -483,10 +490,13 @@ def state(contexts: list[Ctx], now: datetime | None = None, slots: int | None = 
     claude = {"sessions_7d": 0, "seconds_7d": 0.0}
     per_tier: dict[str, list[int]] = defaultdict(list)
     for ctx in contexts:
-        try:
-            repos.append(repo_state(ctx, now))
-        except CommandError as exc:  # unknown, not empty: the page must not say there is nothing to do
-            repos.append(_unreadable(ctx, ctx.ledger.rows(), now, exc))
+        if not github:
+            repos.append({**_local(ctx, ctx.ledger.rows(), now), "pending": True})
+        else:
+            try:
+                repos.append(repo_state(ctx, now))
+            except CommandError as exc:  # unknown, not empty: the page must not say there is nothing to do
+                repos.append(_unreadable(ctx, ctx.ledger.rows(), now, exc))
         rows = ctx.ledger.rows()
         opened = {r.get("pr"): _ts(r["ts"]) for r in rows if r["event"] == "pr_opened"}
         sessions_by_pr: dict[int, int] = defaultdict(int)
@@ -665,6 +675,7 @@ def page() -> bytes:
 
 BACKOFF_START = 30.0  # seconds to wait after the first failed refresh; doubles with each one that follows
 BACKOFF_MAX = 300.0  # ... up to this
+FIRST_WAIT = 0.5  # seconds after its start that the Mesa waits for GitHub before answering locally
 
 
 def _degraded(repo: dict) -> bool:
@@ -679,10 +690,35 @@ class _Entry:
         self.at, self.body, self.fails, self.error = at, body, fails, error
 
 
+def _inline(fn) -> None:
+    fn()
+
+
+def _thread(fn) -> None:
+    threading.Thread(target=fn, name="mesa-refresh", daemon=True).start()
+
+
 class _Cache:
-    def __init__(self, contexts: list[Ctx], seconds: float, slots: int | None = None, clock=time.monotonic):
+    """What the server answers with. Reading GitHub takes seconds (one `gh` call per list and per PR), so the state
+    is refreshed apart from the requests: `spawn` runs a refresh, in a thread for the server, or before `get()`
+    returns when it is inline (the default, which tests use)."""
+
+    def __init__(
+        self,
+        contexts: list[Ctx],
+        seconds: float,
+        slots: int | None = None,
+        clock=time.monotonic,
+        spawn=_inline,
+        first_wait: float = 0.0,
+    ):
         self.contexts, self.seconds, self.slots, self.clock = contexts, seconds, slots, clock
+        self.spawn, self.first_wait = spawn, first_wait
         self.lock, self.entries = threading.Lock(), {}  # key -> _Entry
+        self.details = threading.Lock()  # one PR detail built at a time, never holding up the state
+        self.refreshing = False  # a state refresh is running: at most one at a time
+        self.built = threading.Event()  # set once the first state refresh has finished, well or not
+        self.born = time.monotonic()  # for `first_wait` seconds from here, a request waits for GitHub
         self.last_ok: dict[str, str] = {}  # repo -> when GitHub was last read for it in full
 
     def _wait(self, entry: _Entry) -> float:
@@ -692,26 +728,32 @@ class _Cache:
         # the exponent is capped: after ~1000 failures in a row 2 ** n overflows a float before the cap could apply
         return min(max(BACKOFF_START * 2 ** min(entry.fails - 1, 32), self.seconds), BACKOFF_MAX)
 
-    def _get(self, key: str, build, degraded=lambda value: False) -> bytes:
-        """The body of `build()`, rebuilt at most once per cache time. A refresh that fails (it raised, or `degraded`
+    def _due(self, entry: _Entry | None) -> bool:
+        return entry is None or self.clock() - entry.at >= self._wait(entry)
+
+    def _build(self, key: str, build, degraded=lambda value: False) -> None:
+        """Run `build()` and keep its body, or the error it raised. A refresh that fails (it raised, or `degraded`
         says GitHub could not be read) makes the next one wait longer, so a slow or rate-limiting GitHub is not
-        hammered; inside that wait, the same answer (or the same error) is served. The wait counts from when the
-        refresh finished, not when it started: a slow GitHub must not use up its own backoff while answering."""
+        hammered. The wait counts from when the refresh finished, not when it started: a slow GitHub must not use
+        up its own backoff while answering. No lock is held while it builds."""
         with self.lock:
-            entry, now = self.entries.get(key), self.clock()
-            if entry and now - entry.at < self._wait(entry):
-                if entry.error:
-                    raise entry.error
-                return entry.body
-            fails = entry.fails + 1 if entry else 1
-            try:
-                value = build()
-            except Exception as exc:
+            entry = self.entries.get(key)
+        fails = entry.fails + 1 if entry else 1
+        try:
+            value = build()
+        except Exception as exc:
+            with self.lock:
                 self.entries[key] = _Entry(self.clock(), b"", fails, exc)
-                raise
-            body = json.dumps(value, ensure_ascii=False).encode("utf-8")
+            return
+        body = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        with self.lock:
             self.entries[key] = _Entry(self.clock(), body, fails if degraded(value) else 0, None)
-            return body
+
+    @staticmethod
+    def _served(entry: _Entry) -> bytes:
+        if entry.error:
+            raise entry.error
+        return entry.body
 
     def _state(self) -> dict:
         s = state(self.contexts, slots=self.slots)
@@ -722,15 +764,56 @@ class _Cache:
                 self.last_ok[repo["repo"]] = s["generated"]
         return s
 
+    def _refresh(self) -> None:
+        try:
+            self._build("state", self._state, lambda s: any(_degraded(r) for r in s["repos"]))
+        finally:
+            with self.lock:
+                self.refreshing = False
+            self.built.set()
+
+    def refresh(self) -> None:
+        """Start a state refresh when one is due and none is running."""
+        with self.lock:
+            start = not self.refreshing and self._due(self.entries.get("state"))
+            self.refreshing = self.refreshing or start
+        if start:
+            self.spawn(self._refresh)
+
     def get(self) -> bytes:
-        return self._get("state", self._state, lambda s: any(_degraded(r) for r in s["repos"]))
+        """The last state built, at most once per cache time (or per backoff, inside which the same answer or the
+        same error is served). A request never waits for GitHub: when the state is due, a refresh starts and this
+        answer is the one before it. Until the first refresh is done, the answer is what this machine knows on its
+        own, every repo marked `pending`, so the page shows something at once and asks again soon."""
+        self.refresh()
+        with self.lock:
+            entry = self.entries.get("state")
+        left = self.first_wait - (time.monotonic() - self.born)
+        if entry is None and left > 0:  # a GitHub that answers at once is shown at once
+            self.built.wait(left)
+            with self.lock:
+                entry = self.entries.get("state")
+        if entry is None:
+            return json.dumps(
+                state(self.contexts, slots=self.slots, github=False), ensure_ascii=False
+            ).encode("utf-8")
+        return self._served(entry)
 
     def pr(self, repo: str, n: int) -> bytes | None:
-        """The detail of PR `n` in `repo`, or None when no context drives that repo."""
+        """The detail of PR `n` in `repo`, or None when no context drives that repo. It is read while the request
+        waits (the page says it is reading), at most once per cache time like the state."""
         ctx = next((c for c in self.contexts if c.cfg.repo.lower() == repo.lower()), None)
         if ctx is None:
             return None
-        return self._get(f"pr:{ctx.cfg.repo}#{n}", lambda: pr_detail(ctx, n))
+        key = f"pr:{ctx.cfg.repo}#{n}"
+        with self.details:
+            with self.lock:
+                entry = self.entries.get(key)
+            if self._due(entry):
+                self._build(key, lambda: pr_detail(ctx, n))
+                with self.lock:
+                    entry = self.entries[key]
+        return self._served(entry)
 
 
 _PR_PATH = re.compile(r"^/api/pr/([\w.-]+)/([\w.-]+)/(\d{1,9})$")
@@ -814,4 +897,6 @@ def server(
     slots: int | None = None,
 ) -> ThreadingHTTPServer:
     allowed = LOCAL_HOSTS | {h.lower() for h in allow_hosts} | {host.lower()}
-    return ThreadingHTTPServer((host, port), handler(_Cache(contexts, cache_seconds, slots), allowed))
+    cache = _Cache(contexts, cache_seconds, slots, spawn=_thread, first_wait=FIRST_WAIT)
+    cache.refresh()  # read GitHub now, so the first person to open the page rarely waits even for the local state
+    return ThreadingHTTPServer((host, port), handler(cache, allowed))

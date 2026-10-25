@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1212,3 +1213,137 @@ def test_proposed_tickets_that_cannot_be_read_are_unknown_not_none(world):  # no
     gh.open_issues = down
     repo = mesa.state([ctx])["repos"][0]
     assert repo["proposed"] is None and "proposed tickets" in repo["unread"]
+
+
+def _until(condition, seconds=10.0):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+def _slow_github(gh):
+    """Make the PR list wait until the test lets it answer, the way a cold GitHub takes seconds; returns
+    (release, calls)."""
+    release, calls, healthy = threading.Event(), [], gh.prs
+
+    def slow(label):
+        calls.append(1)
+        assert release.wait(10), "the test never let GitHub answer"
+        return healthy(label)
+
+    gh.prs = slow
+    return release, calls
+
+
+def test_a_mesa_that_has_not_read_github_yet_answers_at_once_with_what_this_machine_knows(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([APPROVE])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    for _ in range(3):  # build, gate, merge
+        tick(ctx)
+    assert ctx.ledger.last("merged")
+    release, calls = _slow_github(gh)
+    cache = mesa._Cache([ctx], 15, spawn=mesa._thread)
+    try:
+        started = time.monotonic()
+        first = json.loads(cache.get())
+        again = json.loads(cache.get())
+        assert time.monotonic() - started < 1  # GitHub has not answered, and nobody waited for it
+        repo = first["repos"][0]
+        assert repo["pending"] is True and "error" not in repo
+        for name in ("prs", "queue", "parked_issues", "refused", "human_tasks", "proposed", "decisions"):
+            assert repo[name] is None, name  # not read yet: unknown, never empty
+        assert any(e["event"] == "merged" for e in first["feed"])  # the ledger already knows what happened
+        assert repo["labels"]["ready"] == "vigia:ready" and first["health"]["last_tick"]
+        assert again["repos"][0]["pending"] and len(calls) == 1  # one refresh at a time
+        # the page shows it as being read: never "nothing needs you", never "could not read"
+        shown, short = _render(tmp_path, first, routes=("turn", "factory", "decide")), gh.repo.split("/")[-1]
+        for view in (*_views(shown, "turn"), *_views(shown, "factory"), *_views(shown, "decide")):
+            assert (
+                f"Reading GitHub for {short}" in view["text"] or "Reading its pull requests" in view["text"]
+            )
+            for wrong in (
+                "Nothing needs you",
+                "Could not read",
+                "cannot read",
+                "No open decisions",
+                "PRs unknown",
+                "queue unknown",
+                "Decisions unknown",
+                "nothing ready to build",
+            ):
+                assert wrong not in view["text"], wrong
+            assert "col-empty c-danger" not in view["html"]  # no board column says "unknown"
+        for view in _views(shown, "factory"):
+            assert (
+                "Reading its pull requests from GitHub" in view["text"]
+                and "reading the queue" in view["text"]
+            )
+        release.set()
+        assert cache.built.wait(10)
+        read = json.loads(cache.get())["repos"][0]
+        assert "pending" not in read and read["prs"] == [] and read["queue"] == []
+        # the page asks again soon while it reads, and then shows what GitHub said
+        after = _poll_after(tmp_path, gh, [first, json.loads(cache.get())])
+        assert "Reading GitHub for" in after["before"]["text"]
+        assert (
+            "Reading GitHub" not in after["after"]["text"] and "Nothing needs you" in after["after"]["text"]
+        )
+    finally:
+        release.set()
+
+
+def test_a_request_never_waits_for_a_refresh_or_for_a_pr_detail(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    clock = _Clock()
+    cache = mesa._Cache([ctx], 15, clock=clock, spawn=mesa._thread)
+    cache.refresh()
+    assert cache.built.wait(10)
+    first = cache.get()
+    assert cache.entries["state"].at == 0
+    release, calls = _slow_github(gh)
+    healthy_pr, detail_asked = gh.pr, threading.Event()
+
+    def slow_pr(n):
+        detail_asked.set()
+        assert release.wait(10)
+        return healthy_pr(n)
+
+    gh.pr = slow_pr
+    try:
+        clock.now = 15  # the state is due a refresh: it starts, and this answer is the one before it
+        started = time.monotonic()
+        assert cache.get() == first
+        _until(lambda: calls)  # the refresh is reading GitHub
+        assert cache.get() == first and len(calls) == 1  # it is running, so no second one starts
+        # a PR detail being read (its reader waits) holds up nobody else
+        reader = threading.Thread(target=cache.pr, args=(gh.repo, pr), daemon=True)
+        reader.start()
+        assert detail_asked.wait(10)
+        assert cache.get() == first
+        assert time.monotonic() - started < 1
+        later = gh.add_issue("Add another helper", TICKET, ["vigia:ready", "tier:T0"])  # read after the PRs
+        release.set()
+        reader.join(10)
+        assert not reader.is_alive()
+        _until(lambda: not cache.refreshing)
+        assert cache.entries["state"].at == 15  # the refreshed state, read at 15 s
+        assert [q["number"] for q in json.loads(cache.get())["repos"][0]["queue"]] == [later]
+    finally:
+        release.set()
+
+
+def test_the_first_request_shows_a_github_that_answers_at_once(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    srv = _serve(ctx)
+    try:
+        status, _, body = _get(srv, "/api/state")
+        assert status == 200 and "pending" not in json.loads(body)["repos"][0]  # no flash of "Reading GitHub"
+    finally:
+        srv.shutdown()
