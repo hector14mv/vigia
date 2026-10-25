@@ -141,8 +141,9 @@ def render(data: dict) -> str:
     )
     if t["updates"] > 0:
         totals += f" · {t['updates']} base updates"
+    window = "last day" if data["days"] == 1 else f"last {data['days']} days"
     out = [
-        f"vigia report · last {data['days']} days · {', '.join(data['repos'])}",
+        f"vigia report · {window} · {', '.join(data['repos'])}",
         totals,
         "",
         "Builders            tiers     opened merged  first-round P1  gate rounds/merge  median min  parked",

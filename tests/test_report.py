@@ -34,6 +34,16 @@ def test_an_empty_ledger_reports_nothing_without_failing(tmp_path):
     assert "0 merged" in report.render(data)
 
 
+def test_the_header_says_last_day_for_a_one_day_window_and_last_n_days_otherwise(tmp_path):
+    from vigia.ledger import Ledger
+
+    data = report.build({"a/b": Ledger(tmp_path / "l.jsonl")})
+    one = report.render({**data, "days": 1}).splitlines()[0]
+    seven = report.render({**data, "days": 7}).splitlines()[0]
+    assert one == "vigia report · last day · a/b"
+    assert seven == "vigia report · last 7 days · a/b"
+
+
 def test_a_merge_in_the_window_is_credited_to_a_builder_that_opened_the_pr_before_it(tmp_path):
     from datetime import UTC, datetime
 
