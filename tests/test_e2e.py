@@ -812,4 +812,26 @@ def test_recovery_looks_back_from_githubs_merge_time_not_the_local_clock(world):
     gh.issues_by = recording
     file_follow_ups(ctx, pr)
     merged_row = ctx.ledger.last("merged", pr=pr)
-    assert asked == [gh.merged_at(pr)] and asked[0] != merged_row["ts"]
+    assert asked == ["2026-10-23T23:59:00Z"]  # the fake merged at 2026-10-24T00:00:00Z, looked back a minute
+    assert asked[0] != merged_row["ts"]
+
+
+def test_recovery_finds_an_issue_created_in_the_merge_second(world):  # noqa: F811
+    from vigia.watch import file_follow_ups
+
+    gh, ctx, pr = ready_to_merge(world, "\n## Follow-ups\n- rename the helper\n")
+    tick(ctx, build=False)
+    tick(ctx, build=False)  # merge: the issue is filed and recorded
+    assert len(follow_up_issues(gh)) == 1
+    # a crash lost the ledger rows; the issue's time is GitHub's merge second, and GitHub's `since` is strictly after
+    keep = [r for r in ctx.ledger.rows() if r["event"] not in ("followup_filed", "follow_ups_done")]
+    ctx.ledger.path.write_text("".join(json.dumps(r) + "\n" for r in keep))
+    real = gh.issues_by
+
+    def strictly_after(creator, since):
+        return [i for i in real(creator, since) if since is None or gh.merged_at(pr) > since]
+
+    gh.issues_by = strictly_after
+    file_follow_ups(ctx, pr)
+    assert len(follow_up_issues(gh)) == 1  # adopted, not filed a second time
+    assert len(ctx.ledger.events("followup_filed", pr=pr)) == 1

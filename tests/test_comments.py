@@ -24,6 +24,11 @@ def test_a_bullet_outside_the_section_is_not_a_follow_up():
     assert comments.follow_ups("- stray bullet\n") == []
 
 
+def test_indented_markdown_bullets_count():
+    body = "## Follow-ups\n  - first task\n   * second task\n"
+    assert comments.follow_ups(body) == ["first task", "second task"]
+
+
 def test_handoffs_keeps_only_the_login_s_handoff_comments():
     rows = [
         {"author": "bot", "body": f"## Handoff {SHA}\nx"},

@@ -10,7 +10,7 @@ from .config import FAMILIES, Seat
 HANDOFF_HEAD = re.compile(r"^## Handoff ([0-9a-f]{40})\b")
 ENGINE_LINE = re.compile(r"^Engine:\s*(claude|codex)\b", re.M)
 FOLLOW_UPS_HEAD = re.compile(r"^##\s+Follow-ups\s*$", re.I)
-BULLET = re.compile(r"^[-*+]\s+(.*\S)")
+BULLET = re.compile(r"^\s{0,3}[-*+]\s+(.*\S)")
 TITLE_MAX = 70
 MARKER = re.compile(r"^<!-- vigia:follow-up pr=(\d+) hash=([0-9a-f]{12}) -->$", re.M)
 

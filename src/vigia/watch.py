@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from . import builder, comments, gate, jobs, tickets
 from .context import Ctx
@@ -18,6 +19,7 @@ from .proc import CommandError
 from .rules import Decision, PRState, Verdict, decide
 
 MAX_FOLLOW_UPS = 5  # issues filed per merged PR, however many bullets the handoffs hold
+LOOK_BACK_SECONDS = 60  # crash recovery looks this far before GitHub's merge time
 
 
 @dataclass
@@ -174,6 +176,14 @@ def pending_follow_ups(ctx: Ctx) -> list[int]:
     return [n for n in dict.fromkeys(owed) if broken[n] < ctx.cfg.caps.attempts]
 
 
+def _look_back(iso: str | None) -> str | None:
+    """`iso` (GitHub's UTC time, `...Z`) moved back by LOOK_BACK_SECONDS; None stays None (no lower bound)."""
+    if not iso:
+        return None
+    moment = datetime.fromisoformat(iso.replace("Z", "+00:00")) - timedelta(seconds=LOOK_BACK_SECONDS)
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def file_follow_ups(ctx: Ctx, n: int) -> None:
     """At most MAX_FOLLOW_UPS issues per merged PR `n`, one per bullet of the `## Follow-ups` sections in vigia's
     handoffs on it. Follow-ups carry only `labels.follow_up`: no tier and never ready.
@@ -188,7 +198,9 @@ def file_follow_ups(ctx: Ctx, n: int) -> None:
     sha = merged.get("sha", "")
     # The lower bound for what vigia already filed is GitHub's own merge time, never this machine's clock: a follow-up
     # is created after GitHub merged the PR, on the same clock, whatever the local time says.
-    since = ctx.gh.merged_at(n)
+    # GitHub's `since` filter is strictly after, and an issue created in the merge's own second carries that same
+    # time, so look back a safety margin: the marker check below makes extra issues in the window harmless.
+    since = _look_back(ctx.gh.merged_at(n))
     found: dict[str, str] = {}  # hash -> text, in handoff order, exact duplicates dropped
     for body in comments.handoffs(ctx.gh.comments(n), ctx.gh.login()):
         for text in comments.follow_ups(body):
