@@ -10,6 +10,7 @@ import json
 import os
 import re
 import time
+import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -154,15 +155,16 @@ class Engines:
             if seat.effort:
                 cmd += ["-c", f"model_reasoning_effort={seat.effort}"]
             # no session reaches the user's MCP servers (mail, calendar, browser...), whatever the overrides say:
-            # no user config.toml (its servers), no ChatGPT apps, no plugins (local or remote, with their servers
-            # and hooks). Auth still comes from CODEX_HOME. A later `-c` beats an earlier one and any `--enable`.
-            cmd += _without_codex_config(extra, "mcp_servers") + [
-                "--ignore-user-config",
-                "-c",
-                "features.apps=false",
-                "-c",
-                "features.plugins=false",
-            ]
+            # every server of the user's config.toml switched off by name, no ChatGPT apps, no plugins (local or
+            # remote, with their servers and hooks). The rest of config.toml still loads: it may pick how the
+            # login is stored (`cli_auth_credentials_store`). A later `-c` beats an earlier one and any `--enable`.
+            servers = _codex_user_mcp_servers()
+            if servers is None:  # a server `-c` cannot name: drop the whole user config rather than keep it
+                off = ["--ignore-user-config"]
+            else:
+                off = [a for name in servers for a in ("-c", f"mcp_servers.{name}.enabled=false")]
+            cmd += _without_codex_config(extra, "mcp_servers") + off
+            cmd += ["-c", "features.apps=false", "-c", "features.plugins=false"]
             cmd += ["-C", str(workdir), "-o", str(out_file)]
             if guards:
                 # Codex builds the environment of the commands it runs from its own policy (a user's config may
@@ -274,6 +276,24 @@ def _without_option(args: list[str], option: str) -> list[str]:
         dropping = False
         out.append(a)
     return out
+
+
+def _codex_user_mcp_servers() -> list[str] | None:
+    """The MCP servers `$CODEX_HOME/config.toml` defines, or None when one cannot be switched off by name.
+
+    Codex rejects `-c mcp_servers.<name>.enabled=false` for a server it does not know, and splits the dotted
+    path on every `.`, so only the servers really defined are named, and a name outside `[A-Za-z0-9_-]` (or
+    a file Codex could not read either) is None."""
+    home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    try:
+        servers = tomllib.loads((home / "config.toml").read_text(encoding="utf-8")).get("mcp_servers", {})
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    if not isinstance(servers, dict) or not all(re.fullmatch(r"[A-Za-z0-9_-]+", n) for n in servers):
+        return None
+    return sorted(servers)
 
 
 def _without_codex_config(args: list[str], key: str) -> list[str]:
