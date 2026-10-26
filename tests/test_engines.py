@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fakes import FakeOpencode, engine, opencode_events
+from fakes import APPROVE, FakeOpencode, engine, opencode_events
 from vigia import proc
 from vigia.config import Config, Seat, default_tiers
 from vigia.engines import (
@@ -17,6 +17,7 @@ from vigia.engines import (
     _without_flags,
     handoff_body,
     handoff_commit,
+    opencode_inline_config,
     parse_verdict,
     session_env,
     session_guards,
@@ -493,9 +494,18 @@ def test_an_opencode_session_through_the_real_runner(tmp_path, opencode, role):
     inline = json.loads(env["OPENCODE_CONFIG_CONTENT"])
     assert inline["share"] == "disabled"
     assert inline["mcp"] == {"mail": {"enabled": False}, "calendar": {"enabled": False}}
-    deny = {"edit": "deny", "bash": "deny", "webfetch": "deny"}
+    deny = {
+        "*": "deny",  # first, so the read-only allowlist after it wins and every other tool is off
+        "edit": "deny",
+        "bash": "deny",
+        "webfetch": "deny",
+        "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"},
+        "grep": "allow",
+        "glob": "allow",
+        "list": "allow",
+    }
     if role == "reviewer":
-        assert inline["permission"] == deny
+        assert inline["permission"] == deny and list(inline["permission"]) == list(deny)
         # an agent's own permission table outranks the top-level one, so each agent the config names is denied too
         assert inline["agent"] == {"build": {"permission": deny}, "legacy": {"permission": deny}}
         assert inline["mode"] == {"legacy": {"permission": deny}}
@@ -525,6 +535,7 @@ def test_an_opencode_seat_without_effort_passes_no_variant(tmp_path, opencode):
         {"run_stdout": opencode_events(error="This API key has expired.")},  # an error event
         {"run_exit": 0, "run_stdout": opencode_events("DONE") + opencode_events(error="rate limited")},
         {"run_stdout": "Error: You must provide a message or a command\n"},  # not JSON
+        {"run_stdout": opencode_events(json.dumps(APPROVE), None)},  # the final message has no text
     ],
 )
 def test_an_opencode_session_that_fails_is_not_ok(tmp_path, opencode, settings):
@@ -579,6 +590,9 @@ def test_opencode_overrides_cannot_share_attach_or_reopen_the_reviewer(tmp_path,
         "--dir=/",
         "--share",
         "true",
+        "--command",
+        "review",  # a command template brings its own model and `!` shell lines
+        "--command=review",
         "--title",
         "x",
     ]
@@ -589,8 +603,11 @@ def test_opencode_overrides_cannot_share_attach_or_reopen_the_reviewer(tmp_path,
     assert out.ok
     run = opencode.runs()[0]
     argv = run["argv"]
-    assert not [a for a in argv if a.startswith(("--share", "--attach", "--no-pure", "--dir=", "http"))]
+    assert not [
+        a for a in argv if a.startswith(("--share", "--attach", "--no-pure", "--dir=", "http", "--command"))
+    ]
     assert "true" not in argv and "default" not in argv and "anthropic/claude-opus-5-5" not in argv
+    assert "review" not in argv
     assert argv.count("-m") == argv.count("--format") == argv.count("--dir") == 1
     assert argv[6:-4] == ["--auto", "--agent", "build", "--title", "x"]  # the rest passes, in order
     inline = json.loads(run["env"]["OPENCODE_CONFIG_CONTENT"])
@@ -610,6 +627,39 @@ def test_opencode_final_text_is_the_last_messages_text():
         _opencode_text(two_parts) == "a\nb"
     )  # the fake's message ids repeat per call: one message, two parts
     assert _opencode_text("") == "" and _opencode_text("garbage\n[1, 2]\n") == ""
+
+
+def test_opencode_final_text_comes_only_from_a_finished_final_message():
+    verdict = json.dumps(APPROVE)
+    # an approval in a step that stopped for tool calls, then a final message with no text: no final text
+    assert _opencode_text(opencode_events(verdict, None)) == ""
+    # the stream ends inside a step: its message never finished
+    unfinished = "".join(opencode_events(verdict).splitlines(keepends=True)[:-1])
+    assert _opencode_text(unfinished) == ""
+    # the last message stopped for tool calls: it is not an answer
+    assert _opencode_text(opencode_events(verdict).replace('"stop"', '"tool-calls"')) == ""
+    assert _opencode_text(opencode_events("plan", verdict)) == verdict
+
+
+def test_an_opencode_reviewer_denies_every_tool_the_config_names():
+    resolved = {
+        "permission": {"*": "allow", "rewrite": "allow", "read": "allow"},
+        "tools": {"rewrite": True, "deploy": True},
+        "agent": {"build": {"permission": {"publish": "allow"}, "tools": {"upload": True}}, "odd": "x"},
+        "mode": {"legacy": {"tools": {"legacy_tool": True}, "permission": "allow"}},
+    }
+    inline = opencode_inline_config(resolved, "reviewer")
+    for table in (
+        inline["permission"],
+        inline["agent"]["build"]["permission"],
+        inline["mode"]["legacy"]["permission"],
+    ):
+        assert list(table)[0] == "*" and table["*"] == "deny"
+        for name in ("rewrite", "deploy", "publish", "upload", "legacy_tool", "bash", "edit", "webfetch"):
+            assert table[name] == "deny"
+        # the read-only allowlist comes last, after `*`, so it is what the reviewer keeps
+        assert list(table)[-4:] == ["read", "grep", "glob", "list"] and table["grep"] == "allow"
+    assert "permission" not in opencode_inline_config(resolved, "builder")
 
 
 def test_without_flags_drops_values_and_explicit_booleans():

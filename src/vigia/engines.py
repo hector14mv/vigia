@@ -74,8 +74,19 @@ _NO_CREDENTIAL_HELPER = (("credential.helper", ""), ("credential.https://github.
 # agent the resolved config defines, because an agent's own `permission` table outranks the top-level one (checked on
 # 1.18.32: a user agent with `bash: allow` keeps its shell under a top-level deny).
 OPENCODE_REVIEWER_DENY = {"edit": "deny", "bash": "deny", "webfetch": "deny"}
+# A reviewer's tools are an allowlist: `*` denies everything else, including custom tools from
+# ~/.config/opencode/tools, which 1.18.32 loads even under --pure and OPENCODE_DISABLE_PROJECT_CONFIG=1 (checked with
+# `opencode debug agent build`: a denied tool leaves the agent's tool list). The last matching rule wins, so these
+# come after `*`; reading a .env file stays off, as nobody is there to answer OpenCode's default `ask`.
+OPENCODE_REVIEWER_READ = {
+    "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"},
+    "grep": "allow",
+    "glob": "allow",
+    "list": "allow",
+}
 # Options vigia sets itself on `opencode run`: an override that names one is dropped, with its value. `--share`
 # publishes the session, `--attach` runs it on a server whose config vigia never set, `--no-pure` loads plugins,
+# `--command` runs a user's command template (its own model, and `!` shell lines no permission rule sees),
 # and the model, effort, output format and directory must be the seat's and vigia's. True: takes a value.
 _OPENCODE_FIXED = {
     "--share": False,
@@ -83,6 +94,7 @@ _OPENCODE_FIXED = {
     "--pure": False,
     "--no-pure": False,
     "--attach": True,
+    "--command": True,
     "--format": True,
     "-m": True,
     "--model": True,
@@ -300,19 +312,41 @@ def opencode_config(env: Mapping[str, str], workdir: Path) -> dict:
 def opencode_inline_config(resolved: Mapping, role: str) -> dict:
     """The OPENCODE_CONFIG_CONTENT of a session: OpenCode merges it over every other config, so it cannot empty the
     `mcp` table, but it can turn off each server by name. Sharing is off for everyone; a reviewer also gets
-    `OPENCODE_REVIEWER_DENY` at the top level and for every agent and mode the resolved config names."""
+    `opencode_reviewer_permission` at the top level and for every agent and mode the resolved config names."""
     inline: dict = {
         "share": "disabled",
         "mcp": {name: {"enabled": False} for name in resolved.get("mcp", {})},
     }
     if role == "reviewer":
         agents = {*resolved.get("agent", {}), *resolved.get("mode", {})}
-        inline["permission"] = dict(OPENCODE_REVIEWER_DENY)
-        inline["agent"] = {name: {"permission": dict(OPENCODE_REVIEWER_DENY)} for name in sorted(agents)}
-        inline["mode"] = {
-            name: {"permission": dict(OPENCODE_REVIEWER_DENY)} for name in resolved.get("mode", {})
-        }
+        permission = opencode_reviewer_permission(resolved)
+        inline["permission"] = permission
+        inline["agent"] = {name: {"permission": dict(permission)} for name in sorted(agents)}
+        inline["mode"] = {name: {"permission": dict(permission)} for name in resolved.get("mode", {})}
     return inline
+
+
+def opencode_reviewer_permission(resolved: Mapping) -> dict:
+    """A reviewer's permission table: `*` denied, every tool the resolved config names in a `permission` or `tools`
+    table (top level, agents, modes) denied by name, so a user's named allow keeps no place after the `*` whatever
+    order the merge leaves, then `OPENCODE_REVIEWER_DENY` and the read-only allowlist."""
+    named: set[str] = set()
+    for table in (resolved, *_tables(resolved.get("agent")), *_tables(resolved.get("mode"))):
+        for key in ("permission", "tools"):
+            if isinstance(table.get(key), dict):
+                named.update(table[key])
+    named -= {"*", *OPENCODE_REVIEWER_DENY, *OPENCODE_REVIEWER_READ}
+    return {
+        "*": "deny",
+        **{name: "deny" for name in sorted(named)},
+        **OPENCODE_REVIEWER_DENY,
+        **OPENCODE_REVIEWER_READ,
+    }
+
+
+def _tables(section: object) -> list[dict]:
+    """The agent or mode tables of a resolved config section that are tables."""
+    return [t for t in section.values() if isinstance(t, dict)] if isinstance(section, dict) else []
 
 
 def opencode_env(env: Mapping[str, str], role: str, workdir: Path) -> dict[str, str]:
@@ -419,19 +453,22 @@ def _opencode_error(stdout: str) -> bool:
 
 
 def _opencode_text(stdout: str) -> str:
-    """The final message: the text parts of the message the last `text` event belongs to. Text from earlier steps
-    (before tool calls) is not the answer."""
-    texts = [
+    """The final message: the text parts of the message the last event belongs to, once that message has finished
+    a step that did not stop for tool calls. Text from earlier steps is not the answer, so a final message with no
+    text, or one that never finished, gives no text at all."""
+    parts = [
         e["part"]
         for e in _opencode_events(stdout)
-        if e.get("type") == "text"
-        and isinstance(e.get("part"), dict)
-        and isinstance(e["part"].get("text"), str)
+        if isinstance(e.get("part"), dict) and e["part"].get("messageID")
     ]
-    if not texts:
+    if not parts:
         return ""
-    last = texts[-1].get("messageID")
-    return "\n".join(p["text"] for p in texts if p.get("messageID") == last)
+    last = parts[-1]["messageID"]
+    final = [p for p in parts if p["messageID"] == last]
+    finishes = [p for p in final if p.get("type") == "step-finish"]
+    if not finishes or finishes[-1].get("reason") == "tool-calls":
+        return ""
+    return "\n".join(p["text"] for p in final if p.get("type") == "text" and isinstance(p.get("text"), str))
 
 
 def _claude_error(stdout: str) -> bool:

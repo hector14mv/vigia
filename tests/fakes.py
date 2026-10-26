@@ -293,10 +293,11 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
     return run
 
 
-def opencode_events(*texts: str, error: str | None = None) -> str:
+def opencode_events(*texts: str | None, error: str | None = None) -> str:
     """What `opencode run --format json` printed on 1.18.32 (one real run, trimmed to the fields vigia reads and a
-    few it does not): per step, a `step_start`, its `text` parts and tool calls, then a `step_finish`. Each text in
-    `texts` is one step's message; a provider error is one `error` event and nothing else."""
+    few it does not): per step, a `step_start`, its `text` parts and tool calls, then a `step_finish`, whose reason
+    is `tool-calls` until the last step's `stop`. Each text in `texts` is one step's message (None: a step with no
+    text); a provider error is one `error` event and nothing else."""
     session = "ses_e86c4453bffeOWfUPaGiurPmj3"
     if error is not None:
         return (
@@ -314,16 +315,19 @@ def opencode_events(*texts: str, error: str | None = None) -> str:
     for k, text in enumerate(texts):
         msg = f"msg_1793bbc12001g5olzjzH6uJU{k:02d}"
         part = {"messageID": msg, "sessionID": session}
+        lines.append({"type": "step_start", "sessionID": session, "part": {**part, "type": "step-start"}})
+        if text is not None:
+            lines.append(
+                {"type": "text", "sessionID": session, "part": {**part, "type": "text", "text": text}}
+            )
         lines += [
-            {"type": "step_start", "sessionID": session, "part": {**part, "type": "step-start"}},
-            {"type": "text", "sessionID": session, "part": {**part, "type": "text", "text": text}},
             {
                 "type": "step_finish",
                 "sessionID": session,
                 "part": {
                     **part,
                     "type": "step-finish",
-                    "reason": "stop",
+                    "reason": "stop" if k == len(texts) - 1 else "tool-calls",
                     "tokens": {"total": 30387},
                     "cost": 0,
                 },
