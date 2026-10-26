@@ -267,11 +267,108 @@ def test_default_tiers_are_unchanged():
     )
 
 
-@pytest.mark.parametrize("role", ["builder", "gate", "reviewer"])
-def test_an_opencode_seat_is_refused_at_load(role):
+# --- OpenCode seats -----------------------------------------------------------------------------
+
+
+def test_an_opencode_gate_from_the_other_lab_loads():
     doc = base_doc()
-    doc["tiers"]["T1"][role] = {"engine": "opencode", "model": "opencode-go/kimi-k3"}
-    with pytest.raises(
-        ConfigError, match=rf"^tiers\.T1\.{role}\.engine: OpenCode is not available yet \(#107\)$"
-    ):
+    doc["tiers"]["T0"]["gate"] = {
+        "engine": "opencode",
+        "model": "github-copilot/gpt-6-sol",
+        "effort": "minimal",
+    }
+    cfg = parse(doc)
+    gate = cfg.tiers["T0"].gate
+    assert gate == Seat("opencode", "github-copilot/gpt-6-sol", "minimal")
+    assert gate.family == "openai" != cfg.tiers["T0"].builder.family
+    assert gate.label() == "opencode · github-copilot/gpt-6-sol · effort minimal"  # the full provider/model
+    assert parse(tomllib.loads(render(cfg))).tiers == cfg.tiers
+
+
+@pytest.mark.parametrize("role", ["builder", "gate", "reviewer"])
+def test_an_opencode_seat_loads_in_every_role(role):
+    doc = base_doc()
+    seat = {"engine": "opencode", "model": "opencode-go/kimi-k3"}
+    doc["tiers"]["T1"][role] = seat
+    if role == "builder":  # the gate must stay in another lab than the builder
+        doc["tiers"]["T1"]["gate"] = {"engine": "claude", "model": "claude-opus-5-5"}
+    assert getattr(parse(doc).tiers["T1"], role) == Seat("opencode", "opencode-go/kimi-k3")
+
+
+@pytest.mark.parametrize(
+    "builder, gate",
+    [
+        (
+            {"engine": "claude", "model": "claude-opus-5-5"},
+            {"engine": "opencode", "model": "github-copilot/claude-opus-5.5"},
+        ),
+        (
+            {"engine": "opencode", "model": "anthropic/claude-x"},
+            {"engine": "opencode", "model": "github-copilot/claude-opus-5.5"},
+        ),
+        ({"engine": "opencode", "model": "openai/gpt-6-sol"}, {"engine": "codex", "model": "gpt-6.1-sol"}),
+        (
+            {"engine": "claude", "model": "claude-opus-5-5"},
+            {"engine": "claude", "model": "claude-sonnet-5-5"},
+        ),
+        ({"engine": "codex", "model": "gpt-6.1-sol"}, {"engine": "codex", "model": "gpt-6-astra"}),
+    ],
+)
+def test_a_same_lab_pair_is_refused_whatever_the_engines(builder, gate):
+    doc = base_doc()
+    doc["tiers"]["T0"]["builder"], doc["tiers"]["T0"]["gate"] = builder, gate
+    with pytest.raises(ConfigError, match="same lab"):
         parse(doc)
+
+
+@pytest.mark.parametrize(
+    "model, error",
+    [
+        ("gpt-6-sol", "must be 'provider/model'"),  # no provider
+        ("anthropic/opus", "alias"),
+        ("openai/latest", "alias"),
+        ("github-copilot/ Fable ", "alias"),
+        ("latest", "must be 'provider/model'"),
+        ("somelab/mystery-1", "which lab"),
+        ("opencode-go/", "which lab"),
+        ("/gpt-6-sol", "which lab"),
+        ("a/b/gpt-6-sol", "which lab"),
+    ],
+)
+def test_an_opencode_model_must_be_exact_with_a_known_lab(model, error):
+    doc = base_doc()
+    doc["tiers"]["T1"]["gate"] = {"engine": "opencode", "model": model}
+    with pytest.raises(ConfigError, match=rf"^tiers\.T1\.gate\.model: .*{error}"):
+        parse(doc)
+
+
+def test_opencode_efforts_are_its_variants():
+    doc = base_doc()
+    doc["tiers"]["T0"]["gate"] = {"engine": "opencode", "model": "openai/gpt-6-sol", "effort": "max"}
+    assert parse(doc).tiers["T0"].gate.effort == "max"
+    doc["tiers"]["T0"]["gate"]["effort"] = "ultra"
+    with pytest.raises(ConfigError, match=r"tiers\.T0\.gate\.effort"):
+        parse(doc)
+
+
+def test_an_unknown_engine_is_still_refused():
+    doc = base_doc()
+    doc["tiers"]["T0"]["gate"] = {"engine": "aider", "model": "openai/gpt-6-sol"}
+    with pytest.raises(ConfigError, match=r"tiers\.T0\.gate\.engine: 'aider' is not one of"):
+        parse(doc)
+
+
+def test_opencode_engine_args_override_round_trips():
+    doc = base_doc()
+    doc["engines"] = {"opencode": {"reviewer": ["--agent", "plan"]}}
+    cfg = parse(doc)
+    assert cfg.engine_args["opencode"] == {"builder": (), "reviewer": ("--agent", "plan")}
+    assert parse(tomllib.loads(render(cfg))).engine_args == cfg.engine_args
+
+
+def test_a_claude_and_codex_config_renders_as_before():
+    cfg = Config(repo="acme/app", base="main", tiers=default_tiers("claude"))
+    text = render(cfg)
+    assert "opencode" not in text  # the default OpenCode arguments are never written out
+    again = parse(tomllib.loads(text))
+    assert again.tiers == cfg.tiers and render(again) == text

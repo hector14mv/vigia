@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -256,6 +257,8 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
 
     def run(cmd, cwd, input, timeout, log, env=None, keep_fds=()):
         reviewer = "--json-schema" in cmd or "--output-schema" in cmd
+        if cmd[0] == "opencode":  # its read-only rule travels in the environment, not on the command line
+            reviewer = "permission" in json.loads((env or {}).get("OPENCODE_CONFIG_CONTENT", "{}"))
         calls.append(
             {
                 "engine": cmd[0],
@@ -270,6 +273,8 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
             if cmd[0] == "codex":
                 Path(cmd[cmd.index("-o") + 1]).write_text(verdict)
                 return Result(0, "", "")
+            if cmd[0] == "opencode":
+                return Result(0, opencode_events(verdict), "")
             return Result(0, json.dumps({"is_error": False, "result": verdict}), "")
         run.edit(Path(cwd), len(calls))  # type: ignore[attr-defined]
         (Path(cwd) / ".vigia-handoff.md").write_text(
@@ -279,11 +284,111 @@ def engine(verdicts: list[dict], edits: Callable[[Path, int], None] | None = Non
         if cmd[0] == "codex":
             Path(cmd[cmd.index("-o") + 1]).write_text("done")
             return Result(0, "", "")
+        if cmd[0] == "opencode":
+            return Result(0, opencode_events("done"), "")
         return Result(0, json.dumps({"is_error": False, "result": "done"}), "")
 
     run.calls = calls  # type: ignore[attr-defined]
     run.edit = edits or default_edit  # type: ignore[attr-defined]  # tests may swap it between ticks
     return run
+
+
+def opencode_events(*texts: str, error: str | None = None) -> str:
+    """What `opencode run --format json` printed on 1.18.32 (one real run, trimmed to the fields vigia reads and a
+    few it does not): per step, a `step_start`, its `text` parts and tool calls, then a `step_finish`. Each text in
+    `texts` is one step's message; a provider error is one `error` event and nothing else."""
+    session = "ses_e86c4453bffeOWfUPaGiurPmj3"
+    if error is not None:
+        return (
+            json.dumps(
+                {
+                    "type": "error",
+                    "timestamp": 1793035305507,
+                    "sessionID": session,
+                    "error": {"name": "APIError", "data": {"message": error, "statusCode": 401}},
+                }
+            )
+            + "\n"
+        )
+    lines = []
+    for k, text in enumerate(texts):
+        msg = f"msg_1793bbc12001g5olzjzH6uJU{k:02d}"
+        part = {"messageID": msg, "sessionID": session}
+        lines += [
+            {"type": "step_start", "sessionID": session, "part": {**part, "type": "step-start"}},
+            {"type": "text", "sessionID": session, "part": {**part, "type": "text", "text": text}},
+            {
+                "type": "step_finish",
+                "sessionID": session,
+                "part": {
+                    **part,
+                    "type": "step-finish",
+                    "reason": "stop",
+                    "tokens": {"total": 30387},
+                    "cost": 0,
+                },
+            },
+        ]
+    return "".join(json.dumps(line) + "\n" for line in lines)
+
+
+# A stand-in for the `opencode` binary: `--pure debug config` prints the resolved config from `settings.json`
+# (or fails), `run` records its argv, environment, working directory and stdin to `runs.jsonl` and prints events.
+FAKE_OPENCODE = """\
+import json, os, sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+settings = json.loads((here / "settings.json").read_text())
+args = sys.argv[1:]
+record = {"argv": args, "env": dict(os.environ), "cwd": os.getcwd()}
+if args[:3] == ["--pure", "debug", "config"]:
+    with (here / "configs.jsonl").open("a") as fh:
+        fh.write(json.dumps(record) + "\\n")
+    if settings.get("config_exit"):
+        print("Error: config is broken", file=sys.stderr)
+        sys.exit(settings["config_exit"])
+    print(settings.get("config_stdout", json.dumps(settings["config"], indent=2)))
+    sys.exit(0)
+if args[:1] == ["run"]:
+    record["stdin"] = sys.stdin.read()
+    with (here / "runs.jsonl").open("a") as fh:
+        fh.write(json.dumps(record) + "\\n")
+    sys.stdout.write(settings.get("run_stdout", ""))
+    sys.exit(settings.get("run_exit", 0))
+print("unexpected arguments: " + " ".join(args), file=sys.stderr)
+sys.exit(2)
+"""
+
+
+class FakeOpencode:
+    """A fake `opencode` executable in `bin_dir`; put `bin_dir` first on PATH."""
+
+    def __init__(self, bin_dir: Path, config: dict, run_stdout: str = "", run_exit: int = 0):
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        self.dir = bin_dir
+        script = bin_dir / "opencode"
+        script.write_text(f"#!{sys.executable}\n" + FAKE_OPENCODE)
+        script.chmod(0o755)
+        self.settings = {"config": config, "run_stdout": run_stdout, "run_exit": run_exit}
+        self.save()
+
+    def save(self) -> None:
+        (self.dir / "settings.json").write_text(json.dumps(self.settings))
+
+    def set(self, **settings) -> None:
+        self.settings.update(settings)
+        self.save()
+
+    def _rows(self, name: str) -> list[dict]:
+        path = self.dir / name
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def runs(self) -> list[dict]:
+        return self._rows("runs.jsonl")
+
+    def configs(self) -> list[dict]:
+        return self._rows("configs.jsonl")
 
 
 APPROVE = {"verdict": "APPROVE", "summary": "Looks correct.", "findings": []}

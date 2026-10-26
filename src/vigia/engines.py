@@ -1,4 +1,4 @@
-"""Engines: Claude Code (`claude -p`) and Codex CLI (`codex exec`), run headless, one session at a time.
+"""Engines: Claude Code (`claude -p`), Codex CLI (`codex exec`) and OpenCode (`opencode run`), run headless.
 
 A builder session may edit files and run commands inside its worktree. A reviewer session only reads.
 Both return their final message; reviewers must return the verdict JSON described by `VERDICT_SCHEMA`.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -59,12 +60,37 @@ SESSION_ENV = frozenset(
         "GIT_CONFIG_NOSYSTEM",
     }
 )
+# No `OPENCODE_` here: a variable such as OPENCODE_CONFIG or OPENCODE_CONFIG_CONTENT from the user's shell would bring
+# back the servers or permissions vigia turns off. vigia sets the ones a session needs (`opencode_env`), and
+# OpenCode logs in with its own credential store (`opencode providers login`), not a provider-key variable.
 SESSION_ENV_PREFIXES = ("LC_", "XDG_", "ANTHROPIC_", "CLAUDE_", "CODEX_", "OPENAI_", "UV_", "PIP_")
 # What `gh` sees as its token inside a session: not a credential, and GitHub answers it with "Bad credentials".
 SESSION_GH_TOKEN = "vigia-engine-session-has-no-github-access"
 # Command-scope git config outranks every config file: an empty helper clears the helpers set before it
 # (`gh auth git-credential`, the macOS keychain), so `git credential fill` hands out nothing.
 _NO_CREDENTIAL_HELPER = (("credential.helper", ""), ("credential.https://github.com.helper", ""))
+
+# OpenCode has no sandbox flag. A reviewer gets these deny rules in its inline config, at the top level and for every
+# agent the resolved config defines, because an agent's own `permission` table outranks the top-level one (checked on
+# 1.18.32: a user agent with `bash: allow` keeps its shell under a top-level deny).
+OPENCODE_REVIEWER_DENY = {"edit": "deny", "bash": "deny", "webfetch": "deny"}
+# Options vigia sets itself on `opencode run`: an override that names one is dropped, with its value. `--share`
+# publishes the session, `--attach` runs it on a server whose config vigia never set, `--no-pure` loads plugins,
+# and the model, effort, output format and directory must be the seat's and vigia's. True: takes a value.
+_OPENCODE_FIXED = {
+    "--share": False,
+    "--no-share": False,
+    "--pure": False,
+    "--no-pure": False,
+    "--attach": True,
+    "--format": True,
+    "-m": True,
+    "--model": True,
+    "--variant": True,
+    "--dir": True,
+}
+# How long `opencode debug config` may take before the session is refused.
+_OPENCODE_CONFIG_SECONDS = 120
 
 VERDICT_SCHEMA = {
     "type": "object",
@@ -135,7 +161,7 @@ class Engines:
                     if a != "--sandbox" and (i == 0 or extra[i - 1] != "--sandbox")
                 ]
                 extra += ["--sandbox", "read-only"]
-            else:
+            elif seat.engine == "claude":  # OpenCode's deny rules travel in its environment (`opencode_env`)
                 # a deny rule beats any allow rule, even under bypassPermissions: no shell, no writes
                 extra += ["--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit"]
         if seat.engine == "claude":
@@ -172,6 +198,14 @@ class Engines:
             if schema_file is not None:
                 cmd += ["--output-schema", str(schema_file)]
             return cmd + ["-"]  # the prompt comes on stdin
+        if seat.engine == "opencode":
+            # The prompt comes on stdin (1.18.32 reads it, and refuses an empty one). Permissions, MCP servers and
+            # sharing are set through the environment (`opencode_env`), so a reviewer's read-only rule does not
+            # depend on these arguments; the reviewer prompt asks for the verdict JSON, as there is no schema flag.
+            cmd = ["opencode", "run", "--pure", "-m", seat.model]
+            if seat.effort:
+                cmd += ["--variant", seat.effort]
+            return cmd + _without_flags(extra, _OPENCODE_FIXED) + ["--format", "json", "--dir", str(workdir)]
         raise ValueError(f"unknown engine {seat.engine!r}")
 
     def run(
@@ -191,14 +225,24 @@ class Engines:
         gh_config.mkdir(parents=True)
         started = time.monotonic()
         held = jobs.held()
+        log = self.logs / f"{name}.log"
         try:
+            env = session_env(os.environ, gh_config)
+            if seat.engine == "opencode":
+                try:
+                    env = opencode_env(env, role, workdir)
+                except (
+                    OpencodeConfigError
+                ) as exc:  # the session does not start without its servers turned off
+                    log.write_text(f"vigia: OpenCode session not started: {exc}\n", encoding="utf-8")
+                    return Outcome(False, "", 1, False, round(time.monotonic() - started, 1), log)
             result = self._run(
                 cmd,
                 cwd=workdir,
                 input=prompt,
                 timeout=self.cfg.caps.session_minutes * 60,
-                log=self.logs / f"{name}.log",
-                env=session_env(os.environ, gh_config),
+                log=log,
+                env=env,
                 **({"keep_fds": held} if held else {}),
             )
         finally:
@@ -208,7 +252,78 @@ class Engines:
         ok = result.code == 0 and not result.timed_out and bool(text.strip())
         if seat.engine == "claude":
             ok = ok and not _claude_error(result.stdout)
-        return Outcome(ok, text, result.code, result.timed_out, seconds, self.logs / f"{name}.log")
+        if seat.engine == "opencode":
+            ok = ok and not _opencode_error(result.stdout)
+        return Outcome(ok, text, result.code, result.timed_out, seconds, log)
+
+
+class OpencodeConfigError(RuntimeError):
+    """`opencode debug config` failed or printed something vigia cannot read: the session must not start."""
+
+
+def opencode_config(env: Mapping[str, str], workdir: Path) -> dict:
+    """OpenCode's resolved config in `workdir`, read with `env` as the whole environment (the session's own, before
+    vigia adds its inline config). Raises OpencodeConfigError when the read fails or does not parse."""
+    try:
+        out = subprocess.run(
+            ["opencode", "--pure", "debug", "config"],
+            cwd=workdir,
+            input="",
+            capture_output=True,
+            text=True,
+            timeout=_OPENCODE_CONFIG_SECONDS,
+            env=dict(env),
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        raise OpencodeConfigError("opencode: command not found") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise OpencodeConfigError(
+            f"`opencode debug config` timed out after {_OPENCODE_CONFIG_SECONDS}s"
+        ) from exc
+    if out.returncode != 0:
+        # stderr only: stdout is the resolved config, which may hold provider keys or a server's environment
+        tail = " | ".join(out.stderr.strip().splitlines()[-3:])
+        raise OpencodeConfigError(f"`opencode debug config` exited {out.returncode}: {tail}")
+    try:
+        data = json.loads(out.stdout)
+    except json.JSONDecodeError as exc:
+        raise OpencodeConfigError("`opencode debug config` did not print a JSON object") from exc
+    if not isinstance(data, dict):
+        raise OpencodeConfigError("`opencode debug config` did not print a JSON object")
+    for key in ("mcp", "agent", "mode"):
+        if not isinstance(data.get(key, {}), dict):
+            raise OpencodeConfigError(f"`opencode debug config`: {key!r} is not a table")
+    return data
+
+
+def opencode_inline_config(resolved: Mapping, role: str) -> dict:
+    """The OPENCODE_CONFIG_CONTENT of a session: OpenCode merges it over every other config, so it cannot empty the
+    `mcp` table, but it can turn off each server by name. Sharing is off for everyone; a reviewer also gets
+    `OPENCODE_REVIEWER_DENY` at the top level and for every agent and mode the resolved config names."""
+    inline: dict = {
+        "share": "disabled",
+        "mcp": {name: {"enabled": False} for name in resolved.get("mcp", {})},
+    }
+    if role == "reviewer":
+        agents = {*resolved.get("agent", {}), *resolved.get("mode", {})}
+        inline["permission"] = dict(OPENCODE_REVIEWER_DENY)
+        inline["agent"] = {name: {"permission": dict(OPENCODE_REVIEWER_DENY)} for name in sorted(agents)}
+        inline["mode"] = {
+            name: {"permission": dict(OPENCODE_REVIEWER_DENY)} for name in resolved.get("mode", {})
+        }
+    return inline
+
+
+def opencode_env(env: Mapping[str, str], role: str, workdir: Path) -> dict[str, str]:
+    """An OpenCode session's environment: `env` (the session allowlist and guards, which hold no OPENCODE_* from the
+    user), no project config from the worktree, and the inline config built from what OpenCode would load."""
+    out = {k: v for k, v in env.items() if not k.startswith("OPENCODE_")}
+    out["OPENCODE_DISABLE_PROJECT_CONFIG"] = (
+        "1"  # a worktree's opencode.json and .opencode/ (agents, servers)
+    )
+    out["OPENCODE_CONFIG_CONTENT"] = json.dumps(opencode_inline_config(opencode_config(out, workdir), role))
+    return out
 
 
 def session_guards(gh_config: Path) -> dict[str, str]:
@@ -266,6 +381,59 @@ def _without_option(args: list[str], option: str) -> list[str]:
     return out
 
 
+def _without_flags(args: list[str], flags: Mapping[str, bool]) -> list[str]:
+    """`args` without any option in `flags`, in either spelling (`--opt=v` or `--opt v`), with the value it takes
+    (`flags[opt]` is True) or an explicit `true`/`false` after a boolean one."""
+    out: list[str] = []
+    skip: str | None = None  # "value": drop the next argument; "bool": drop it only if it is true/false
+    for a in args:
+        if skip == "value" or (skip == "bool" and a in ("true", "false")):
+            skip = None
+            continue
+        skip = None
+        name, eq, _ = a.partition("=")
+        if name in flags:
+            if not eq:
+                skip = "value" if flags[name] else "bool"
+            continue
+        out.append(a)
+    return out
+
+
+def _opencode_events(stdout: str) -> list[dict]:
+    """The JSON events `opencode run --format json` prints, one per line; a line that is not one is skipped."""
+    events = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _opencode_error(stdout: str) -> bool:
+    """An `error` event (1.18.32 prints one for a provider or auth error, and exits 1) fails the session."""
+    return any(e.get("type") == "error" for e in _opencode_events(stdout))
+
+
+def _opencode_text(stdout: str) -> str:
+    """The final message: the text parts of the message the last `text` event belongs to. Text from earlier steps
+    (before tool calls) is not the answer."""
+    texts = [
+        e["part"]
+        for e in _opencode_events(stdout)
+        if e.get("type") == "text"
+        and isinstance(e.get("part"), dict)
+        and isinstance(e["part"].get("text"), str)
+    ]
+    if not texts:
+        return ""
+    last = texts[-1].get("messageID")
+    return "\n".join(p["text"] for p in texts if p.get("messageID") == last)
+
+
 def _claude_error(stdout: str) -> bool:
     try:
         return bool(json.loads(stdout).get("is_error"))
@@ -274,6 +442,8 @@ def _claude_error(stdout: str) -> bool:
 
 
 def _final_text(engine: str, stdout: str, out_file: Path) -> str:
+    if engine == "opencode":
+        return _opencode_text(stdout)
     if engine == "claude":
         try:
             data = json.loads(stdout)
