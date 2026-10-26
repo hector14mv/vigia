@@ -25,7 +25,7 @@ const [pagePath, statePath, ...routes] = process.argv.slice(live ? 3 : 2);
 const scripts = [...fs.readFileSync(pagePath, "utf8").matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
 const sample = live ? "" : fs.readFileSync(statePath, "utf8");
 const BLOCK = new Set(["div", "p", "h1", "h2", "h3", "li", "ul", "ol", "article", "section", "header", "main", "aside",
-  "nav", "pre", "fieldset", "legend", "label", "button", "textarea"]);
+  "nav", "pre", "tr", "th", "td", "fieldset", "legend", "label", "button", "textarea"]);
 
 function refuse(what) {
   return () => { throw new Error(`the page used ${what}: it must build the DOM from text nodes`); };

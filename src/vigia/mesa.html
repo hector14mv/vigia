@@ -256,6 +256,21 @@ code { font: 500 12.5px var(--mesa-mono); padding: 1px 5px; border-radius: 5px; 
 .merged-list li + li { border-top: 1px solid var(--mesa-line); }
 .merged-list .tx { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .merged-list a.tx { text-decoration: none; display: block; line-height: 44px; }
+/* factory: who does what (read-only; the table scrolls inside its own container, never the page) */
+.who { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.who-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid var(--mesa-line); background: var(--mesa-surface); max-width: 100%; }
+.who-table { border-collapse: collapse; min-width: 640px; width: 100%; font-size: 13px; }
+.who-table th, .who-table td { text-align: left; vertical-align: top; padding: 10px 12px; }
+.who-table thead th { font: 600 11px/1 var(--mesa-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mesa-ink-3); border-bottom: 1px solid var(--mesa-line); }
+.who-table tbody tr + tr > * { border-top: 1px solid var(--mesa-line); }
+.who-table tbody th { width: 1%; white-space: nowrap; }
+.seat { display: flex; flex-direction: column; gap: 3px; min-width: 150px; }
+.seat .id { font: 500 12.5px/1.35 var(--mesa-mono); overflow-wrap: anywhere; }
+.seat .sub { font: 400 12px/1.4 var(--mesa-mono); color: var(--mesa-ink-3); }
+.seat .mark { align-self: flex-start; font: 600 11px/1 var(--mesa-mono); padding: 4px 6px; border-radius: 5px; }
+.seat .mark.rec { background: var(--mesa-ok-bg); color: var(--mesa-ok-ink); }
+.seat .mark.chg { background: var(--mesa-turn-bg); color: var(--mesa-turn-ink); box-shadow: inset 0 0 0 1px var(--mesa-turn); }
+.who-note { font-size: 13px; color: var(--mesa-ink-2); overflow-wrap: anywhere; }
 .board-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid var(--mesa-line); background: var(--mesa-surface); }
 .board { min-width: 1080px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .col { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px; min-height: 220px; min-width: 0; }
@@ -1195,6 +1210,33 @@ a.ev { min-height: 44px; }
       h("span", { "class": "bar", "aria-hidden": "true" }, h("i", { style: "width:" + s.pct + "%" })));
   }
 
+  /* ---------- Factory: who does what (read-only; the assignment lives in vigia.toml) ---------- */
+  function seatCell(seat) {
+    if (!seat) return h("td", null, h("span", { "class": "c-3" }, "none"));
+    return h("td", null, h("div", { "class": "seat" },
+      h("div", { "class": "id" }, seat.engine + " · " + seat.model),
+      seat.effort ? h("div", { "class": "sub" }, "effort " + seat.effort) : null,
+      h("div", { "class": "sub" }, "lab " + seat.lab),
+      seat.recommended ? h("div", { "class": "mark rec" }, "✓ recommended") : h("div", { "class": "mark chg" }, "◇ changed")));
+  }
+  function whoDoesWhat(r) {
+    var tiers = Array.isArray(r.tiers) ? r.tiers : [];
+    var body = !tiers.length
+      ? h("div", { "class": "empty on-surface" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
+          h("span", { "class": "tx" }, h("b", null, "The tier assignment for " + short(r.repo) + " could not be read"),
+            h("span", null, "This is an error, not an empty assignment. Check the config this repository was loaded from, then restart vigia.")))
+      : h("div", { "class": "who-wrap" }, h("table", { "class": "who-table" },
+          h("thead", null, h("tr", null, ["Tier", "Builder", "Gate", "Reviewer", "Human label"].map(function (c) { return h("th", { scope: "col" }, c); }))),
+          h("tbody", null, tiers.map(function (t) {
+            return h("tr", null, h("th", { scope: "row" }, tierChip(t.tier)), seatCell(t.builder), seatCell(t.gate), seatCell(t.reviewer),
+              h("td", null, t.human ? "required" : "no"));
+          }))));
+    return h("section", { "class": "who", "aria-label": "Who does what in " + short(r.repo), "data-k": "who-" + r.repo },
+      h("h3", { "class": "group-h" }, "Who does what"), body,
+      h("p", { "class": "who-note" }, "Set in ", h("code", null, "vigia.toml"), " in this repository. vigia checks it on load: exact model ids only, and a gate never from the builder's lab."),
+      r.config_path ? h("p", { "class": "meta" }, r.config_path) : null);
+  }
+
   /* ---------- phone: Factory ---------- */
   function repoCounts(r) {
     var prs = (r.prs || []).length, builds = (r.jobs || []).filter(function (j) { return j.issue; }).length;
@@ -1266,7 +1308,7 @@ a.ev { min-height: 44px; }
       out.push(h("section", { "class": "gut", style: "margin-top:26px;display:flex;flex-direction:column;gap:10px" },
         h("div", { style: "display:flex;align-items:baseline;gap:10px;flex-wrap:wrap" }, h("h2", { "class": "t-section" }, short(r.repo)), h("span", { "class": "meta" }, repoCounts(r))),
         r.prs === null ? prsUnknown(r) : null,
-        cards.length ? cards : r.prs === null ? null : h("p", { "class": "note" }, "No open pull requests."), queueBox(r)));
+        cards.length ? cards : r.prs === null ? null : h("p", { "class": "note" }, "No open pull requests."), queueBox(r), whoDoesWhat(r)));
     });
     var mt = mergedToday();
     out.push(h("section", { "class": "gut", style: "margin-top:26px;display:flex;flex-direction:column;gap:8px" },
@@ -1340,7 +1382,7 @@ a.ev { min-height: 44px; }
         return h("section", { style: "display:flex;flex-direction:column;gap:10px" },
           h("div", { style: "display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px" }, h("h2", { "class": "t-section mono" }, short(r.repo)), h("span", { "class": "meta", style: "font-size:12.5px" }, repoCounts(r))),
           r.prs === null ? prsUnknown(r) : null,
-          board(r));
+          board(r), whoDoesWhat(r));
       }),
       h("p", { "class": "foot", style: "font-size:13px" }, "● running · ◆ waiting for you · ■ parked · ○ waiting · ✓ merged. T0 skips Review and Human; T1 skips Human. A card sits in the column of its next step.")
     ];

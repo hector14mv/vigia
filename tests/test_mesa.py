@@ -18,7 +18,7 @@ from fakes import APPROVE, CHANGES, engine, git
 from test_decisions import BODY
 from test_e2e import TICKET, world  # noqa: F401  (world is a fixture)
 from vigia import builder, jobs, mesa
-from vigia.config import Labels
+from vigia.config import Labels, default_tiers
 from vigia.proc import CommandError
 from vigia.watch import tick
 
@@ -1708,3 +1708,110 @@ def test_every_office_animation_sits_under_no_preference_and_uses_only_tokens(wo
     assert widths and max(widths) <= 64
     # a column is at most its own size and shrinks with the viewport, so no grid can push the page wider
     assert "min(240px, 100%)" in css and "overflow-x" not in css and "nowrap" not in css
+
+
+def _seats(repo):
+    return {
+        (row["tier"], role): row[role]
+        for row in repo["tiers"]
+        for role in ("builder", "gate", "reviewer")
+        if row[role]
+    }
+
+
+def test_the_state_says_who_builds_gates_and_reviews_each_tier(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    repo = mesa.state([ctx])["repos"][0]
+    assert [r["tier"] for r in repo["tiers"]] == ["T0", "T1", "T2"]
+    assert [r["human"] for r in repo["tiers"]] == [False, False, True]
+    assert repo["tiers"][0]["reviewer"] is None
+    seats = _seats(repo)
+    assert all(seat["recommended"] for seat in seats.values())  # the default config is the recommended one
+    assert seats[("T1", "builder")] == {
+        "engine": "claude",
+        "model": "claude-sonnet-5-5",
+        "effort": "high",
+        "lab": "anthropic",
+        "recommended": True,
+    }
+    assert seats[("T2", "gate")]["lab"] == "openai" and seats[("T2", "gate")]["model"] == "gpt-6.1-sol"
+    for row in repo["tiers"]:
+        assert row["gate"]["lab"] != row["builder"]["lab"]
+
+
+def test_a_seat_that_differs_from_the_recommended_one_is_the_only_one_marked_changed(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    t1 = ctx.cfg.tiers["T1"]
+    tiers = {**ctx.cfg.tiers, "T1": replace(t1, reviewer=replace(t1.reviewer, model="claude-opus-5-4"))}
+    ctx, _ = build([], cfg=replace(ctx.cfg, tiers=tiers, path=Path("/work/repo/vigia.toml")))
+    repo = mesa.state([ctx])["repos"][0]
+    changed = [key for key, seat in _seats(repo).items() if not seat["recommended"]]
+    assert changed == [("T1", "reviewer")]
+    assert _seats(repo)[("T1", "reviewer")]["model"] == "claude-opus-5-4"  # exact, as configured
+    assert repo["config_path"] == "/work/repo/vigia.toml"
+
+
+def test_the_seats_are_marked_against_the_defaults_of_the_t0_builders_engine(world):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    flipped = default_tiers("codex")
+    ctx, _ = build([], cfg=replace(ctx.cfg, tiers=flipped))
+    repo = mesa.state([ctx])["repos"][0]
+    assert all(seat["recommended"] for seat in _seats(repo).values())
+    assert repo["tiers"][0]["builder"]["lab"] == "openai" and repo["tiers"][0]["gate"]["lab"] == "anthropic"
+
+
+def test_the_factory_shows_who_does_what_on_both_layouts(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    t1 = ctx.cfg.tiers["T1"]
+    tiers = {**ctx.cfg.tiers, "T1": replace(t1, reviewer=replace(t1.reviewer, model="claude-opus-5-4"))}
+    ctx, _ = build([], cfg=replace(ctx.cfg, tiers=tiers, path=Path("/work/repo/vigia.toml")))
+    s = mesa.state([ctx])
+    shown = _render(tmp_path, s, routes=("factory",))
+    for view in _views(shown, "factory"):
+        text, html = view["text"], view["html"]
+        assert "Who does what" in text
+        for column in ("Builder", "Gate", "Reviewer", "Human label"):
+            assert f'<th scope="col">{column}</th>' in html
+        assert html.count("<tbody>") == 1 and html.split("<tbody>")[1].count("<tr>") == 3
+        assert "claude · claude-sonnet-5-5" in text and "gpt-6.1-sol" in text
+        assert "claude-opus-5-4" in text and "effort high" in text and "none" in text
+        assert "lab anthropic" in text and "lab openai" in text
+        assert "required" in text and "no" in text.split("Human label")[1]
+        assert text.count("◇ changed") == 1 and text.count("✓ recommended") == 7
+        assert (
+            "Set in vigia.toml in this repository. vigia checks it on load: exact model ids only, and a "
+            "gate never from the builder's lab." in text
+        )
+        assert "/work/repo/vigia.toml" in text
+        # nothing here can change the assignment
+        section = html.split('<section class="who"')[1].split("</section>")[0]
+        assert not re.search(r"<(form|input|button|select|textarea|a)[ >]", section)
+        # the gate's lab is never the builder's: each row reads builder anthropic, gate openai
+        rows = html.split("<tbody>")[1].split("</tbody>")[0].split("<tr>")[1:]
+        for row in rows:
+            cells = row.split("<td>")
+            assert "lab anthropic" in cells[1] and "lab openai" in cells[2]
+
+
+def test_a_repo_without_a_readable_assignment_shows_an_error_not_an_empty_table(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    s = mesa.state([ctx])
+    for broken in (None, []):
+        page = dict(s, repos=[dict(s["repos"][0], tiers=broken)])
+        shown = _render(tmp_path, page, routes=("factory",))
+        for view in _views(shown, "factory"):
+            assert "could not be read" in view["text"] and "error, not an empty assignment" in view["text"]
+            assert "<table" not in view["html"]
+
+
+def test_the_assignment_table_scrolls_inside_its_own_container():
+    page = mesa.PAGE.read_text(encoding="utf-8")
+    assert re.search(r"\.who-wrap \{[^}]*overflow-x: auto", page)  # a phone scrolls the table, never the page
+    assert re.search(r"\.who-table \{[^}]*min-width: \d+px", page)
+    css = page.split("/* factory: who does what")[1].split(".board-wrap")[0]
+    assert "#" not in css and "rgb" not in css and "oklch" not in css  # tokens only: both themes follow them
