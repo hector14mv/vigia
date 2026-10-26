@@ -1588,7 +1588,7 @@ a.ev { min-height: 44px; }
     var sh = shelfItems(next), n = sh.items.length, names = function (l) { return l.map(function (r) { return short(r.repo); }).join(", "); };
     // Not every list was read: the header says so instead of asserting that nothing is waiting.
     var open = sh.unknown.length > 0 || sh.reading.length > 0;
-    var meta = n ? plural(n, "parked item") + " need a person" + (open ? ", more may be waiting" : "") : sh.unknown.length ? "Unknown: not all could be read" : sh.reading.length ? "Reading GitHub…" : "Nothing parked";
+    var meta = n ? plural(n, "parked item") + (n === 1 ? " needs a person" : " need a person") + (open ? ", more may be waiting" : "") : sh.unknown.length ? "Unknown: not all could be read" : sh.reading.length ? "Reading GitHub…" : "Nothing parked";
     return h("section", { "class": "ocorner", "aria-labelledby": "office-shelf-h" },
       h("div", { "class": "chd" }, shelfArt(n), h("div", { "class": "stack" }, h("h2", { id: "office-shelf-h" }, "Waiting for you"),
         h("p", { "class": "meta" }, meta)), h("span", { "class": n ? "badge md" : "fact", "data-k": "shelf-count" }, n ? String(n) + (open ? "+" : "") : open ? "?" : "0")),
