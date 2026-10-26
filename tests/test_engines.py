@@ -534,11 +534,20 @@ def test_an_opencode_session_through_the_real_runner(tmp_path, opencode, role):
     else:
         assert inline == {"share": "disabled"}
     # the config was read under the session's own environment, before the inline config existed
-    [read] = opencode.configs()
+    [read, user] = opencode.configs()
     assert read["argv"] == ["--pure", "debug", "config"] and read["cwd"] == os.path.realpath(work)
     assert read["env"]["GH_TOKEN"] == SESSION_GH_TOKEN
     assert read["env"]["XDG_CONFIG_HOME"] == env["XDG_CONFIG_HOME"]
     assert {k: v for k, v in read["env"].items() if k.startswith("OPENCODE_")} == OC_FLAGS
+    # then the user's own config, for the provider check: their config home and OPENCODE_CONFIG*, project config off
+    assert user["argv"] == ["--pure", "debug", "config"] and user["cwd"] == os.path.realpath(work)
+    assert user["env"]["XDG_CONFIG_HOME"] == str(tmp_path / "user-config")
+    assert {k: v for k, v in user["env"].items() if k.startswith("OPENCODE_")} == {
+        **OC_FLAGS,
+        "OPENCODE_CONFIG": str(tmp_path / "evil.json"),
+        "OPENCODE_CONFIG_CONTENT": '{"permission": {"bash": "allow"}}',
+        "OPENCODE_CONFIG_DIR": str(tmp_path / "user-config" / "opencode"),
+    }
     assert not list((tmp_path / "root").iterdir())  # the session's gh config and config home are gone again
 
 
@@ -598,6 +607,76 @@ def test_an_opencode_session_does_not_start_on_a_config_vigia_did_not_set(tmp_pa
     assert not list((tmp_path / "root").iterdir())
 
 
+def _user_config(tmp_path, extra: dict) -> None:
+    path = tmp_path / "user-config" / "opencode" / "opencode.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), **extra}))
+
+
+@pytest.mark.parametrize(
+    "routing, names",
+    [
+        # a private proxy for the seat's provider: on the empty home the session would reach the public endpoint
+        (
+            {"provider": {"github-copilot": {"options": {"baseURL": "https://proxy.internal/v1"}}}},
+            ["provider.github-copilot"],
+        ),
+        ({"provider": {"github-copilot": {"api": "https://proxy.internal"}}}, ["provider.github-copilot"]),
+        ({"disabled_providers": ["github-copilot"]}, ["disabled_providers"]),
+        ({"enabled_providers": ["internal-proxy"]}, ["enabled_providers"]),
+    ],
+)
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_an_opencode_session_does_not_start_when_the_user_routes_its_provider(
+    tmp_path, opencode, role, routing, names
+):
+    _user_config(tmp_path, routing)
+    out, _ = _oc_run(tmp_path, role)
+    assert not out.ok and out.text == ""
+    assert len(opencode.configs()) == 2 and opencode.runs() == []  # both configs read, never run
+    log = out.log.read_text()
+    assert "not started" in log and f"{names} for provider 'github-copilot'" in log
+    assert "proxy.internal" not in log  # names only, never values
+    assert not list((tmp_path / "root").iterdir())
+
+
+def test_a_provider_route_set_through_the_user_s_opencode_variables_is_seen(tmp_path, opencode, monkeypatch):
+    # OPENCODE_CONFIG_CONTENT never reaches the session, but the user's own `opencode` would route through it
+    monkeypatch.setenv(
+        "OPENCODE_CONFIG_CONTENT", json.dumps({"provider": {"github-copilot": {"options": {"baseURL": "x"}}}})
+    )
+    out, _ = _oc_run(tmp_path, "builder")
+    assert not out.ok and opencode.runs() == []
+    assert "['provider.github-copilot']" in out.log.read_text()
+
+
+def test_the_user_s_routes_for_other_providers_do_not_stop_a_session(tmp_path, opencode):
+    _user_config(
+        tmp_path,
+        {
+            "provider": {
+                "openai": {"options": {"baseURL": "https://proxy.internal/v1"}},
+                "github-copilot": {},
+            },
+            "disabled_providers": ["openai"],
+            "enabled_providers": ["github-copilot", "openai"],
+        },
+    )
+    out, _ = _oc_run(tmp_path, "reviewer")
+    assert out.ok and len(opencode.runs()) == 1
+
+
+@pytest.mark.parametrize(
+    "broken", ['{"provider": ', '{"provider": "openai"}', '{"disabled_providers": "github-copilot"}']
+)
+def test_an_opencode_session_does_not_start_when_the_user_s_config_cannot_be_read(tmp_path, opencode, broken):
+    (tmp_path / "user-config" / "opencode" / "opencode.json").write_text(broken)
+    out, _ = _oc_run(tmp_path, "builder")
+    assert not out.ok and out.text == ""
+    assert opencode.runs() == []  # the fake dies on the unparsable file, like a failed read
+    log = out.log.read_text()
+    assert "not started" in log and "`opencode debug config`" in log
+
+
 def test_opencode_env_drops_every_opencode_variable_it_is_given(tmp_path, opencode):
     home = tmp_path / "session-config"
     home.mkdir()
@@ -609,7 +688,7 @@ def test_opencode_env_drops_every_opencode_variable_it_is_given(tmp_path, openco
         "OPENCODE_CONFIG_DIR": str(tmp_path / "user-config" / "opencode"),
         "OPENCODE_PERMISSION": '{"bash": "allow"}',
     }
-    env = opencode_env(given, "reviewer", tmp_path, home)
+    env = opencode_env(given, "reviewer", tmp_path, home, "github-copilot")
     assert {k for k in env if k.startswith("OPENCODE_")} == {*OC_FLAGS, "OPENCODE_CONFIG_CONTENT"}
     assert json.loads(env["OPENCODE_CONFIG_CONTENT"])["permission"] == READ_ONLY
     assert env["XDG_CONFIG_HOME"] == str(home)

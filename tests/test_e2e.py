@@ -883,6 +883,8 @@ def test_an_opencode_gate_reviews_a_claude_build_and_the_pr_merges(world, tmp_pa
     fake = FakeOpencode(tmp_path / "bin", OPENCODE_EMPTY_CONFIG)
     monkeypatch.setenv("PATH", f"{fake.dir}{os.pathsep}{os.environ['PATH']}")  # for `opencode debug config`
     monkeypatch.setenv("HOME", str(tmp_path / "home"))  # no ~/.opencode: the session starts
+    for var in ("XDG_CONFIG_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT"):
+        monkeypatch.delenv(var, raising=False)  # no user config routes the provider: the session starts
     gh, build = world
     tiers = dict(default_tiers("claude"))
     tiers["T0"] = replace(tiers["T0"], gate=Seat("opencode", "github-copilot/gpt-6-sol"))

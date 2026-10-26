@@ -350,7 +350,8 @@ OPENCODE_EMPTY_CONFIG = {
 # A stand-in for the `opencode` binary: `--pure debug config` prints the resolved config from `settings.json`
 # (or fails), `run` records its argv, environment, working directory and stdin to `runs.jsonl` and prints events.
 # Like 1.18.32, both load the global config from $XDG_CONFIG_HOME/opencode (its opencode.json merged into the config,
-# its tools/*.ts as tools) and from ~/.opencode, so a test can plant one there and see whether a session got it.
+# its tools/*.ts as tools) and from ~/.opencode, then OPENCODE_CONFIG_CONTENT on top, so a test can plant one there
+# and see whether a session got it.
 FAKE_OPENCODE = """\
 import json, os, sys
 from pathlib import Path
@@ -364,6 +365,7 @@ loaded = {}
 for d in dirs:
     if (d / "opencode.json").is_file():
         loaded.update(json.loads((d / "opencode.json").read_text()))
+loaded.update(json.loads(os.environ.get("OPENCODE_CONFIG_CONTENT") or "{}"))  # inline config goes on top
 record = {"argv": args, "env": dict(os.environ), "cwd": os.getcwd(), "tools": tools}
 if args[:3] == ["--pure", "debug", "config"]:
     with (here / "configs.jsonl").open("a") as fh:

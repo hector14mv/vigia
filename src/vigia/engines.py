@@ -101,6 +101,9 @@ OPENCODE_HOME_INSTALL = frozenset(
 # not control (a managed config, ~/.opencode, a remote config), and the session does not start.
 _OPENCODE_EMPTY_CONFIG = {"agent": {}, "command": {}, "mode": {}, "plugin": [], "mcp": {}}
 _OPENCODE_CONFIG_IDENTITY = {"$schema", "username"}
+# Where a user points OpenCode at another config besides $XDG_CONFIG_HOME/opencode. A session never gets them, but the
+# provider check (`opencode_user_routing`) reads the user's config with them, as the user's own `opencode` would.
+_OPENCODE_USER_CONFIG_VARS = ("OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT")
 # How long `opencode debug config` may take before the session is refused.
 _OPENCODE_CONFIG_SECONDS = 120
 
@@ -248,7 +251,7 @@ class Engines:
             env = session_env(os.environ, gh_config)
             if oc_home is not None:
                 try:
-                    env = opencode_env(env, role, workdir, oc_home)
+                    env = opencode_env(env, role, workdir, oc_home, seat.model.partition("/")[0])
                 except OpencodeConfigError as exc:  # the session does not start on a config vigia did not set
                     log.write_text(f"vigia: OpenCode session not started: {exc}\n", encoding="utf-8")
                     return Outcome(False, "", 1, False, round(time.monotonic() - started, 1), log)
@@ -346,7 +349,32 @@ def opencode_unexpected_config(resolved: Mapping) -> list[str]:
     )
 
 
-def opencode_env(env: Mapping[str, str], role: str, workdir: Path, config_home: Path) -> dict[str, str]:
+def opencode_user_routing(resolved: Mapping, provider: str) -> list[str]:
+    """What the user's own resolved config decides about `provider` that an empty configuration home would drop: its
+    `provider.<id>` table (a baseURL, an api, a package, its models) or turning it off. Names only, never values."""
+    providers = resolved.get("provider", {})
+    if not isinstance(providers, dict):
+        raise OpencodeConfigError("`opencode debug config`: 'provider' is not a table")
+    found = [f"provider.{provider}"] if providers.get(provider) else []
+    disabled = resolved.get("disabled_providers") or []
+    enabled = resolved.get("enabled_providers")
+    if not isinstance(disabled, list) or (enabled is not None and not isinstance(enabled, list)):
+        raise OpencodeConfigError("`opencode debug config`: a providers list is not a list")
+    if provider in disabled:
+        found.append("disabled_providers")
+    if enabled is not None and provider not in enabled:
+        found.append("enabled_providers")
+    return found
+
+
+def opencode_env(
+    env: Mapping[str, str],
+    role: str,
+    workdir: Path,
+    config_home: Path,
+    provider: str,
+    user_env: Mapping[str, str] = os.environ,
+) -> dict[str, str]:
     """An OpenCode session's environment: `env` (the session allowlist and guards, with no OPENCODE_* from the user),
     `config_home` (an empty directory vigia made for this session) as XDG_CONFIG_HOME, so ~/.config/opencode never
     loads, `OPENCODE_SESSION_FLAGS`, and the inline config for `role`.
@@ -354,8 +382,14 @@ def opencode_env(env: Mapping[str, str], role: str, workdir: Path, config_home: 
     The provider login is not config: OpenCode keeps it in its data directory (~/.local/share/opencode/auth.json),
     which XDG_CONFIG_HOME does not move. Raises OpencodeConfigError, and the session must not start, when ~/.opencode
     holds config, or when OpenCode still resolves a config of any kind (an MCP server, an agent, a command, a plugin,
-    a permission...) on the empty home."""
+    a permission...) on the empty home. It also raises when the user's own config (read from `env`'s XDG_CONFIG_HOME
+    and `user_env`'s OPENCODE_CONFIG*) configures or turns off the seat's `provider`: on the empty home the session
+    would fall back to the catalog's public endpoint with the same login, so a proxy or a private baseURL would be
+    bypassed without a sign."""
     out = {k: v for k, v in env.items() if not k.startswith("OPENCODE_")}
+    user = dict(out)  # the user's config home, as their own `opencode` resolves it, project config still off
+    user.update(OPENCODE_SESSION_FLAGS)
+    user.update({k: user_env[k] for k in _OPENCODE_USER_CONFIG_VARS if k in user_env})
     out["XDG_CONFIG_HOME"] = str(config_home)
     out.update(OPENCODE_SESSION_FLAGS)
     extras = opencode_home_extras(out)
@@ -368,6 +402,13 @@ def opencode_env(env: Mapping[str, str], role: str, workdir: Path, config_home: 
         raise OpencodeConfigError(
             f"`opencode debug config` resolves {unexpected} on an empty configuration home "
             "(a managed or remote config?); vigia runs OpenCode only on a config it set itself"
+        )
+    routing = opencode_user_routing(opencode_config(user, workdir), provider)
+    if routing:
+        raise OpencodeConfigError(
+            f"your OpenCode config sets {routing} for provider {provider!r}, which a session cannot honor: it runs on "
+            "an empty configuration home and would reach the provider's public endpoint instead; remove the setting "
+            "or name another provider in the seat"
         )
     out["OPENCODE_CONFIG_CONTENT"] = json.dumps(opencode_inline_config(role))
     return out
