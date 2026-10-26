@@ -434,6 +434,65 @@ a.ev { min-height: 44px; }
 .tierbar .v { font: 600 14px/1 var(--mesa-mono); text-align: right; font-variant-numeric: tabular-nums; }
 .theme-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .theme-row .seg button { min-width: 64px; }
+
+/* office: the factory as a top-down office. Tokens only; every animation sits under no-preference. */
+.office { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.office section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ofloor { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 10px; }
+.odesk { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 14px; background: var(--mesa-surface); border: 1px solid var(--mesa-line); min-width: 0; }
+.odesk.free { background: transparent; border-style: dashed; border-color: var(--mesa-line-strong); color: var(--mesa-ink-3); }
+.odesk.over { border-color: var(--mesa-danger); }
+.ofig, .oempty { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 56px; color: var(--mesa-ink); text-decoration: none; border-radius: 10px; }
+.ofig .otx, .oempty .otx { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.orole { font: 600 14px/1.2 var(--mesa-font); overflow-wrap: anywhere; }
+.owho, .oref { font: 400 12px/1.3 var(--mesa-mono); color: var(--mesa-ink-3); overflow-wrap: anywhere; }
+.oref { color: var(--mesa-ink-2); }
+.oage { font: 600 12.5px/1.2 var(--mesa-mono); color: var(--mesa-live-ink); }
+.odesk.over .oage, .oover { color: var(--mesa-danger-ink); }
+.oover { font: 600 12px/1.3 var(--mesa-font); }
+.obar { height: 4px; border-radius: 2px; background: var(--mesa-surface-2); overflow: hidden; display: flex; }
+.obar i { display: block; height: 100%; background: var(--mesa-live); }
+.odesk.over .obar i { background: var(--mesa-danger); }
+.oart { width: 64px; height: 56px; display: block; overflow: visible; }
+.o-top { fill: var(--mesa-surface-2); stroke: var(--mesa-line-strong); stroke-width: 1.5; }
+.o-screen { fill: var(--mesa-ink-3); }
+.o-head { fill: var(--mesa-ink-2); }
+.o-body { fill: var(--mesa-live-bg); stroke: var(--mesa-live); stroke-width: 1.5; }
+.odesk.over .o-body { fill: var(--mesa-danger-bg); stroke: var(--mesa-danger); }
+.o-hand { fill: var(--mesa-ink-2); }
+.o-sheet { fill: var(--mesa-surface); stroke: var(--mesa-line-strong); stroke-width: 1.5; }
+.o-scan { fill: var(--mesa-live); }
+.odesk.over .o-scan { fill: var(--mesa-danger); }
+.o-chair { fill: none; stroke: var(--mesa-line-strong); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.o-tray { fill: var(--mesa-surface-2); stroke: var(--mesa-line-strong); stroke-width: 1.5; }
+.o-paper { fill: var(--mesa-ok-bg); stroke: var(--mesa-ok); stroke-width: 1.2; }
+.o-shelf { fill: none; stroke: var(--mesa-line-strong); stroke-width: 2; stroke-linecap: round; }
+.o-folder { fill: var(--mesa-turn-bg); stroke: var(--mesa-turn); stroke-width: 1.2; }
+.olane { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 8px; }
+.opr { display: flex; flex-direction: column; gap: 4px; min-height: 44px; padding: 8px 10px; border-radius: 10px; text-decoration: none; color: var(--mesa-ink); background: var(--mesa-bg); box-shadow: inset 0 0 0 1px var(--mesa-line); min-width: 0; }
+.opr .ohd { display: flex; align-items: center; gap: 6px; }
+.opr .ref { flex: 1; font: 500 12px/1 var(--mesa-mono); color: var(--mesa-ink-3); }
+.opr .ottl { font: 600 13.5px/1.3 var(--mesa-font); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.opr .st { font: 600 12px/1.35 var(--mesa-font); overflow-wrap: anywhere; }
+.opr .chip { font-size: 10.5px; padding: 4px 6px; border-radius: 5px; }
+.oside { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px; align-items: start; }
+.ocorner { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ocorner .chd { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ocorner .chd .oart { width: 56px; height: 44px; flex: none; }
+.ocorner .chd .stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ocorner h2 { font: 600 17px/1.2 var(--mesa-font); }
+.ocorner .merged-list .age { flex: none; }
+.ocorner .btn { align-self: flex-start; }
+@keyframes o-tap { to { transform: translateY(-2px); } }
+@keyframes o-scan { to { transform: translateY(9px); } }
+@keyframes o-arrive { from { transform: translateY(-14px); opacity: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  .o-hand { animation: o-tap 0.32s ease-in-out infinite alternate; }
+  .o-hand.r { animation-duration: 0.41s; }
+  .o-scan { animation: o-scan 1.8s linear infinite; }
+  .opr.arrive { animation: o-arrive 0.45s ease-out; }
+}
+/* /office */
 </style>
 </head>
 <body>
@@ -448,12 +507,13 @@ a.ev { min-height: 44px; }
   var STEPS = ["build", "ci", "gate", "review", "human", "merge"];
   var STEP_LABEL = { build: "Build", ci: "CI", gate: "Gate", review: "Review", human: "Human", merge: "Merge" };
   var STEP_GLYPH = { now: " ●", wait: " ◆", stop: " ■" };
-  // The four places, the same on both layouts. The desktop rail keeps the same order.
+  // The five places, the same on both layouts. The desktop rail keeps the same order.
   var PLACES = [
     { id: "turn", label: "Your turn", icon: "turn" },
     { id: "factory", label: "Factory", icon: "factory" },
     { id: "feed", label: "Feed", icon: "feed" },
-    { id: "fuel", label: "Fuel", icon: "fuel" }
+    { id: "fuel", label: "Fuel", icon: "fuel" },
+    { id: "office", label: "Office", icon: "office" }
   ];
   var PLACE_IDS = PLACES.map(function (p) { return p.id; });
   var NB = " ";
@@ -482,7 +542,7 @@ a.ev { min-height: 44px; }
   /* ---------- in-memory view state (never sent anywhere) ---------- */
   var S = {
     state: null, error: null, serverFailed: false, lastOk: null, sample: false, soon: null,
-    route: null, lastPlace: "turn",
+    route: null, lastPlace: "turn", office: { seat: {}, placed: {} },
     picks: {}, sheet: null, flash: null, manual: null,
     pr: {}, openFindings: {}, feedFilter: "all", dirty: false
   };
@@ -523,6 +583,7 @@ a.ev { min-height: 44px; }
     factory: [["circle", { cx: 5, cy: 12, r: 2.2 }], ["circle", { cx: 12, cy: 12, r: 2.2 }], ["circle", { cx: 19, cy: 12, r: 2.2 }], ["path", { d: "M7.2 12h2.6M14.2 12h2.6" }]],
     feed: [["path", { d: "M5 7h14M5 12h14M5 17h9" }]],
     fuel: [["path", { d: "M4.5 16a7.5 7.5 0 1 1 15 0" }], ["path", { d: "m12 16 3.5-4.5" }]],
+    office: [["rect", { x: 3, y: 5, width: 18, height: 9, rx: 2 }], ["path", { d: "M8 14v5M16 14v5M7 19h10" }], ["circle", { cx: 12, cy: 9.5, r: 1.6 }]],
     chat: [["path", { d: "M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z" }]],
     lock: [["rect", { x: 5, y: 11, width: 14, height: 9, rx: 2 }], ["path", { d: "M8 11V8a4 4 0 0 1 8 0v3" }]]
   };
@@ -1105,7 +1166,7 @@ a.ev { min-height: 44px; }
         var mins = t == null ? null : (now() - t) / 60000;
         var over = mins != null && mins > capMin;
         out.push({
-          r: r, j: j, over: over, cap: capMin,
+          r: r, j: j, over: over, cap: capMin, tier: tier,
           what: actionLabel(j.action, tier) + " · " + short(r.repo) + (j.issue ? " issue #" : " #") + j.number,
           eng: [j.engine, j.model, roleOf(j, tier)].filter(Boolean).join(" · ") + (over ? " · over the " + capMin + " min cap" : ""),
           age: t == null ? "" : dur(now() - t),
@@ -1399,6 +1460,185 @@ a.ev { min-height: 44px; }
       h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:12px;padding-top:16px" }, fuelBody(false))
     ];
   }
+
+  /* ---------- Office: the factory as a small top-down office, drawn from the state the page already polls ---------- */
+  function sv(tag, attrs) {
+    var e = document.createElementNS(SVG, tag), k;
+    for (k in attrs) e.setAttribute(k, attrs[k]);
+    for (var i = 2; i < arguments.length; i++) if (arguments[i]) e.appendChild(arguments[i]);
+    return e;
+  }
+  function art(w, hgt, kids) {
+    var s = sv("svg", { "class": "oart", width: w, height: hgt, viewBox: "0 0 " + w + " " + hgt, "aria-hidden": "true", focusable: "false" });
+    kids.forEach(function (k) { s.appendChild(k); });
+    return s;
+  }
+  // The animation starts where the clock is, so a page that rebuilds itself on every poll does not restart the motion.
+  function phase(period) { return "animation-delay:-" + (Date.now() % period) + "ms"; }
+  // Seated behind a desk, seen from the front: a builder or fixer types on a screen, a gate or reviewer reads a sheet.
+  function figureArt(reads) {
+    var kids = [sv("rect", { "class": "o-body", x: 19, y: 18, width: 26, height: 22, rx: 11 }), sv("circle", { "class": "o-head", cx: 32, cy: 12, r: 7 }),
+      sv("rect", { "class": "o-top", x: 3, y: 34, width: 58, height: 18, rx: 5 })];
+    if (reads) kids.push(sv("rect", { "class": "o-sheet", x: 22, y: 30, width: 20, height: 16, rx: 2 }), sv("rect", { "class": "o-scan", x: 25, y: 33, width: 14, height: 2, rx: 1, style: phase(1800) }));
+    else kids.push(sv("rect", { "class": "o-screen", x: 22, y: 36, width: 20, height: 5, rx: 2 }), sv("circle", { "class": "o-hand l", cx: 27, cy: 46, r: 2.6, style: phase(320) }),
+      sv("circle", { "class": "o-hand r", cx: 37, cy: 46, r: 2.6, style: phase(410) }));
+    return art(64, 56, kids);
+  }
+  function freeArt() {
+    return art(64, 56, [sv("circle", { "class": "o-chair", cx: 32, cy: 22, r: 11 }), sv("rect", { "class": "o-top", x: 3, y: 34, width: 58, height: 18, rx: 5 })]);
+  }
+  function trayArt(n) {
+    var kids = [sv("rect", { "class": "o-tray", x: 4, y: 20, width: 48, height: 20, rx: 4 })];
+    for (var i = 0; i < Math.min(n, 5); i++) kids.push(sv("rect", { "class": "o-paper", x: 9 + i, y: 30 - i * 3, width: 38, height: 8, rx: 2 }));
+    return art(56, 44, kids);
+  }
+  function shelfArt(n) {
+    var kids = [sv("path", { "class": "o-shelf", d: "M4 38h48" })];
+    for (var i = 0; i < Math.min(n, 4); i++) kids.push(sv("rect", { "class": "o-folder", x: 8 + i * 11, y: 14, width: 8, height: 24, rx: 2 }));
+    return art(56, 44, kids);
+  }
+  function jobKey(s, count) {
+    var k = s.r.repo + ":" + (s.j.target || (s.j.issue ? "issue-" : "pr-") + s.j.number) + ":" + s.j.action;
+    count[k] = (count[k] || 0) + 1;
+    return k + "#" + count[k];
+  }
+  // One desk per slot (never fewer than running jobs). A job keeps its desk from poll to poll: it takes the lowest
+  // free one when it first appears and gives it back when it ends.
+  function officeDesks() {
+    var ss = sessions(), total = slotsTotal(), n = Math.max(ss.length, total), seat = S.office.seat;
+    var live = {}, taken = {}, count = {}, desks = [], i;
+    ss.forEach(function (s) { s.key = jobKey(s, count); live[s.key] = 1; });
+    Object.keys(seat).forEach(function (k) { if (!live[k] || seat[k] >= n) delete seat[k]; else taken[seat[k]] = 1; });
+    ss.forEach(function (s) {
+      if (seat[s.key] == null) { i = 0; while (taken[i]) i++; seat[s.key] = i; taken[i] = 1; }
+    });
+    for (i = 0; i < n; i++) desks.push(null);
+    ss.forEach(function (s) { desks[seat[s.key]] = s; });
+    return { desks: desks, busy: ss.length, total: total };
+  }
+  // A PR card moves only when its place changed since the last time the Office was drawn.
+  function placeOf(next, r, number, where) {
+    var key = r.repo + "#" + number, was = S.office.placed[key];
+    next[key] = where;
+    return { key: key, moved: was != null && was !== where };
+  }
+  function officePr(r, p, where, next, withStatus) {
+    var at = placeOf(next, r, p.number, where), st = withStatus ? prStatus(r, p) : null;
+    return h("a", { "class": "opr" + (at.moved ? " arrive" : ""), href: prRoute(r.repo, p.number), "data-k": "opr-" + at.key },
+      h("div", { "class": "ohd" }, h("span", { "class": "ref" }, short(r.repo) + " #" + p.number), tierChip(p.tier)),
+      h("div", { "class": "ottl" }, p.title || "Title unknown"),
+      st ? h("div", { "class": "st t-" + st.tone }, st.text) : null);
+  }
+  function deskCard(s, i, next) {
+    var j = s.j, reads = j.action === "gate" || j.action === "review", role = roleOf(j, s.tier);
+    var who = j.engine || j.model ? (j.engine || "unknown") + " · " + (j.model || "unknown") : "engine and model unknown";
+    var ref = short(s.r.repo) + (j.issue ? " issue #" : " #") + j.number;
+    var fig = h(s.route ? "a" : "div", { "class": "ofig", href: s.route, "data-k": "fig-" + i },
+      figureArt(reads),
+      h("div", { "class": "otx" }, h("div", { "class": "orole" }, role), h("div", { "class": "owho" }, who), h("div", { "class": "oref" }, ref),
+        h("div", { "class": "oage" }, s.age || "time unknown"), s.over ? h("div", { "class": "oover" }, "■ over the " + s.cap + " min cap") : null));
+    var card;
+    if (j.issue) {
+      card = h("div", { "class": "opr" }, h("div", { "class": "ohd" }, h("span", { "class": "ref" }, short(s.r.repo) + " issue #" + j.number), j.tier ? tierChip(j.tier) : null),
+        h("div", { "class": "ottl" }, j.branch || "Building issue #" + j.number));
+    } else {
+      card = officePr(s.r, prIn(s.r, j.number) || { number: j.number, title: null, tier: s.tier }, "desk-" + i, next, false);
+    }
+    return h("div", { "class": "odesk" + (s.over ? " over" : ""), "data-k": "desk-" + i }, fig, h("span", { "class": "obar", "aria-hidden": "true" }, h("i", { style: "width:" + s.pct + "%" })), card);
+  }
+  function freeDesk(i) {
+    return h("div", { "class": "odesk free", "data-k": "desk-" + i }, h("div", { "class": "oempty" }, freeArt(),
+      h("div", { "class": "otx" }, h("div", { "class": "orole" }, "Free"), h("div", { "class": "owho" }, "no session at this desk"))));
+  }
+  // What could not be read, said the way the other places say it: unknown, never none.
+  function officeNotes() {
+    var out = [], rd = readingRepos();
+    if (rd.length) out.push(readingNote(rd));
+    out.push(repoErrors());
+    repos().forEach(function (r) {
+      if (r.error || reading(r) || !unreadOf(r).length) return;
+      out.push(h("div", { "class": "empty github" }, h("span", { "class": "ic warn", "aria-hidden": "true" }, "!"),
+        h("span", { "class": "tx" }, h("b", null, "Not all read for " + short(r.repo)),
+          h("span", null, "Could not read: " + unreadOf(r).join("; ") + ". What is missing is unknown, not none."))));
+    });
+    return out;
+  }
+  function shelfItems(next) {
+    var items = [], unknown = [], rd = [];
+    repos().forEach(function (r) {
+      if (reading(r)) { rd.push(r); return; }
+      (r.prs || []).forEach(function (p) { if (p.parked) { items.push({ r: r, p: p, since: p.since }); placeOf(next, r, p.number, "shelf"); } });
+      (r.parked_issues || []).forEach(function (i) { items.push({ r: r, i: i, since: i.since }); });
+      if (r.prs === null || r.parked_issues === null) unknown.push(r);
+    });
+    return { items: items.sort(bySince), unknown: unknown, reading: rd };
+  }
+  function shelfRow(x) {
+    if (x.p) {
+      return h("li", null, h("span", { "class": "c-danger", style: "font-weight:600" }, "■"),
+        h("a", { "class": "tx", href: prRoute(x.r.repo, x.p.number), "data-k": "shelf-" + x.r.repo + x.p.number }, short(x.r.repo) + " #" + x.p.number + " · " + x.p.title),
+        h("span", { "class": "age" }, since(x.p.since) || ""));
+    }
+    return h("li", null, h("span", { "class": "c-danger", style: "font-weight:600" }, "■"),
+      h("a", { "class": "tx", href: okHref(x.i.url) ? x.i.url : issueUrl(x.r.repo, x.i.number), target: "_blank", rel: "noopener noreferrer", "data-k": "shelf-" + x.r.repo + "i" + x.i.number },
+        short(x.r.repo) + " issue #" + x.i.number + " · " + x.i.title),
+      h("span", { "class": "age" }, since(x.i.since) || ""));
+  }
+  function officeShelf(next) {
+    var sh = shelfItems(next), n = sh.items.length, names = function (l) { return l.map(function (r) { return short(r.repo); }).join(", "); };
+    // Not every list was read: the header says so instead of asserting that nothing is waiting.
+    var open = sh.unknown.length > 0 || sh.reading.length > 0;
+    var meta = n ? plural(n, "parked item") + " need a person" + (open ? ", more may be waiting" : "") : sh.unknown.length ? "Unknown: not all could be read" : sh.reading.length ? "Reading GitHub…" : "Nothing parked";
+    return h("section", { "class": "ocorner", "aria-labelledby": "office-shelf-h" },
+      h("div", { "class": "chd" }, shelfArt(n), h("div", { "class": "stack" }, h("h2", { id: "office-shelf-h" }, "Waiting for you"),
+        h("p", { "class": "meta" }, meta)), h("span", { "class": n ? "badge md" : "fact", "data-k": "shelf-count" }, n ? String(n) + (open ? "+" : "") : open ? "?" : "0")),
+      n ? h("ul", { "class": "merged-list" }, sh.items.map(shelfRow)) : sh.unknown.length || sh.reading.length ? null : h("p", { "class": "note" }, "Nothing is parked. Anything else that needs you is in Your turn."),
+      sh.unknown.length ? h("p", { "class": "note c-danger" }, "! Unknown for " + names(sh.unknown) + ": its parked pull requests and tickets could not be read, so more may be waiting.") : null,
+      sh.reading.length ? h("p", { "class": "note" }, "Reading GitHub for " + names(sh.reading) + "…") : null,
+      nav("#/turn", "Open Your turn", "btn btn-secondary", "office-turn"));
+  }
+  function officeTray() {
+    var rows = mergedRows(), n = rows.length, gaps = repos().filter(function (r) { return r.error || reading(r) || unreadOf(r).length; });
+    return h("section", { "class": "ocorner", "aria-labelledby": "office-tray-h" },
+      h("div", { "class": "chd" }, trayArt(n), h("div", { "class": "stack" }, h("h2", { id: "office-tray-h" }, "Out tray"), h("p", { "class": "meta" }, plural(n, "merge") + " today")),
+        h("span", { "class": "fact strong", "data-k": "tray-count" }, String(n))),
+      n ? mergedList(true) : h("p", { "class": "note" }, gaps.length ? "Nothing merged today in the ledger. The ledger is read from this machine, not from GitHub." : "Nothing merged today yet."));
+  }
+  function officeBody() {
+    var m = officeDesks(), next = {}, quiet = !m.busy, lane = [], laneNotes = [], cards = m.desks.map(function (s, i) { return s ? deskCard(s, i, next) : freeDesk(i); });
+    repos().forEach(function (r) {
+      var list = (r.prs || []).filter(function (p) { return !p.parked && !jobFor(r, p.number); });
+      list.forEach(function (p) { lane.push(officePr(r, p, "lane", next, true)); });
+      if (r.prs === null) laneNotes.push(prsUnknown(r));
+    });
+    var shelf = officeShelf(next), tray = officeTray();
+    S.office.placed = next;
+    return h("div", { "class": "office" },
+      officeNotes(),
+      quiet ? h("div", { "class": "empty on-surface", role: "status" }, h("span", { "class": "ic idle", "aria-hidden": "true" }, "○"),
+        h("span", { "class": "tx" }, h("b", null, "The office is quiet"), h("span", null, "No session is running. The desks are free and fill when vigia has work for them."))) : null,
+      h("section", { "aria-labelledby": "office-desks-h" },
+        h("div", { style: "display:flex;align-items:baseline;gap:10px;flex-wrap:wrap" }, h("h2", { id: "office-desks-h", style: "font:600 17px/1.2 var(--mesa-font)" }, "Desks"),
+          h("span", { "class": "mono c-live", style: "font-weight:600;font-size:13px" }, m.busy + " of " + plural(m.total, "slot") + " at work")),
+        h("div", { "class": "ofloor" }, cards)),
+      h("section", { "aria-labelledby": "office-lane-h" }, h("h2", { id: "office-lane-h", "class": "group-h" }, "Between desks"),
+        lane.length ? h("div", { "class": "olane" }, lane) : null, laneNotes,
+        lane.length || laneNotes.length ? null : h("p", { "class": "note" }, "No pull request is waiting between desks.")),
+      h("div", { "class": "oside" }, tray, shelf),
+      h("p", { "class": "foot" }, "Drawn from the Factory's own state, refreshed every 15 s. A figure is one running session; the card at its desk is the PR or ticket it is working on."));
+  }
+  function phoneOffice() {
+    return [
+      h("div", { "class": "gut", style: "padding-top:14px;display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-title" }, "Office"),
+        h("p", { "class": "t-sub" }, "The factory at work: one desk per slot, one figure per running session.")),
+      h("div", { "class": "gut", style: "padding-top:16px" }, officeBody())
+    ];
+  }
+  function deskOffice() {
+    return [h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("h1", { "class": "t-display" }, "Office"),
+      h("p", { style: "font-size:16px;color:var(--mesa-ink-2)" }, "The factory at work: one desk per slot, one figure per running session.")), officeBody()];
+  }
+  /* /office */
 
   /* ---------- Decision mode ---------- */
   function currentDecision() {
@@ -1839,7 +2079,7 @@ a.ev { min-height: 44px; }
     var rt = S.route;
     if (rt.name === "decide") return h("div", { "class": "ph sub" }, h("div", { "class": "ph-in", style: "min-height:100vh;display:flex;flex-direction:column" }, phoneDecision()));
     if (rt.name === "pr") return h("div", { "class": "ph sub" }, h("div", { "class": "ph-in" }, phonePR()));
-    var body = { turn: phoneTurn, factory: phoneFactory, feed: phoneFeed, fuel: phoneFuel }[rt.name]();
+    var body = { turn: phoneTurn, factory: phoneFactory, feed: phoneFeed, fuel: phoneFuel, office: phoneOffice }[rt.name]();
     var b = banner(), sn = sampleNote();
     return h("div", { "class": "ph" }, h("div", { "class": "ph-in" }, phoneHeader(),
       b || sn ? h("div", { "class": "gut", style: "display:flex;flex-direction:column;gap:8px;padding-bottom:10px" }, b, sn) : null,
@@ -1864,7 +2104,7 @@ a.ev { min-height: 44px; }
       item("turn", "Your turn", "turn", m.count ? h("span", { "class": "badge md" }, String(m.count)) : null),
       decs ? item("decide", "Decisions", null, h("span", { "class": "n c-turn" }, String(decs)), true) : null,
       item("factory", "Factory", "factory", live ? h("span", { "class": "dot live pulse", "aria-label": live + " running" }) : null),
-      item("feed", "Feed", "feed"), item("fuel", "Fuel", "fuel"),
+      item("feed", "Feed", "feed"), item("fuel", "Fuel", "fuel"), item("office", "Office", "office"),
       h("span", { "class": "group-h rail-h" }, "Repos"),
       repos().map(function (r) {
         var jobs = (r.jobs || []).length, parked = (r.prs || []).filter(function (p) { return p.parked; }).length;
@@ -1911,6 +2151,8 @@ a.ev { min-height: 44px; }
       aside = deskTurnAside();
     } else if (rt.name === "factory") {
       main = h("main", { "class": "dk-main wide" }, head, deskFactory());
+    } else if (rt.name === "office") {
+      main = h("main", { "class": "dk-main wide" }, head, deskOffice());
     } else {
       var title = { feed: ["Feed", "What vigia did, newest first. Every line is one ledger row."], fuel: ["Fuel", "What each lab's plan has left this week, and what vigia spent from it."] }[rt.name];
       var body = { feed: function () { return feedBody(true); }, fuel: function () { return fuelBody(true); } }[rt.name]();
@@ -1972,7 +2214,7 @@ a.ev { min-height: 44px; }
   // a poll that arrived while you typed renders after you leave the field, late enough not to eat the click that moved focus
   app.addEventListener("focusout", function () { setTimeout(function () { if (S.dirty && !busyTyping() && !S.manual) renderNow(); }, 600); });
 
-  /* ---------- routes: #/turn #/factory #/feed #/fuel #/decide[/owner/repo/n] #/pr/owner/repo/n ---------- */
+  /* ---------- routes: #/turn #/factory #/feed #/fuel #/office #/decide[/owner/repo/n] #/pr/owner/repo/n ---------- */
   function parseRoute() {
     var p = location.hash.replace(/^#\/?/, "").split("/");
     if (p[0] === "pr" && p.length === 4 && NAME.test(p[1]) && NAME.test(p[2]) && /^\d{1,9}$/.test(p[3])) return { name: "pr", repo: p[1] + "/" + p[2], n: Number(p[3]) };
