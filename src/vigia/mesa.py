@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import decisions, fuel, jobs, tickets
-from .config import PROPOSED
+from .config import PROPOSED, Seat, default_tiers
 from .context import Ctx
 from .proc import CommandError
 from .rules import decide
@@ -74,6 +74,41 @@ def _seat(ctx: Ctx, action: str, tier: str | None) -> dict:
         return {"engine": None, "model": None}
     seat = {"gate": policy.gate, "review": policy.reviewer}.get(action, policy.builder)
     return {"engine": seat.engine, "model": seat.model} if seat else {"engine": None, "model": None}
+
+
+def _seat_view(seat: Seat | None, recommended: Seat | None) -> dict | None:
+    """One seat as the page shows it: what is configured, its lab from `Seat.family` (the lab the merge rules
+    use), and whether it equals vigia's recommended seat for that tier and role."""
+    if seat is None:
+        return None
+    return {
+        "engine": seat.engine,
+        "model": seat.model,
+        "effort": seat.effort,
+        "lab": seat.family,
+        "recommended": seat == recommended,
+    }
+
+
+def _tiers(ctx: Ctx) -> list[dict]:
+    """Who builds, gates and reviews each tier, marked against `default_tiers` for the T0 builder's engine.
+    Computed from the loaded config; the Mesa never reads or writes vigia.toml."""
+    tiers = ctx.cfg.tiers
+    first = tiers.get("T0")
+    defaults = default_tiers(first.builder.engine if first else "claude")
+    out = []
+    for tier, policy in tiers.items():
+        want = defaults.get(tier)
+        out.append(
+            {
+                "tier": tier,
+                "builder": _seat_view(policy.builder, want.builder if want else None),
+                "gate": _seat_view(policy.gate, want.gate if want else None),
+                "reviewer": _seat_view(policy.reviewer, want.reviewer if want else None),
+                "human": policy.human,
+            }
+        )
+    return out
 
 
 def _decisions(ctx: Ctx, rows: list[dict]) -> list[dict] | None:
@@ -359,6 +394,8 @@ def repo_state(ctx: Ctx, now: datetime) -> dict:
         "repo": cfg.repo,
         "slots": cfg.slots,
         "session_minutes": cfg.caps.session_minutes,
+        "tiers": _tiers(ctx),
+        "config_path": str(cfg.path) if cfg.path else None,
         "jobs": running,
         "prs": prs,
         "queue": queue,
@@ -381,6 +418,8 @@ def _local(ctx: Ctx, rows: list[dict], now: datetime) -> dict:
         "repo": ctx.cfg.repo,
         "slots": ctx.cfg.slots,
         "session_minutes": ctx.cfg.caps.session_minutes,
+        "tiers": _tiers(ctx),
+        "config_path": str(ctx.cfg.path) if ctx.cfg.path else None,
         "jobs": _running(ctx, rows),
         "prs": None,
         "queue": None,
