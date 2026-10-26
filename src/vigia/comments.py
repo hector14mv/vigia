@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import re
 
-from .config import FAMILIES, Seat
+from .config import Seat, lab_of
 
 HANDOFF_HEAD = re.compile(r"^## Handoff ([0-9a-f]{40})\b")
-ENGINE_LINE = re.compile(r"^Engine:\s*(claude|codex)\b", re.M)
+ENGINE_LINE = re.compile(r"^Engine:\s*(claude|codex|opencode)\b", re.M)
+ENGINE_MODEL = re.compile(r"[ \t]*·[ \t]*([^\s·]+)")  # the model field right after the engine on that line
 FOLLOW_UPS_HEAD = re.compile(r"^##\s+Follow-ups\s*$", re.I)
 BULLET = re.compile(r"^\s{0,3}[-*+]\s+(.*\S)")
 TITLE_MAX = 70
@@ -125,12 +126,14 @@ def follow_up_issue(text: str, pr: int, pr_url: str, sha: str) -> tuple[str, str
 
 
 def engine_family(comments: list[dict], login: str | None) -> str | None:
-    """The builder's lab, from the first vigia handoff's `Engine:` line."""
+    """The builder's lab, from the first vigia handoff's `Engine:` line: `lab_of` its engine and the model field
+    after it. The line's trailing `lab …` text is never read; an engine whose model names no known lab gives None."""
     for c in comments:
         if HANDOFF_HEAD.match(c["body"].lstrip()) and (login is None or c["author"] == login):
             m = ENGINE_LINE.search(c["body"])
             if m:
-                return FAMILIES[m.group(1)]
+                model = ENGINE_MODEL.match(c["body"], m.end())
+                return lab_of(m.group(1), model.group(1) if model else "")
     return None
 
 

@@ -230,6 +230,35 @@ def test_a_pr_opened_by_hand_joins_through_a_handoff(world):
     assert decisions(tick(ctx, build=False)) == [(pr, "merge")]
 
 
+def test_an_opencode_handoff_from_the_gate_s_lab_is_parked_and_never_gated(world):
+    from fakes import git
+    from vigia import gate
+
+    gh, build = world
+    ctx, run = build(
+        [APPROVE], cfg=Config(repo=gh.repo, base="main", tiers=default_tiers("codex"), test_command="true")
+    )
+    wt = ctx.root / "by-opencode"
+    git("worktree", "add", "--quiet", "--detach", str(wt), "origin/main", cwd=ctx.clone)
+    (wt / "notes.txt").write_text("written by an OpenCode session\n")
+    git("add", "-A", cwd=wt)
+    git("commit", "--quiet", "-m", "docs: notes", cwd=wt)
+    git("push", "--quiet", "origin", "HEAD:refs/heads/oc/notes", cwd=wt)
+    pr = gh.create_pr("oc/notes", "main", "docs: notes", "An OpenCode change.")
+    gh.add_labels(pr, "vigia:review", "tier:T0")
+    sha = gh.branch_sha("oc/notes")
+    gh.comment(
+        pr, f"## Handoff {sha}\nEngine: opencode · anthropic/claude-x · builder · lab openai\n\nNotes."
+    )
+
+    assert ctx.builder_family(pr) == "anthropic"
+    assert decisions(tick(ctx, build=False)) == [(pr, "park")]
+    assert "builder's own lab" in gh.bodies(pr)[-1]
+    head = {"number": pr, "head": sha, "labels": ["tier:T0"], "base": "main", "branch": "oc/notes"}
+    assert gate.review(ctx, head, "gate", 1) is None
+    assert run.calls == []
+
+
 def test_a_handoff_from_another_login_does_not_count(world):
     gh, build = world
     ctx, run = build([])

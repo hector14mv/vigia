@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from vigia import comments
 from vigia.config import Caps, Config, default_tiers
 from vigia.rules import PRState, Verdict, decide
 
@@ -191,6 +192,15 @@ def test_t2_human_label_alone_merges_nothing():
 def test_structural_problems_park(kw, needle):
     action, reason = act(pr(**kw))
     assert action == "park" and needle in reason
+
+
+def test_an_opencode_builder_of_the_gate_s_own_lab_parks():
+    line = f"## Handoff {H1}\nEngine: opencode · anthropic/claude-x · builder · lab openai\n\nNotes."
+    family = comments.engine_family([{"author": "bot", "body": line}], "bot")
+    claude_gates = Config(repo="o/r", base="main", tiers=default_tiers("codex"))
+    action, reason = act(pr(builder_family=family, verdicts=(gate(),)), claude_gates)
+    assert action == "park" and "builder's own lab" in reason
+    assert act(pr(builder_family=family, verdicts=(gate(),)))[0] == "merge"  # a codex gate is another lab
 
 
 @pytest.mark.parametrize("kw", [{"open": False}, {"parked": True}, {"draft": True}])
