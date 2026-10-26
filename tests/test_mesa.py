@@ -1589,6 +1589,23 @@ def test_the_out_tray_and_the_shelf_carry_counts_and_the_shelf_links_to_your_tur
         assert "No pull request is waiting" in text  # the parked PR is on the shelf, not between desks
 
 
+def test_the_shelf_header_agrees_with_one_parked_item_and_still_says_more_may_be_waiting(world, tmp_path):  # noqa: F811
+    gh, s, repo, pr = _office_world(world)
+    parked = dict(pr, number=70, title="Stuck change", parked=True)
+    one = dict(repo, jobs=[], prs=[parked], merged_today=[], parked_issues=[])
+    two = dict(one, prs=[parked, dict(parked, number=71, title="Other stuck change")])
+    partial = dict(one, parked_issues=None, unread=["parked tickets"])
+    for state, header in (
+        (dict(s, repos=[one]), "1 parked item needs a person"),
+        (dict(s, repos=[two]), "2 parked items need a person"),
+        (dict(s, repos=[partial]), "1 parked item needs a person, more may be waiting"),
+    ):
+        for view in _views(_render(tmp_path, state, routes=("office",)), "office"):
+            assert header in view["text"]
+            if "more may be waiting" not in header:
+                assert "more may be waiting" not in view["text"]
+
+
 def test_what_could_not_be_read_is_unknown_in_the_office_never_an_empty_tray_or_shelf(world, tmp_path):  # noqa: F811
     gh, s, repo, pr = _office_world(world)
     lists = ("prs", "queue", "parked_issues", "refused", "human_tasks", "proposed", "decisions")
