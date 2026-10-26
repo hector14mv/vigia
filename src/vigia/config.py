@@ -7,6 +7,7 @@ own lab's work, or that names a model by a moving alias, is refused before anyth
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,8 +15,47 @@ from pathlib import Path
 CONFIG_NAME = "vigia.toml"
 TIERS = ("T0", "T1", "T2")
 
-# Engine -> the lab that trains its models. The gate must always come from the other lab.
+# Engine -> the lab that trains its models, for an engine that runs only one lab's models. The gate must always
+# come from the other lab.
 FAMILIES = {"claude": "anthropic", "codex": "openai"}
+
+# An engine that names its model as `provider/model` (OpenCode, #107) can reach any lab, so its lab comes from the
+# model part alone; the provider only says where the request goes (a reseller such as github-copilot serves several
+# labs). An allowlist of name prefixes, matched ignoring ASCII case: a model that matches no row has no lab.
+ROUTED_ENGINES = {"opencode"}
+MODEL_FAMILIES = (
+    (r"claude-", "anthropic"),
+    (r"gpt-", "openai"),
+    (r"o[0-9]", "openai"),
+    (r"codex-", "openai"),
+    (r"gemini-", "google"),
+    (r"grok-", "xai"),
+    (r"kimi-", "moonshotai"),
+    (r"glm-", "zhipuai"),
+    (r"deepseek-", "deepseek"),
+    (r"qwen-", "alibaba"),
+)
+
+
+def lab_of(engine: str, model: str) -> str | None:
+    """The lab whose model a seat runs, or None when vigia cannot tell (it never guesses).
+
+    `claude` and `codex` run one lab each, whatever the model. A routed engine names `provider/model`, and the lab
+    is the model part's family from `MODEL_FAMILIES`. No `/`, an empty part, a second `/` or an unknown family:
+    no lab. Every place that pairs or compares labs uses this function or a value it produced.
+    """
+    if engine in FAMILIES:
+        return FAMILIES[engine]
+    if engine not in ROUTED_ENGINES or not isinstance(model, str):
+        return None
+    provider, slash, name = model.partition("/")
+    if not slash or not provider.strip() or not name or "/" in name:
+        return None
+    for prefix, lab in MODEL_FAMILIES:
+        if re.match(prefix, name, re.IGNORECASE | re.ASCII):
+            return lab
+    return None
+
 
 # Aliases move when a lab ships a new model; vigia records exact ids so every verdict is reproducible.
 MODEL_ALIASES = {"opus", "sonnet", "haiku", "fable", "default", "best", "latest"}
@@ -45,7 +85,11 @@ class Seat:
 
     @property
     def family(self) -> str:
-        return FAMILIES[self.engine]
+        """The seat's lab. A seat with no lab has no place in a cross-lab pairing, so this raises, never guesses."""
+        lab = lab_of(self.engine, self.model)
+        if lab is None:
+            raise ValueError(f"{self.engine} · {self.model}: no known lab")
+        return lab
 
     def label(self) -> str:
         effort = f" · effort {self.effort}" if self.effort else ""
@@ -123,8 +167,11 @@ DEFAULT_MODELS = {
 
 
 def other(engine: str) -> str:
-    """The engine from the other lab."""
-    return "codex" if engine == "claude" else "claude"
+    """The engine from the other lab. Only `claude` and `codex` pair this way: any other engine has no fixed other."""
+    pairs = {"claude": "codex", "codex": "claude"}
+    if engine not in pairs:
+        raise ValueError(f"{engine!r} has no other-lab engine; only claude and codex pair by engine")
+    return pairs[engine]
 
 
 def default_tiers(builder: str = "claude") -> dict[str, TierPolicy]:
@@ -200,6 +247,8 @@ def _seat(raw: object, where: str, required: bool = True) -> Seat | None:
     if unknown:
         raise ConfigError(f"{where}: unknown keys {sorted(unknown)}")
     engine, model, effort = raw.get("engine"), raw.get("model"), raw.get("effort")
+    if engine == "opencode":
+        raise ConfigError(f"{where}.engine: OpenCode is not available yet (#107)")
     if engine not in FAMILIES:
         raise ConfigError(f"{where}.engine: {engine!r} is not one of {sorted(FAMILIES)}")
     if not isinstance(model, str) or not model.strip():

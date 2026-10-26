@@ -1,5 +1,7 @@
 """Reading a handoff's `## Follow-ups` section."""
 
+import pytest
+
 from vigia import comments
 
 SHA = "a" * 40
@@ -61,3 +63,40 @@ def test_the_issue_body_quotes_links_and_asks_for_a_rewrite():
     assert title == "fix this and that"
     assert "> fix this and that" in body and "https://x/pull/7" in body and "b" * 40 in body
     assert "ticket template" in body and "`vigia:ready`" in body
+
+
+def _handoffs(*engine_lines: str) -> list[dict]:
+    return [{"author": "bot", "body": f"## Handoff {SHA}\n{line}\n\nNotes."} for line in engine_lines]
+
+
+@pytest.mark.parametrize(
+    "line, lab",
+    [
+        ("Engine: claude · claude-opus-5-5 · effort high · builder · lab anthropic", "anthropic"),
+        ("Engine: codex · gpt-6.1-sol · effort medium · builder · lab openai", "openai"),
+        ("Engine: claude · x", "anthropic"),
+        ("Engine: codex", "openai"),
+        (
+            "Engine: claude · claude-opus-5-5 · by hand · lab openai",
+            "anthropic",
+        ),  # trailing text is never read
+        ("Engine: opencode · github-copilot/kimi-k3 · builder · lab anthropic", "moonshotai"),
+        ("Engine: opencode · anthropic/claude-x · effort high · fixer · lab anthropic", "anthropic"),
+        ("Engine: opencode\tgithub-copilot/gpt-6-sol", None),  # the model field follows a `·`
+        ("Engine: opencode", None),  # no model
+        ("Engine: opencode · builder · lab anthropic", None),  # no model
+        ("Engine: opencode · kimi-k3 · builder · lab moonshotai", None),  # no provider
+        ("Engine: opencode · somelab/mystery-1 · builder · lab anthropic", None),  # unknown family
+        ("Engine: opencode-x · anthropic/claude-x · builder", None),
+        ("Engine: gemini · google/gemini-x", None),  # not an engine vigia knows
+    ],
+)
+def test_engine_family_reads_the_lab_from_the_engine_and_model(line, lab):
+    assert comments.engine_family(_handoffs(line), "bot") == lab
+
+
+def test_engine_family_takes_the_first_handoff_even_without_a_lab():
+    rows = _handoffs("Engine: opencode · somelab/mystery-1 · builder", "Engine: claude · claude-opus-5-5")
+    assert comments.engine_family(rows, "bot") is None
+    assert comments.engine_family(_handoffs("Engine: claude · x", "Engine: codex · y"), "bot") == "anthropic"
+    assert comments.engine_family([{"author": "bot", "body": f"## Handoff {SHA}\nNo engine."}], "bot") is None

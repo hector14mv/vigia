@@ -10,7 +10,9 @@ from vigia.config import (
     TierPolicy,
     default_tiers,
     find,
+    lab_of,
     load,
+    other,
     parse,
     render,
 )
@@ -178,3 +180,98 @@ def test_render_comments_read_carefully():
     text = render(Config(repo="acme/app", base="main", tiers=default_tiers("claude")))
     assert "The gate must come from the other lab, not the builder's." in text
     assert "T2: money, auth, personal data, migrations" in text
+
+
+# --- labs -------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "engine, model, lab",
+    [
+        ("claude", "claude-opus-5-5", "anthropic"),
+        ("claude", "gpt-6.1-sol", "anthropic"),  # a fixed engine's lab never depends on the model
+        ("claude", "", "anthropic"),
+        ("codex", "gpt-6.1-sol", "openai"),
+        ("codex", "claude-opus-5-5", "openai"),
+        ("codex", "", "openai"),
+        ("opencode", "anthropic/claude-opus-5-5", "anthropic"),
+        ("opencode", "github-copilot/claude-opus-5.5", "anthropic"),
+        ("opencode", "Anthropic/Claude-X", "anthropic"),
+        ("opencode", "openai/gpt-6.1-sol", "openai"),
+        ("opencode", "github-copilot/gpt-6-sol", "openai"),
+        ("opencode", "openai/o3-mini", "openai"),
+        ("opencode", "openai/O4", "openai"),
+        ("opencode", "openai/codex-mini", "openai"),
+        ("opencode", "github-copilot/gemini-x", "google"),
+        ("opencode", "xai/grok-5", "xai"),
+        ("opencode", "opencode-go/kimi-k3", "moonshotai"),
+        ("opencode", "opencode-go/glm-x", "zhipuai"),
+        ("opencode", "opencode-go/deepseek-v4", "deepseek"),
+        ("opencode", "opencode-go/qwen-4", "alibaba"),
+        ("opencode", "anthropic/gpt-6-sol", "openai"),  # the provider never decides the lab
+    ],
+)
+def test_lab_table(engine, model, lab):
+    assert lab_of(engine, model) == lab
+
+
+@pytest.mark.parametrize(
+    "engine, model",
+    [
+        ("opencode", "kimi-k3"),  # no provider
+        ("opencode", "/kimi-k3"),
+        ("opencode", "opencode-go/"),
+        ("opencode", "somelab/mystery-1"),
+        ("opencode", ""),
+        ("opencode", "anthropic/claude"),  # a family needs its full prefix
+        ("opencode", "anthropic/openai/claude-x"),  # one provider, one model
+        ("opencode", "openai/ogpt-1"),  # `o` only counts before a digit
+        ("opencode", "openai/o\u0663"),  # an ASCII digit, not any Unicode one
+        ("opencode", "moonshot/\u212aimi-k3"),  # KELVIN SIGN is not a `k`
+        ("opencode", "anthropic/ claude-x"),
+        ("mystery", "anthropic/claude-x"),  # an unknown engine has no lab
+    ],
+)
+def test_lab_of_never_guesses(engine, model):
+    assert lab_of(engine, model) is None
+
+
+def test_a_seat_with_no_lab_has_no_family():
+    assert Seat("opencode", "opencode-go/kimi-k3").family == "moonshotai"
+    with pytest.raises(ValueError, match="no known lab"):
+        _ = Seat("opencode", "somelab/mystery-1").family
+
+
+def test_other_pairs_only_claude_and_codex():
+    assert (other("claude"), other("codex")) == ("codex", "claude")
+    for engine in ("opencode", "mystery", ""):
+        with pytest.raises(ValueError):
+            other(engine)
+
+
+def test_default_tiers_are_unchanged():
+    for builder, gate in (("claude", "codex"), ("codex", "claude")):
+        tiers = default_tiers(builder)
+        assert {
+            t: (p.builder.engine, p.gate.engine, p.reviewer and p.reviewer.engine) for t, p in tiers.items()
+        } == {
+            "T0": (builder, gate, None),
+            "T1": (builder, gate, builder),
+            "T2": (builder, gate, builder),
+        }
+    assert default_tiers("claude")["T2"] == TierPolicy(
+        builder=Seat("claude", "claude-opus-5-5", "high"),
+        gate=Seat("codex", "gpt-6.1-sol", "high"),
+        reviewer=Seat("claude", "claude-fable-5-1", "high"),
+        human=True,
+    )
+
+
+@pytest.mark.parametrize("role", ["builder", "gate", "reviewer"])
+def test_an_opencode_seat_is_refused_at_load(role):
+    doc = base_doc()
+    doc["tiers"]["T1"][role] = {"engine": "opencode", "model": "opencode-go/kimi-k3"}
+    with pytest.raises(
+        ConfigError, match=rf"^tiers\.T1\.{role}\.engine: OpenCode is not available yet \(#107\)$"
+    ):
+        parse(doc)
