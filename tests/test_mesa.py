@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -135,7 +136,7 @@ def test_the_path_is_matched_without_its_query_string(world):  # noqa: F811
         srv.shutdown()
 
 
-def test_the_page_has_the_four_places_and_writes_nothing(world):  # noqa: F811
+def test_the_page_has_the_five_places_and_writes_nothing(world):  # noqa: F811
     gh, build = world
     ctx, _ = build([])
     srv = _serve(ctx)
@@ -148,7 +149,7 @@ def test_the_page_has_the_four_places_and_writes_nothing(world):  # noqa: F811
         srv.shutdown()
     assert "connect-src 'self'" in csp and "script-src 'unsafe-inline'" in csp
     assert b'<meta name="viewport"' in body and b'id="mesa-sample"' in body and b"{{SAMPLE}}" not in body
-    for place in (b'"Your turn"', b'"Factory"', b'"Feed"', b'"Fuel"'):
+    for place in (b'"Your turn"', b'"Factory"', b'"Feed"', b'"Fuel"', b'"Office"'):
         assert place in body
     assert b"Captures" not in body  # v0.1 shoots no screenshots
     # read-only: no form, no write verb, no script from elsewhere, no markup built from strings
@@ -170,14 +171,14 @@ def test_the_server_is_read_only_and_answers_only_its_own_host(world):  # noqa: 
         srv.shutdown()
 
 
-PLACES = ("turn", "factory", "feed", "fuel", "decide")
+PLACES = ("turn", "factory", "feed", "fuel", "office", "decide")
 LINK = re.compile(
     r"^(#/[A-Za-z0-9_./-]*|https://claude\.ai/new|https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
     r"(/(pull|issues)/\d{1,9}(/files)?)?(/issues\?q=[A-Za-z0-9%._+:-]*)?(#new_comment_field)?)$"
 )
 
 
-def _render(tmp_path, state, routes=PLACES):
+def _render(tmp_path, state, routes=PLACES, stored=None):
     """What the page shows for `state` on each route, at phone width and at desktop width: the page's own scripts
     run under Node (tests/mesa_render.js) with a small DOM, so these are the cards, words and links it builds."""
     node = shutil.which("node")
@@ -187,7 +188,11 @@ def _render(tmp_path, state, routes=PLACES):
     data.write_text(json.dumps(state), encoding="utf-8")
     script = Path(__file__).with_name("mesa_render.js")
     out = subprocess.run(
-        [node, str(script), str(mesa.PAGE), str(data), *routes], capture_output=True, text=True, check=False
+        [node, str(script), str(mesa.PAGE), str(data), *routes],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "MESA_STORED": json.dumps(stored or {})},
     )
     assert out.returncode == 0, out.stderr
     shown = json.loads(out.stdout)
@@ -431,6 +436,7 @@ def test_every_place_renders_on_both_layouts_and_says_when_nothing_needs_you(wor
         ("factory", "Sessions"),
         ("feed", "Today"),
         ("fuel", "Codex"),
+        ("office", "The office is quiet"),
         ("decide", "No open decisions"),
     ):
         for view in _views(shown, route):
@@ -1450,3 +1456,223 @@ def test_a_failed_poll_while_github_is_first_read_asks_again_in_a_second_and_a_h
     # a failed ask over a state that was read has nothing to hurry for
     calm = _poll_after(tmp_path, gh, [good, boom])
     assert calm["timers"] == {"before": [], "after": [], "retry": []}
+
+
+# ---------- the Office ----------
+
+
+def _page_between(start, end):
+    page = mesa.PAGE.read_text(encoding="utf-8")
+    return page[page.index(start) : page.index(end)]
+
+
+def _office_world(world):  # noqa: F811
+    """A real state with one open PR, to hang synthetic jobs and lists on."""
+    gh, build = world
+    ctx, _ = build([])
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    s = mesa.state([ctx], _now(ctx))
+    return gh, s, s["repos"][0], s["repos"][0]["prs"][0]
+
+
+def _job(action, number, issue=False, **kw):
+    kind = "issue" if issue else "pr"
+    job = {"target": f"{kind}-{number}", "number": number, "issue": issue, "action": action}
+    return {"since": None, "engine": "codex", "model": "gpt-5.5-sample", "tier": "T1", **job, **kw}
+
+
+def _desks(html):
+    """Each desk's markup, in order (the floor only, not what comes after it)."""
+    floor = html.split('aria-labelledby="office-lane-h"')[0]
+    return re.split(r'(?=<div class="odesk)', floor)[1:]
+
+
+def test_a_quiet_office_shows_one_free_desk_per_slot_on_both_layouts(world, tmp_path):  # noqa: F811
+    gh, s, repo, pr = _office_world(world)
+    quiet = dict(s, repos=[dict(repo, slots=3, jobs=[])])
+    shown = _render(tmp_path, quiet, routes=("office", "factory"))
+    for view in _views(shown, "office"):
+        assert "The office is quiet" in view["text"] and "Free" in view["text"]
+        assert view["html"].count('class="odesk free"') == 3 and view["html"].count('class="oempty"') == 3
+        assert 'class="ofig' not in view["html"]  # no figure at work
+        assert "Out tray" in view["text"] and "Waiting for you" in view["text"]
+    assert "0 of 3 slots" in shown["phone"]["factory"]["text"]  # the Factory counts the same slots
+
+
+def test_each_running_job_is_a_figure_at_a_desk_with_its_role_model_pr_and_time(world, tmp_path):  # noqa: F811
+    gh, s, repo, pr = _office_world(world)
+    n = pr["number"]
+    since = (datetime.fromisoformat(s["generated"].replace("Z", "+00:00")) - timedelta(minutes=7)).isoformat()
+    jobs_ = [
+        _job("gate", n, since=since, engine="codex", model="gpt-5.5-sample"),
+        _job(
+            "build",
+            90,
+            issue=True,
+            since=since,
+            engine="claude",
+            model="claude-sonnet-5-5",
+            branch="vigia/90-x",
+        ),
+        _job("review", n + 1, since=since, engine=None, model=None, tier="T2"),
+    ]
+    other = dict(pr, number=n + 1, title="Second change", tier="T2")
+    busy = dict(s, repos=[dict(repo, slots=5, session_minutes=5, jobs=jobs_, prs=[pr, other])])
+    shown = _render(tmp_path, busy, routes=("office", "factory"))
+    for view in _views(shown, "office"):
+        assert view["html"].count('class="ofig"') == 3  # one figure per running job
+        desks = _desks(view["html"])
+        assert len(desks) == 5 and sum(1 for d in desks if "odesk free" in d) == 2
+        text = view["text"]
+        assert "gate" in text and "codex · gpt-5.5-sample" in text and f"#{n}" in text
+        assert "claude · claude-sonnet-5-5" in text and "issue #90" in text and "vigia/90-x" in text
+        assert "T2 reviewer" in text and "engine and model unknown" in text  # never guessed
+        assert "builder" in text and "7 min" in text
+        assert "over the 5 min cap" in text  # the same mark the Factory gives a session past its cap
+        assert f"#/pr/{gh.repo}/{n}" in view["links"] and f"#/pr/{gh.repo}/{n + 1}" in view["links"]
+        assert not any("/issues/90" in href for href in view["links"])
+    factory = shown["phone"]["factory"]["text"]
+    assert "3 of 5 slots" in factory  # five desks: the slot count the Factory shows
+
+
+def test_a_gate_or_review_puts_its_pr_at_that_desk_and_never_at_a_builder_desk(world, tmp_path):  # noqa: F811
+    gh, s, repo, pr = _office_world(world)
+    n = pr["number"]
+    jobs_ = [_job("build", 90, issue=True), _job("gate", n)]
+    state = dict(s, repos=[dict(repo, slots=3, jobs=jobs_, prs=[pr])])
+    for view in _views(_render(tmp_path, state, routes=("office",)), "office"):
+        builder, gate, free = _desks(view["html"])
+        assert "vigia/" not in gate and f'data-k="opr-{gh.repo}#{n}"' in gate and "gate" in gate
+        assert f'data-k="opr-{gh.repo}#{n}"' not in builder and "Building issue #90" in builder
+        assert 'class="opr' not in free
+        assert view["html"].count(f'data-k="opr-{gh.repo}#{n}"') == 1  # at one place only
+    # the same PR with no job sits between desks, with its next step
+    idle = dict(s, repos=[dict(repo, slots=2, jobs=[], prs=[pr])])
+    for view in _views(_render(tmp_path, idle, routes=("office",)), "office"):
+        assert "Between desks" in view["text"] and view["html"].count(f'data-k="opr-{gh.repo}#{n}"') == 1
+        assert all('class="opr' not in d for d in _desks(view["html"]))
+
+
+def test_the_out_tray_and_the_shelf_carry_counts_and_the_shelf_links_to_your_turn(world, tmp_path):  # noqa: F811
+    gh, s, repo, pr = _office_world(world)
+    parked = dict(pr, number=70, title="Stuck change", parked=True)
+    merged = [
+        {"pr": 5, "title": "First merge", "tier": "T0", "ts": s["generated"]},
+        {"pr": 6, "title": "Second merge", "tier": "T1", "ts": s["generated"]},
+    ]
+    issue = {
+        "number": 33,
+        "title": "Failed build",
+        "url": f"https://github.com/{gh.repo}/issues/33",
+        "reason": "x",
+        "since": None,
+    }
+    state = dict(s, repos=[dict(repo, jobs=[], prs=[parked], merged_today=merged, parked_issues=[issue])])
+    for view in _views(_render(tmp_path, state, routes=("office",)), "office"):
+        text, html = view["text"], view["html"]
+        assert "Out tray" in text and "2 merges today" in text and 'data-k="tray-count"><' not in html
+        assert "#5 · First merge" in text and "#6 · Second merge" in text
+        assert "Waiting for you" in text and "2 parked items" in text
+        assert "#70 · Stuck change" in text and "issue #33 · Failed build" in text
+        assert re.search(r'data-k="shelf-count">2<', html) and re.search(r'data-k="tray-count">2<', html)
+        assert "#/turn" in view["links"] and "Open Your turn" in text
+        assert "No pull request is waiting" in text  # the parked PR is on the shelf, not between desks
+
+
+def test_what_could_not_be_read_is_unknown_in_the_office_never_an_empty_tray_or_shelf(world, tmp_path):  # noqa: F811
+    gh, s, repo, pr = _office_world(world)
+    lists = ("prs", "queue", "parked_issues", "refused", "human_tasks", "proposed", "decisions")
+    broken = dict(
+        repo, error="HTTP 401: Bad credentials", jobs=[], merged_today=[], **{k: None for k in lists}
+    )
+    other = dict(repo, repo="acme/other", jobs=[], prs=[], parked_issues=[], merged_today=[])
+    partial = dict(other, repo="acme/part", parked_issues=None, unread=["parked tickets"])
+    for view in _views(
+        _render(tmp_path, dict(s, repos=[broken, other, partial]), routes=("office",)), "office"
+    ):
+        text = view["text"]
+        assert "GitHub did not answer for" in text and "Bad credentials" in text
+        assert "Unknown for" in text and "Not all read for part" in text and "parked tickets" in text
+        assert "Nothing is parked" not in text and "Nothing merged today yet" not in text
+        assert "Pull requests unknown" in text and "No pull request is waiting" not in text
+    reading = dict(repo, pending=True, jobs=[], merged_today=[], **{k: None for k in lists})
+    for view in _views(_render(tmp_path, dict(s, repos=[reading]), routes=("office",)), "office"):
+        assert "Reading GitHub for" in view["text"] and "Nothing is parked" not in view["text"]
+        assert "Unknown for" not in view["text"]  # on its way, not lost
+
+
+def test_a_pr_moves_only_when_its_desk_changes_between_polls(world, tmp_path):  # noqa: F811
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    gh, s, repo, pr = _office_world(world)
+    n = pr["number"]
+    waiting = dict(s, repos=[dict(repo, slots=2, jobs=[], prs=[pr])])
+    gating = dict(s, repos=[dict(repo, slots=2, jobs=[_job("gate", n)], prs=[pr])])
+
+    def run(*states):
+        path = tmp_path / "live.json"
+        path.write_text(json.dumps({"state": list(states), "pr": [{}]}), encoding="utf-8")
+        script = Path(__file__).with_name("mesa_render.js")
+        out = subprocess.run(
+            [node, str(script), "--live", str(mesa.PAGE), str(path), "office"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert out.returncode == 0, out.stderr
+        return json.loads(out.stdout)
+
+    moved = run(waiting, gating)
+    assert "arrive" not in moved["before"]["html"]
+    assert "opr arrive" in moved["after"]["html"] and "gate" in moved["after"]["text"]
+    still = run(gating, gating)  # the same state again: nothing moves, nothing replays
+    assert "arrive" not in still["before"]["html"] and "arrive" not in still["after"]["html"]
+    quiet = run(waiting, waiting)
+    assert "arrive" not in quiet["after"]["html"]
+
+
+def test_office_is_a_place_in_the_tab_bar_and_the_rail_and_is_remembered(world, tmp_path):  # noqa: F811
+    gh, s, repo, pr = _office_world(world)
+    shown = _render(tmp_path, s, routes=("office", "turn", "nowhere"))
+    phone, desk = shown["phone"]["office"], shown["desk"]["office"]
+    assert phone["html"].count('class="tab"') + phone["html"].count('class="tab ') == 5
+    assert re.search(
+        r'<a class="tab" href="#/office" aria-current="page" data-k="tab-office"><svg', phone["html"]
+    )
+    assert re.search(
+        r'<a class="ri" href="#/office" aria-current="page" data-k="rail-office"><svg', desk["html"]
+    )
+    assert 'aria-current="page" data-k="tab-turn"' not in phone["html"]
+    assert phone["saved"]["mesa.tab"] == "office" and desk["saved"]["mesa.tab"] == "office"
+    # a remembered Office opens on the Office; an unknown or old value lands on Your turn
+    shown = _render(tmp_path, s, routes=("nowhere",), stored={"mesa.tab": "office"})
+    assert 'aria-current="page" data-k="tab-office"' in shown["phone"]["nowhere"]["html"]
+    for old in ("captures", "bogus", ""):
+        shown = _render(tmp_path, s, routes=("nowhere",), stored={"mesa.tab": old})
+        assert 'aria-current="page" data-k="tab-turn"' in shown["phone"]["nowhere"]["html"], old
+        assert shown["phone"]["nowhere"]["saved"]["mesa.tab"] == "turn"
+
+
+def test_every_office_animation_sits_under_no_preference_and_uses_only_tokens(world):  # noqa: F811
+    css = _page_between("/* office:", "/* /office */")
+    # take out the one block that may move things; nothing else may animate or transition
+    quiet, depth, start = css, 0, css.index("@media (prefers-reduced-motion: no-preference)")
+    for i in range(css.index("{", start), len(css)):
+        depth += {"{": 1, "}": -1}.get(css[i], 0)
+        if depth == 0:
+            quiet = css[:start] + css[i + 1 :]
+            break
+    assert re.search(r"animation\s*:", css[start : start + 600]) and "o-arrive" in css[start : start + 600]
+    assert not re.search(r"\b(animation|transition)[\w-]*\s*:", quiet)
+    assert "@media (prefers-reduced-motion: no-preference)" not in quiet
+    js = _page_between("/* ---------- Office:", "/* /office */")
+    for block in (css, js):
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|\boklch\(|\blab\(", block)
+        assert all(name.startswith("--mesa-") for name in re.findall(r"var\((--[\w-]+)", block))
+    # nothing is wider than a 375 px phone minus its gutters: every fixed width in the Office CSS is small
+    widths = [int(w) for w in re.findall(r"(?<![\w-])(?:min-)?width:\s*(\d+)px", css)]
+    assert widths and max(widths) <= 64
+    # a column is at most its own size and shrinks with the viewport, so no grid can push the page wider
+    assert "min(240px, 100%)" in css and "overflow-x" not in css and "nowrap" not in css

@@ -13,6 +13,8 @@
 // node mesa_render.js --live <mesa.html> <live.json> <route>, where live.json is
 // {"state": [state, ...], "pr": [detail, ...]} and each fetch of that kind answers with the next entry (the last one
 // repeats; an entry with "__status" answers with that HTTP error). It prints {"before": view, "after": view, "timers": {"before": [ms], "after": [ms], "retry": [ms]}} for the desktop layout.
+// MESA_STORED (a JSON object in the environment) is what browser storage holds before the page loads (the saved
+// tab, say); what the page saves comes back as `saved` in each view.
 // Anything the page must never do (innerHTML, document.write, a fetch) throws, and so fails the test.
 "use strict";
 const fs = require("fs");
@@ -141,12 +143,13 @@ function lines(node) {
 function render(desk, route) {
   const [path, click] = route.split("!");
   const { doc, app } = makeDocument();
+  const saved = JSON.parse(process.env.MESA_STORED || "{}");
   const win = {
     document: doc,
     location: { hash: "#/" + path },
     navigator: {},
     isSecureContext: false,
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    localStorage: { getItem: (k) => (k in saved ? saved[k] : null), setItem: (k, v) => { saved[k] = String(v); }, removeItem: (k) => { delete saved[k]; } },
     matchMedia: (q) => ({ matches: desk && /min-width:\s*1024px/.test(q), addEventListener() {}, addListener() {} }),
     addEventListener() {},
     scrollTo() {},
@@ -171,6 +174,7 @@ function render(desk, route) {
     text: lines(app),
     links: els.filter((el) => el.hasAttribute("href")).map((el) => el.getAttribute("href")),
     tags: [...new Set(els.map((el) => el.localName))].sort(),
+    saved,
   };
 }
 
