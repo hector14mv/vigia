@@ -1272,11 +1272,11 @@ def test_a_mesa_that_has_not_read_github_yet_answers_at_once_with_what_this_mach
     release, calls = _slow_github(gh)
     cache = mesa._Cache([ctx], 15, spawn=mesa._thread)
     try:
-        started = time.monotonic()
         first = json.loads(cache.get())
         _until(lambda: calls)  # the refresh thread is inside GitHub's call, not merely started
         again = json.loads(cache.get())
-        assert time.monotonic() - started < 1  # GitHub has not answered, and nobody waited for it
+        # Both answers came back while GitHub's call was still held: nobody waited for it (no wall-clock bound)
+        assert not release.is_set() and len(calls) == 1 and not cache.built.is_set()
         repo = first["repos"][0]
         assert repo["pending"] is True and "error" not in repo
         for name in ("prs", "queue", "parked_issues", "refused", "human_tasks", "proposed", "decisions"):
