@@ -336,8 +336,21 @@ def opencode_events(*texts: str | None, error: str | None = None) -> str:
     return "".join(json.dumps(line) + "\n" for line in lines)
 
 
+# What `opencode --pure debug config` printed on 1.18.32 for an empty configuration home (XDG_CONFIG_HOME a new empty
+# directory, OPENCODE_DISABLE_PROJECT_CONFIG=1, a clean ~/.opencode).
+OPENCODE_EMPTY_CONFIG = {
+    "$schema": "https://opencode.ai/config.json",
+    "agent": {},
+    "command": {},
+    "mode": {},
+    "plugin": [],
+    "username": "someone",
+}
+
 # A stand-in for the `opencode` binary: `--pure debug config` prints the resolved config from `settings.json`
 # (or fails), `run` records its argv, environment, working directory and stdin to `runs.jsonl` and prints events.
+# Like 1.18.32, both load the global config from $XDG_CONFIG_HOME/opencode (its opencode.json merged into the config,
+# its tools/*.ts as tools) and from ~/.opencode, so a test can plant one there and see whether a session got it.
 FAKE_OPENCODE = """\
 import json, os, sys
 from pathlib import Path
@@ -345,14 +358,20 @@ from pathlib import Path
 here = Path(__file__).resolve().parent
 settings = json.loads((here / "settings.json").read_text())
 args = sys.argv[1:]
-record = {"argv": args, "env": dict(os.environ), "cwd": os.getcwd()}
+dirs = [Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode", Path.home() / ".opencode"]
+tools = sorted(t.stem for d in dirs for sub in ("tool", "tools") if (d / sub).is_dir() for t in (d / sub).iterdir())
+loaded = {}
+for d in dirs:
+    if (d / "opencode.json").is_file():
+        loaded.update(json.loads((d / "opencode.json").read_text()))
+record = {"argv": args, "env": dict(os.environ), "cwd": os.getcwd(), "tools": tools}
 if args[:3] == ["--pure", "debug", "config"]:
     with (here / "configs.jsonl").open("a") as fh:
         fh.write(json.dumps(record) + "\\n")
     if settings.get("config_exit"):
         print("Error: config is broken", file=sys.stderr)
         sys.exit(settings["config_exit"])
-    print(settings.get("config_stdout", json.dumps(settings["config"], indent=2)))
+    print(settings.get("config_stdout", json.dumps({**settings["config"], **loaded}, indent=2)))
     sys.exit(0)
 if args[:1] == ["run"]:
     record["stdin"] = sys.stdin.read()

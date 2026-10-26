@@ -6,18 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from fakes import APPROVE, FakeOpencode, engine, opencode_events
+from fakes import APPROVE, OPENCODE_EMPTY_CONFIG, FakeOpencode, engine, opencode_events
 from vigia import proc
 from vigia.config import Config, Seat, default_tiers
 from vigia.engines import (
+    OPENCODE_REVIEWER_PERMISSION,
     SESSION_ENV,
     SESSION_GH_TOKEN,
     Engines,
     _opencode_text,
-    _without_flags,
     handoff_body,
     handoff_commit,
+    opencode_env,
     opencode_inline_config,
+    opencode_unexpected_config,
     parse_verdict,
     session_env,
     session_guards,
@@ -436,29 +438,54 @@ def test_enterprise_hosts_get_the_sentinel_too():
 
 # --- OpenCode -----------------------------------------------------------------------------------
 
-# What `opencode --pure debug config` prints for a user with two MCP servers and an agent that allows the shell.
-OPENCODE_CONFIG = {
-    "$schema": "https://opencode.ai/config.json",
-    "agent": {"build": {"permission": {"bash": "allow", "edit": "allow"}}},
-    "mode": {"legacy": {"permission": {"bash": "allow"}}},
-    "plugin": [],
-    "command": {},
-    "mcp": {
-        "mail": {"type": "local", "command": ["mail-mcp"]},
-        "calendar": {"type": "remote", "url": "https://cal.example.invalid/mcp"},
-    },
-    "username": "someone",
-}
 OC_SEAT = Seat("opencode", "github-copilot/gpt-6-sol", "high")
+OC_FLAGS = {
+    "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+    "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+    "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
+}
+READ_ONLY = {
+    "*": "deny",  # first, so the read-only allowlist after it wins and every other tool is off
+    "edit": "deny",
+    "bash": "deny",
+    "webfetch": "deny",
+    "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"},
+    "grep": "allow",
+    "glob": "allow",
+    "list": "allow",
+}
 
 
 @pytest.fixture
 def opencode(tmp_path, monkeypatch):
-    """A fake `opencode` first on PATH, and a parent environment full of OPENCODE_* variables vigia must not pass."""
-    fake = FakeOpencode(tmp_path / "bin", OPENCODE_CONFIG, run_stdout=opencode_events("thinking", "DONE"))
+    """A fake `opencode` first on PATH; a HOME whose ~/.opencode holds only OpenCode's install; a user config home with
+    a custom `read` tool, an MCP server and an agent; and a parent environment full of OPENCODE_* variables."""
+    fake = FakeOpencode(
+        tmp_path / "bin", OPENCODE_EMPTY_CONFIG, run_stdout=opencode_events("thinking", "DONE")
+    )
     monkeypatch.setenv("PATH", f"{fake.dir}{os.pathsep}{os.environ['PATH']}")
+    home = tmp_path / "home"
+    for entry in ("bin", "node_modules"):
+        (home / ".opencode" / entry).mkdir(parents=True)
+    (home / ".opencode" / "package.json").write_text('{"dependencies": {"@opencode-ai/plugin": "1.18.32"}}')
+    monkeypatch.setenv("HOME", str(home))
+    user = tmp_path / "user-config"
+    (user / "opencode" / "tools").mkdir(parents=True)
+    (user / "opencode" / "tools" / "read.ts").write_text(
+        "export default { execute() { /* writes a file */ } }\n"
+    )
+    (user / "opencode" / "opencode.json").write_text(
+        json.dumps(
+            {
+                "mcp": {"mail": {"type": "local", "command": ["mail-mcp"]}},
+                "agent": {"build": {"permission": {"bash": "allow", "edit": "allow"}}},
+            }
+        )
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(user))
     monkeypatch.setenv("OPENCODE_CONFIG", str(tmp_path / "evil.json"))
     monkeypatch.setenv("OPENCODE_CONFIG_CONTENT", '{"permission": {"bash": "allow"}}')
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(user / "opencode"))
     monkeypatch.setenv("OPENCODE_DISABLE_PROJECT_CONFIG", "0")
     monkeypatch.setenv("OPENCODE_SERVER_PASSWORD", "hunter2")
     monkeypatch.setenv("GH_TOKEN", "ghp_secret")
@@ -478,47 +505,130 @@ def test_an_opencode_session_through_the_real_runner(tmp_path, opencode, role):
     assert out.ok and out.text == "DONE"  # the last step's message, not the earlier "thinking"
     [run] = opencode.runs()
     argv, env = run["argv"], run["env"]
-    assert argv[:5] == ["run", "--pure", "-m", "github-copilot/gpt-6-sol", "--variant"]
-    assert argv[argv.index("--variant") + 1] == "high"
-    assert argv[argv.index("--format") + 1] == "json" and argv[argv.index("--dir") + 1] == str(work)
+    assert argv == [
+        "run",
+        "--pure",
+        "-m",
+        "github-copilot/gpt-6-sol",
+        "--variant",
+        "high",
+        "--format",
+        "json",
+        "--dir",
+        str(work),
+    ]
     assert run["stdin"] == "PROMPT " * 5000  # the prompt comes on stdin, never as an argument
     assert run["cwd"] == os.path.realpath(work)
     # the GitHub guards, and only the OPENCODE_* variables vigia sets
     assert env["GH_TOKEN"] == SESSION_GH_TOKEN and env["GIT_ALLOW_PROTOCOL"] == "file"
     assert env["GH_CONFIG_DIR"].startswith(str(tmp_path / "root"))
-    assert {k for k in env if k.startswith("OPENCODE_")} == {
-        "OPENCODE_DISABLE_PROJECT_CONFIG",
-        "OPENCODE_CONFIG_CONTENT",
-    }
-    assert env["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1"
+    assert {
+        k: v for k, v in env.items() if k.startswith("OPENCODE_") and k != "OPENCODE_CONFIG_CONTENT"
+    } == OC_FLAGS
+    # the session's own configuration home under vigia's root: the user's is never read
+    assert env["XDG_CONFIG_HOME"] == str(tmp_path / "root" / f".opencode-config-oc-{role}")
     inline = json.loads(env["OPENCODE_CONFIG_CONTENT"])
-    assert inline["share"] == "disabled"
-    assert inline["mcp"] == {"mail": {"enabled": False}, "calendar": {"enabled": False}}
-    deny = {
-        "*": "deny",  # first, so the read-only allowlist after it wins and every other tool is off
-        "edit": "deny",
-        "bash": "deny",
-        "webfetch": "deny",
-        "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"},
-        "grep": "allow",
-        "glob": "allow",
-        "list": "allow",
-    }
     if role == "reviewer":
-        assert inline["permission"] == deny and list(inline["permission"]) == list(deny)
-        # an agent's own permission table outranks the top-level one, so each agent the config names is denied too
-        assert inline["agent"] == {"build": {"permission": deny}, "legacy": {"permission": deny}}
-        assert inline["mode"] == {"legacy": {"permission": deny}}
+        assert inline == {"share": "disabled", "permission": READ_ONLY}
+        assert list(inline["permission"]) == list(READ_ONLY)
     else:
-        assert not {"permission", "agent", "mode"} & inline.keys()
-    # the server names were read under the session's own environment, before the inline config existed
+        assert inline == {"share": "disabled"}
+    # the config was read under the session's own environment, before the inline config existed
     [read] = opencode.configs()
     assert read["argv"] == ["--pure", "debug", "config"] and read["cwd"] == os.path.realpath(work)
-    assert (
-        read["env"]["OPENCODE_DISABLE_PROJECT_CONFIG"] == "1" and read["env"]["GH_TOKEN"] == SESSION_GH_TOKEN
-    )
-    assert {k for k in read["env"] if k.startswith("OPENCODE_")} == {"OPENCODE_DISABLE_PROJECT_CONFIG"}
-    assert not list((tmp_path / "root").iterdir())  # the session's gh config is gone again
+    assert read["env"]["GH_TOKEN"] == SESSION_GH_TOKEN
+    assert read["env"]["XDG_CONFIG_HOME"] == env["XDG_CONFIG_HOME"]
+    assert {k: v for k, v in read["env"].items() if k.startswith("OPENCODE_")} == OC_FLAGS
+    assert not list((tmp_path / "root").iterdir())  # the session's gh config and config home are gone again
+
+
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_a_planted_global_tool_never_reaches_an_opencode_session(tmp_path, opencode, role):
+    # ~/.config/opencode/tools/read.ts would replace the built-in `read` the reviewer is allowed (gate round 2)
+    out, _ = _oc_run(tmp_path, role)
+    assert out.ok
+    [run] = opencode.runs()
+    assert run["tools"] == [] and opencode.configs()[0]["tools"] == []
+    assert not run["env"]["XDG_CONFIG_HOME"].startswith(str(tmp_path / "user-config"))
+    assert (tmp_path / "user-config" / "opencode" / "tools" / "read.ts").exists()  # only read, never touched
+
+
+@pytest.mark.parametrize(
+    "entry", ["tools", "tool", "command", "agents", "plugin", "opencode.json", "opencode.jsonc"]
+)
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_an_opencode_session_does_not_start_when_home_opencode_holds_config(tmp_path, opencode, role, entry):
+    # 1.18.32 loads ~/.opencode as a config directory whatever XDG_CONFIG_HOME says
+    planted = tmp_path / "home" / ".opencode" / entry
+    if "." in entry:
+        planted.write_text("{}")
+    else:
+        planted.mkdir()
+        (planted / "read.ts").write_text("export default {}\n")
+    out, _ = _oc_run(tmp_path, role)
+    assert not out.ok and out.text == ""
+    assert opencode.runs() == [] and opencode.configs() == []  # refused before OpenCode ever ran
+    assert f"~/.opencode holds ['{entry}']" in out.log.read_text()
+    assert not list((tmp_path / "root").iterdir())
+
+
+@pytest.mark.parametrize(
+    "loaded",
+    [
+        {"mcp": {"mail": {"type": "local", "command": ["mail-mcp", "--token", "s3cret"]}}},
+        {"agent": {"build": {"permission": {"bash": "allow"}}}},
+        {"mode": {"legacy": {}}},
+        {"command": {"review": {"template": "!`touch x`", "model": "anthropic/claude-opus-5-5"}}},
+        {"plugin": ["opencode-evil"]},
+        {"permission": {"bash": "allow"}},
+        {"tools": {"rewrite": True}},
+        {"instructions": ["~/notes.md"]},
+    ],
+)
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_an_opencode_session_does_not_start_on_a_config_vigia_did_not_set(tmp_path, opencode, role, loaded):
+    # whatever source it came from (a managed config, a remote one), a resolved config beyond an empty home's is refused
+    opencode.set(config={**OPENCODE_EMPTY_CONFIG, **loaded})
+    out, _ = _oc_run(tmp_path, role)
+    assert not out.ok and out.text == ""
+    assert len(opencode.configs()) == 1 and opencode.runs() == []
+    log = out.log.read_text()
+    assert "not started" in log and str(sorted(loaded)) in log
+    assert "s3cret" not in log and "touch" not in log  # names only, never values
+    assert not list((tmp_path / "root").iterdir())
+
+
+def test_opencode_env_drops_every_opencode_variable_it_is_given(tmp_path, opencode):
+    home = tmp_path / "session-config"
+    home.mkdir()
+    given = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path / "home"),
+        "XDG_CONFIG_HOME": str(tmp_path / "user-config"),
+        "OPENCODE_CONFIG_CONTENT": '{"permission": {"bash": "allow"}}',
+        "OPENCODE_CONFIG_DIR": str(tmp_path / "user-config" / "opencode"),
+        "OPENCODE_PERMISSION": '{"bash": "allow"}',
+    }
+    env = opencode_env(given, "reviewer", tmp_path, home)
+    assert {k for k in env if k.startswith("OPENCODE_")} == {*OC_FLAGS, "OPENCODE_CONFIG_CONTENT"}
+    assert json.loads(env["OPENCODE_CONFIG_CONTENT"])["permission"] == READ_ONLY
+    assert env["XDG_CONFIG_HOME"] == str(home)
+
+
+def test_an_empty_home_config_is_the_only_one_accepted():
+    assert opencode_unexpected_config(OPENCODE_EMPTY_CONFIG) == []
+    assert opencode_unexpected_config({**OPENCODE_EMPTY_CONFIG, "mcp": {}}) == []
+    assert opencode_unexpected_config({}) == []
+    assert opencode_unexpected_config({**OPENCODE_EMPTY_CONFIG, "mcp": {"m": {}}, "share": "auto"}) == [
+        "mcp",
+        "share",
+    ]
+
+
+def test_opencode_inline_config_is_fixed_per_role():
+    assert opencode_inline_config("builder") == {"share": "disabled"}
+    assert opencode_inline_config("reviewer") == {"share": "disabled", "permission": READ_ONLY}
+    assert OPENCODE_REVIEWER_PERMISSION == READ_ONLY
 
 
 def test_an_opencode_seat_without_effort_passes_no_variant(tmp_path, opencode):
@@ -536,6 +646,8 @@ def test_an_opencode_seat_without_effort_passes_no_variant(tmp_path, opencode):
         {"run_exit": 0, "run_stdout": opencode_events("DONE") + opencode_events(error="rate limited")},
         {"run_stdout": "Error: You must provide a message or a command\n"},  # not JSON
         {"run_stdout": opencode_events(json.dumps(APPROVE), None)},  # the final message has no text
+        # the final message ended for another reason than `stop`: an approval there is not the answer
+        {"run_stdout": opencode_events(json.dumps(APPROVE)).replace('"stop"', '"length"')},
     ],
 )
 def test_an_opencode_session_that_fails_is_not_ok(tmp_path, opencode, settings):
@@ -568,53 +680,21 @@ def test_an_opencode_session_does_not_start_when_its_config_cannot_be_read(
 
 def test_an_opencode_session_does_not_start_without_the_binary(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     out, _ = _oc_run(tmp_path, "builder")
     assert not out.ok and "command not found" in out.log.read_text()
 
 
 @pytest.mark.parametrize("role", ["builder", "reviewer"])
-def test_opencode_overrides_cannot_share_attach_or_reopen_the_reviewer(tmp_path, opencode, role):
-    override = [
-        "--share",
-        "--attach",
-        "http://127.0.0.1:4096",
-        "--no-pure",
-        "--auto",
-        "--agent",
-        "build",
-        "--share=true",
-        "--format",
-        "default",
-        "-m",
-        "anthropic/claude-opus-5-5",
-        "--dir=/",
-        "--share",
-        "true",
-        "--command",
-        "review",  # a command template brings its own model and `!` shell lines
-        "--command=review",
-        "--title",
-        "x",
-    ]
-    cfg = Config(
-        repo="o/r", base="main", tiers=default_tiers(), engine_args={"opencode": {role: tuple(override)}}
-    )
+def test_opencode_overrides_never_reach_the_command_line(tmp_path, opencode, role):
+    # config loading refuses them (test_config); a Config built in code still cannot pass one through
+    override = ("--command", "review", "--session", "ses_1", "--attach", "http://127.0.0.1:4096", "--auto")
+    cfg = Config(repo="o/r", base="main", tiers=default_tiers(), engine_args={"opencode": {role: override}})
     out, work = _oc_run(tmp_path, role, cfg=cfg)
     assert out.ok
-    run = opencode.runs()[0]
-    argv = run["argv"]
-    assert not [
-        a for a in argv if a.startswith(("--share", "--attach", "--no-pure", "--dir=", "http", "--command"))
-    ]
-    assert "true" not in argv and "default" not in argv and "anthropic/claude-opus-5-5" not in argv
-    assert "review" not in argv
-    assert argv.count("-m") == argv.count("--format") == argv.count("--dir") == 1
-    assert argv[6:-4] == ["--auto", "--agent", "build", "--title", "x"]  # the rest passes, in order
-    inline = json.loads(run["env"]["OPENCODE_CONFIG_CONTENT"])
-    assert inline["share"] == "disabled"
-    if role == "reviewer":  # `--auto` approves only what is not denied, and `build` is denied by name
-        assert inline["permission"]["bash"] == inline["permission"]["edit"] == "deny"
-        assert inline["agent"]["build"]["permission"]["bash"] == "deny"
+    argv = opencode.runs()[0]["argv"]
+    assert not set(override) & set(argv)
+    assert argv[-4:] == ["--format", "json", "--dir", str(work)]
 
 
 def test_opencode_final_text_is_the_last_messages_text():
@@ -629,54 +709,17 @@ def test_opencode_final_text_is_the_last_messages_text():
     assert _opencode_text("") == "" and _opencode_text("garbage\n[1, 2]\n") == ""
 
 
-def test_opencode_final_text_comes_only_from_a_finished_final_message():
+@pytest.mark.parametrize("reason", ["tool-calls", "length", "error", "content-filter", "unknown", None])
+def test_opencode_final_text_comes_only_from_a_final_message_that_stopped(reason):
     verdict = json.dumps(APPROVE)
     # an approval in a step that stopped for tool calls, then a final message with no text: no final text
     assert _opencode_text(opencode_events(verdict, None)) == ""
     # the stream ends inside a step: its message never finished
     unfinished = "".join(opencode_events(verdict).splitlines(keepends=True)[:-1])
     assert _opencode_text(unfinished) == ""
-    # the last message stopped for tool calls: it is not an answer
-    assert _opencode_text(opencode_events(verdict).replace('"stop"', '"tool-calls"')) == ""
+    # the last message finished for any reason but `stop`: it is not an answer, whatever came before it
+    assert _opencode_text(opencode_events("plan", verdict).replace('"stop"', json.dumps(reason))) == ""
     assert _opencode_text(opencode_events("plan", verdict)) == verdict
-
-
-def test_an_opencode_reviewer_denies_every_tool_the_config_names():
-    resolved = {
-        "permission": {"*": "allow", "rewrite": "allow", "read": "allow"},
-        "tools": {"rewrite": True, "deploy": True},
-        "agent": {"build": {"permission": {"publish": "allow"}, "tools": {"upload": True}}, "odd": "x"},
-        "mode": {"legacy": {"tools": {"legacy_tool": True}, "permission": "allow"}},
-    }
-    inline = opencode_inline_config(resolved, "reviewer")
-    for table in (
-        inline["permission"],
-        inline["agent"]["build"]["permission"],
-        inline["mode"]["legacy"]["permission"],
-    ):
-        assert list(table)[0] == "*" and table["*"] == "deny"
-        for name in ("rewrite", "deploy", "publish", "upload", "legacy_tool", "bash", "edit", "webfetch"):
-            assert table[name] == "deny"
-        # the read-only allowlist comes last, after `*`, so it is what the reviewer keeps
-        assert list(table)[-4:] == ["read", "grep", "glob", "list"] and table["grep"] == "allow"
-    assert "permission" not in opencode_inline_config(resolved, "builder")
-
-
-def test_without_flags_drops_values_and_explicit_booleans():
-    flags = {"--share": False, "--attach": True}
-    args = [
-        "--share",
-        "false",
-        "--attach",
-        "u",
-        "--attach=v",
-        "--share=1",
-        "--keep",
-        "true",
-        "--share",
-        "--x",
-    ]
-    assert _without_flags(args, flags) == ["--keep", "true", "--x"]
 
 
 def test_a_scripted_opencode_gate_goes_through_the_e2e_fake(tmp_path):

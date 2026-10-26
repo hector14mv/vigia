@@ -232,8 +232,8 @@ DEFAULT_ENGINE_ARGS: dict[str, dict[str, tuple[str, ...]]] = {
         "builder": ("--sandbox", "workspace-write"),
         "reviewer": ("--sandbox", "read-only"),
     },
-    # OpenCode has no sandbox flag: vigia sets every session's permissions through OPENCODE_CONFIG_CONTENT, and a
-    # reviewer's deny rules there whatever these say (`engines.opencode_inline_config`).
+    # OpenCode has no sandbox flag: vigia sets every session's permissions through OPENCODE_CONFIG_CONTENT on an empty
+    # configuration home (`engines.opencode_env`), and `parse` refuses any override for it.
     "opencode": {"builder": (), "reviewer": ()},
 }
 
@@ -368,6 +368,13 @@ def parse(data: dict, path: Path | None = None) -> Config:
                 raise ConfigError(f"engines.{engine}.{role}: expected 'builder' or 'reviewer'")
             if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
                 raise ConfigError(f"engines.{engine}.{role}: expected a list of CLI arguments")
+            if engine == "opencode" and args:
+                # fail closed: `--command`, `--session`, `--attach`, `--agent`, `--auto`... each undoes part of the
+                # reviewer's read-only rule or the seat's model, and an allowlist of safe ones does not exist yet
+                raise ConfigError(
+                    f"engines.opencode.{role}: OpenCode {role} sessions take no extra arguments in this version "
+                    f"(got {args!r}); remove the list"
+                )
             engine_args[engine][role] = tuple(args)
 
     return Config(

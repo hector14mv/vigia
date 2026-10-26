@@ -70,37 +70,37 @@ SESSION_GH_TOKEN = "vigia-engine-session-has-no-github-access"
 # (`gh auth git-credential`, the macOS keychain), so `git credential fill` hands out nothing.
 _NO_CREDENTIAL_HELPER = (("credential.helper", ""), ("credential.https://github.com.helper", ""))
 
-# OpenCode has no sandbox flag. A reviewer gets these deny rules in its inline config, at the top level and for every
-# agent the resolved config defines, because an agent's own `permission` table outranks the top-level one (checked on
-# 1.18.32: a user agent with `bash: allow` keeps its shell under a top-level deny).
-OPENCODE_REVIEWER_DENY = {"edit": "deny", "bash": "deny", "webfetch": "deny"}
-# A reviewer's tools are an allowlist: `*` denies everything else, including custom tools from
-# ~/.config/opencode/tools, which 1.18.32 loads even under --pure and OPENCODE_DISABLE_PROJECT_CONFIG=1 (checked with
-# `opencode debug agent build`: a denied tool leaves the agent's tool list). The last matching rule wins, so these
-# come after `*`; reading a .env file stays off, as nobody is there to answer OpenCode's default `ask`.
-OPENCODE_REVIEWER_READ = {
+# OpenCode has no sandbox flag. Every session runs on an empty configuration home of its own (`opencode_env`), so no
+# user config, custom tool, command, agent, mode, plugin or MCP server can load, and a reviewer's inline config makes
+# its tools an allowlist: `*` denies everything, then the read-only tools come back. The last matching rule wins, so
+# they come after `*`; reading a .env file stays off, as nobody is there to answer OpenCode's default `ask`.
+OPENCODE_REVIEWER_PERMISSION = {
+    "*": "deny",
+    "edit": "deny",
+    "bash": "deny",
+    "webfetch": "deny",
     "read": {"*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow"},
     "grep": "allow",
     "glob": "allow",
     "list": "allow",
 }
-# Options vigia sets itself on `opencode run`: an override that names one is dropped, with its value. `--share`
-# publishes the session, `--attach` runs it on a server whose config vigia never set, `--no-pure` loads plugins,
-# `--command` runs a user's command template (its own model, and `!` shell lines no permission rule sees),
-# and the model, effort, output format and directory must be the seat's and vigia's. True: takes a value.
-_OPENCODE_FIXED = {
-    "--share": False,
-    "--no-share": False,
-    "--pure": False,
-    "--no-pure": False,
-    "--attach": True,
-    "--command": True,
-    "--format": True,
-    "-m": True,
-    "--model": True,
-    "--variant": True,
-    "--dir": True,
+# What OpenCode reads besides its config home, turned off for every session: the worktree's opencode.json, .opencode/
+# and AGENTS.md; Claude Code's ~/.claude/CLAUDE.md and skills; skills from ~/.agents.
+OPENCODE_SESSION_FLAGS = {
+    "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+    "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+    "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
 }
+# 1.18.32 also reads ~/.opencode as a config directory whatever XDG_CONFIG_HOME says (its opencode.json, tools/,
+# commands/, agents/, plugins/...). OpenCode's installer and its dependency step leave only these entries there; a
+# session does not start when anything else is in it.
+OPENCODE_HOME_INSTALL = frozenset(
+    {"bin", "node_modules", "package.json", "package-lock.json", "bun.lock", "bun.lockb", ".gitignore"}
+)
+# What `opencode debug config` resolves on an empty configuration home: anything more came from a source vigia does
+# not control (a managed config, ~/.opencode, a remote config), and the session does not start.
+_OPENCODE_EMPTY_CONFIG = {"agent": {}, "command": {}, "mode": {}, "plugin": [], "mcp": {}}
+_OPENCODE_CONFIG_IDENTITY = {"$schema", "username"}
 # How long `opencode debug config` may take before the session is refused.
 _OPENCODE_CONFIG_SECONDS = 120
 
@@ -211,13 +211,14 @@ class Engines:
                 cmd += ["--output-schema", str(schema_file)]
             return cmd + ["-"]  # the prompt comes on stdin
         if seat.engine == "opencode":
-            # The prompt comes on stdin (1.18.32 reads it, and refuses an empty one). Permissions, MCP servers and
-            # sharing are set through the environment (`opencode_env`), so a reviewer's read-only rule does not
-            # depend on these arguments; the reviewer prompt asks for the verdict JSON, as there is no schema flag.
+            # The prompt comes on stdin (1.18.32 reads it, and refuses an empty one). Permissions and sharing are set
+            # through the environment (`opencode_env`); the reviewer prompt asks for the verdict JSON, as there is no
+            # schema flag. No override ever reaches the command line: config loading refuses them, and `extra` is
+            # not used here, so `--command`, `--session`, `--attach`, `--agent` or `--auto` cannot come back.
             cmd = ["opencode", "run", "--pure", "-m", seat.model]
             if seat.effort:
                 cmd += ["--variant", seat.effort]
-            return cmd + _without_flags(extra, _OPENCODE_FIXED) + ["--format", "json", "--dir", str(workdir)]
+            return cmd + ["--format", "json", "--dir", str(workdir)]
         raise ValueError(f"unknown engine {seat.engine!r}")
 
     def run(
@@ -232,20 +233,23 @@ class Engines:
             schema_file = self.logs / f"{name}.schema.json"
             schema_file.write_text(json.dumps(schema or VERDICT_SCHEMA), encoding="utf-8")
         gh_config = self.root / f".gh-config-{name}"
+        # an OpenCode session's configuration home: created empty here, deleted with the session
+        oc_home = self.root / f".opencode-config-{name}" if seat.engine == "opencode" else None
         cmd = self.command(seat, role, workdir, out_file, schema_file, guards=session_guards(gh_config))
-        safety.remove(gh_config, self.root)  # an interrupted run's: start logged out, never from its state
-        gh_config.mkdir(parents=True)
+        # an interrupted run's: start logged out and empty, never from its state
+        for fresh in (gh_config, oc_home):
+            if fresh is not None:
+                safety.remove(fresh, self.root)
+                fresh.mkdir(parents=True)
         started = time.monotonic()
         held = jobs.held()
         log = self.logs / f"{name}.log"
         try:
             env = session_env(os.environ, gh_config)
-            if seat.engine == "opencode":
+            if oc_home is not None:
                 try:
-                    env = opencode_env(env, role, workdir)
-                except (
-                    OpencodeConfigError
-                ) as exc:  # the session does not start without its servers turned off
+                    env = opencode_env(env, role, workdir, oc_home)
+                except OpencodeConfigError as exc:  # the session does not start on a config vigia did not set
                     log.write_text(f"vigia: OpenCode session not started: {exc}\n", encoding="utf-8")
                     return Outcome(False, "", 1, False, round(time.monotonic() - started, 1), log)
             result = self._run(
@@ -259,6 +263,8 @@ class Engines:
             )
         finally:
             safety.remove(gh_config, self.root)
+            if oc_home is not None:
+                safety.remove(oc_home, self.root)
         seconds = round(time.monotonic() - started, 1)
         text = _final_text(seat.engine, result.stdout, out_file)
         ok = result.code == 0 and not result.timed_out and bool(text.strip())
@@ -309,54 +315,61 @@ def opencode_config(env: Mapping[str, str], workdir: Path) -> dict:
     return data
 
 
-def opencode_inline_config(resolved: Mapping, role: str) -> dict:
-    """The OPENCODE_CONFIG_CONTENT of a session: OpenCode merges it over every other config, so it cannot empty the
-    `mcp` table, but it can turn off each server by name. Sharing is off for everyone; a reviewer also gets
-    `opencode_reviewer_permission` at the top level and for every agent and mode the resolved config names."""
-    inline: dict = {
-        "share": "disabled",
-        "mcp": {name: {"enabled": False} for name in resolved.get("mcp", {})},
-    }
+def opencode_inline_config(role: str) -> dict:
+    """The OPENCODE_CONFIG_CONTENT of a session: sharing is off for everyone, and a reviewer gets
+    `OPENCODE_REVIEWER_PERMISSION`. The resolved config it goes on top of is empty (`opencode_env`), so no agent, mode
+    or tool table of the user's can outrank it."""
+    inline: dict = {"share": "disabled"}
     if role == "reviewer":
-        agents = {*resolved.get("agent", {}), *resolved.get("mode", {})}
-        permission = opencode_reviewer_permission(resolved)
-        inline["permission"] = permission
-        inline["agent"] = {name: {"permission": dict(permission)} for name in sorted(agents)}
-        inline["mode"] = {name: {"permission": dict(permission)} for name in resolved.get("mode", {})}
+        inline["permission"] = dict(OPENCODE_REVIEWER_PERMISSION)
     return inline
 
 
-def opencode_reviewer_permission(resolved: Mapping) -> dict:
-    """A reviewer's permission table: `*` denied, every tool the resolved config names in a `permission` or `tools`
-    table (top level, agents, modes) denied by name, so a user's named allow keeps no place after the `*` whatever
-    order the merge leaves, then `OPENCODE_REVIEWER_DENY` and the read-only allowlist."""
-    named: set[str] = set()
-    for table in (resolved, *_tables(resolved.get("agent")), *_tables(resolved.get("mode"))):
-        for key in ("permission", "tools"):
-            if isinstance(table.get(key), dict):
-                named.update(table[key])
-    named -= {"*", *OPENCODE_REVIEWER_DENY, *OPENCODE_REVIEWER_READ}
-    return {
-        "*": "deny",
-        **{name: "deny" for name in sorted(named)},
-        **OPENCODE_REVIEWER_DENY,
-        **OPENCODE_REVIEWER_READ,
-    }
+def opencode_home_extras(env: Mapping[str, str]) -> list[str]:
+    """What ~/.opencode (the session's HOME) holds beyond OpenCode's own install: OpenCode would load it as config."""
+    home = Path(env.get("HOME") or Path.home()) / ".opencode"
+    try:
+        if not home.is_dir():
+            return []
+        return sorted(p.name for p in home.iterdir() if p.name not in OPENCODE_HOME_INSTALL)
+    except OSError as exc:  # unreadable: vigia cannot tell what OpenCode would load from it
+        raise OpencodeConfigError(f"cannot read ~/.opencode: {exc.strerror}") from exc
 
 
-def _tables(section: object) -> list[dict]:
-    """The agent or mode tables of a resolved config section that are tables."""
-    return [t for t in section.values() if isinstance(t, dict)] if isinstance(section, dict) else []
-
-
-def opencode_env(env: Mapping[str, str], role: str, workdir: Path) -> dict[str, str]:
-    """An OpenCode session's environment: `env` (the session allowlist and guards, which hold no OPENCODE_* from the
-    user), no project config from the worktree, and the inline config built from what OpenCode would load."""
-    out = {k: v for k, v in env.items() if not k.startswith("OPENCODE_")}
-    out["OPENCODE_DISABLE_PROJECT_CONFIG"] = (
-        "1"  # a worktree's opencode.json and .opencode/ (agents, servers)
+def opencode_unexpected_config(resolved: Mapping) -> list[str]:
+    """The keys of a resolved config that hold more than an empty configuration home gives: names only, as the values
+    may hold provider keys or a server's environment."""
+    return sorted(
+        key
+        for key, value in resolved.items()
+        if key not in _OPENCODE_CONFIG_IDENTITY and _OPENCODE_EMPTY_CONFIG.get(key, object()) != value
     )
-    out["OPENCODE_CONFIG_CONTENT"] = json.dumps(opencode_inline_config(opencode_config(out, workdir), role))
+
+
+def opencode_env(env: Mapping[str, str], role: str, workdir: Path, config_home: Path) -> dict[str, str]:
+    """An OpenCode session's environment: `env` (the session allowlist and guards, with no OPENCODE_* from the user),
+    `config_home` (an empty directory vigia made for this session) as XDG_CONFIG_HOME, so ~/.config/opencode never
+    loads, `OPENCODE_SESSION_FLAGS`, and the inline config for `role`.
+
+    The provider login is not config: OpenCode keeps it in its data directory (~/.local/share/opencode/auth.json),
+    which XDG_CONFIG_HOME does not move. Raises OpencodeConfigError, and the session must not start, when ~/.opencode
+    holds config, or when OpenCode still resolves a config of any kind (an MCP server, an agent, a command, a plugin,
+    a permission...) on the empty home."""
+    out = {k: v for k, v in env.items() if not k.startswith("OPENCODE_")}
+    out["XDG_CONFIG_HOME"] = str(config_home)
+    out.update(OPENCODE_SESSION_FLAGS)
+    extras = opencode_home_extras(out)
+    if extras:
+        raise OpencodeConfigError(
+            f"~/.opencode holds {extras}, which OpenCode loads as config in every session; move them out of it"
+        )
+    unexpected = opencode_unexpected_config(opencode_config(out, workdir))
+    if unexpected:
+        raise OpencodeConfigError(
+            f"`opencode debug config` resolves {unexpected} on an empty configuration home "
+            "(a managed or remote config?); vigia runs OpenCode only on a config it set itself"
+        )
+    out["OPENCODE_CONFIG_CONTENT"] = json.dumps(opencode_inline_config(role))
     return out
 
 
@@ -415,25 +428,6 @@ def _without_option(args: list[str], option: str) -> list[str]:
     return out
 
 
-def _without_flags(args: list[str], flags: Mapping[str, bool]) -> list[str]:
-    """`args` without any option in `flags`, in either spelling (`--opt=v` or `--opt v`), with the value it takes
-    (`flags[opt]` is True) or an explicit `true`/`false` after a boolean one."""
-    out: list[str] = []
-    skip: str | None = None  # "value": drop the next argument; "bool": drop it only if it is true/false
-    for a in args:
-        if skip == "value" or (skip == "bool" and a in ("true", "false")):
-            skip = None
-            continue
-        skip = None
-        name, eq, _ = a.partition("=")
-        if name in flags:
-            if not eq:
-                skip = "value" if flags[name] else "bool"
-            continue
-        out.append(a)
-    return out
-
-
 def _opencode_events(stdout: str) -> list[dict]:
     """The JSON events `opencode run --format json` prints, one per line; a line that is not one is skipped."""
     events = []
@@ -453,9 +447,10 @@ def _opencode_error(stdout: str) -> bool:
 
 
 def _opencode_text(stdout: str) -> str:
-    """The final message: the text parts of the message the last event belongs to, once that message has finished
-    a step that did not stop for tool calls. Text from earlier steps is not the answer, so a final message with no
-    text, or one that never finished, gives no text at all."""
+    """The final message's text: the text parts of the message the last event belongs to, and only once that message
+    has finished its step with reason `stop` (1.18.32 ends every other step with `tool-calls`). Text from earlier
+    messages is never the answer: a final message with no text, one that never finished, or one that ended for any
+    other reason (`length`, `error`...) gives no text at all."""
     parts = [
         e["part"]
         for e in _opencode_events(stdout)
@@ -466,7 +461,7 @@ def _opencode_text(stdout: str) -> str:
     last = parts[-1]["messageID"]
     final = [p for p in parts if p["messageID"] == last]
     finishes = [p for p in final if p.get("type") == "step-finish"]
-    if not finishes or finishes[-1].get("reason") == "tool-calls":
+    if not finishes or finishes[-1].get("reason") != "stop":
         return ""
     return "\n".join(p["text"] for p in final if p.get("type") == "text" and isinstance(p.get("text"), str))
 

@@ -358,11 +358,37 @@ def test_an_unknown_engine_is_still_refused():
         parse(doc)
 
 
-def test_opencode_engine_args_override_round_trips():
+@pytest.mark.parametrize(
+    "args",
+    [
+        [
+            "--command",
+            "review",
+        ],  # a command template brings its own model and runs `!` shell lines (gate round 1)
+        ["--command=review"],
+        ["--session", "ses_1"],  # a saved session's permission rules outrank vigia's (gate round 2)
+        ["-s", "ses_1"],
+        ["--continue"],
+        ["--attach", "http://127.0.0.1:4096"],
+        ["--agent", "plan"],
+        ["--auto"],
+    ],
+)
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_opencode_overrides_are_refused_at_load(role, args):
     doc = base_doc()
-    doc["engines"] = {"opencode": {"reviewer": ["--agent", "plan"]}}
+    doc["engines"] = {"opencode": {role: args}}
+    with pytest.raises(
+        ConfigError, match=rf"engines\.opencode\.{role}: OpenCode {role} sessions take no extra"
+    ):
+        parse(doc)
+
+
+def test_an_empty_opencode_override_list_loads():
+    doc = base_doc()
+    doc["engines"] = {"opencode": {"builder": [], "reviewer": []}}
     cfg = parse(doc)
-    assert cfg.engine_args["opencode"] == {"builder": (), "reviewer": ("--agent", "plan")}
+    assert cfg.engine_args["opencode"] == {"builder": (), "reviewer": ()}
     assert parse(tomllib.loads(render(cfg))).engine_args == cfg.engine_args
 
 
