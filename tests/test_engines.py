@@ -98,6 +98,53 @@ def test_claude_builder_keeps_its_shell(tmp_path):
     assert "--disallowedTools" not in cmd and "Bash" in cmd
 
 
+# Builders and fixers run as "builder"; gates, reviewers and the planner run as "reviewer".
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+@pytest.mark.parametrize("with_schema", [False, True])
+def test_claude_sessions_load_no_mcp_servers(tmp_path, role, with_schema):
+    schema = tmp_path / "s.json"
+    schema.write_text('{"type": "object"}')
+    cmd = Engines(CFG, tmp_path).command(
+        Seat("claude", "claude-opus-5-5", "high"),
+        role,
+        tmp_path,
+        tmp_path / "o",
+        schema if with_schema else None,
+    )
+    # strict mode with no --mcp-config: none of the user's servers, plugins' or claude.ai connectors
+    assert cmd[cmd.index("--output-format") - 1] == "--strict-mcp-config"
+    assert not [a for a in cmd if a.startswith("--mcp-config")]
+    assert cmd[:6] == ["claude", "-p", "--model", "claude-opus-5-5", "--effort", "high"]
+
+
+@pytest.mark.parametrize("role", ["builder", "reviewer"])
+def test_claude_override_cannot_bring_mcp_servers_back(tmp_path, role):
+    override = [
+        "--mcp-config",
+        "mail.json",
+        '{"mcpServers": {"cal": {"command": "cal-mcp"}}}',
+        "--permission-mode",
+        "default",
+        "--mcp-config=browser.json",
+        "--allowedTools",
+        "Read",
+    ]
+    cfg = Config(
+        repo="o/r",
+        base="main",
+        tiers=default_tiers(),
+        engine_args={"claude": {role: tuple(override)}},
+    )
+    cmd = Engines(cfg, tmp_path).command(
+        Seat("claude", "claude-opus-5-5"), role, tmp_path, tmp_path / "o", None
+    )
+    assert not [a for a in cmd if a.startswith("--mcp-config") or "mcpServers" in a or a.endswith(".json")]
+    assert cmd[4:8] == ["--permission-mode", "default", "--allowedTools", "Read"]  # the rest passes through
+    assert cmd[cmd.index("--output-format") - 1] == "--strict-mcp-config"
+    if role == "reviewer":
+        assert {"Bash", "Edit", "Write", "NotebookEdit"} <= set(_last_denied(cmd))
+
+
 def test_run_reads_codex_final_message_and_claude_json(tmp_path):
     seen = {}
 

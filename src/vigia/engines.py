@@ -139,6 +139,9 @@ class Engines:
                 # a deny rule beats any allow rule, even under bypassPermissions: no shell, no writes
                 extra += ["--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit"]
         if seat.engine == "claude":
+            # no session reaches the user's MCP servers (mail, calendar, browser...), whatever the overrides say:
+            # strict mode loads only `--mcp-config` servers, and no `--mcp-config` survives
+            extra = _without_option(extra, "--mcp-config") + ["--strict-mcp-config"]
             cmd = ["claude", "-p", "--model", seat.model]
             if seat.effort:
                 cmd += ["--effort", seat.effort]
@@ -245,6 +248,22 @@ def session_env(base: Mapping[str, str], gh_config: Path) -> dict[str, str]:
     env = {k: v for k, v in base.items() if k in SESSION_ENV or k.startswith(SESSION_ENV_PREFIXES)}
     env.update(session_guards(gh_config))
     return env
+
+
+def _without_option(args: list[str], option: str) -> list[str]:
+    """`args` without `option`, in either spelling (`--opt=v` or `--opt v1 v2 ...`), and every value it takes:
+    Claude's list options take values up to the next argument that starts with `-`."""
+    out: list[str] = []
+    dropping = False
+    for a in args:
+        if a == option or a.startswith(option + "="):
+            dropping = a == option
+            continue
+        if dropping and not a.startswith("-"):
+            continue
+        dropping = False
+        out.append(a)
+    return out
 
 
 def _claude_error(stdout: str) -> bool:
