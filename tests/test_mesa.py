@@ -1500,6 +1500,15 @@ def test_a_quiet_office_shows_one_free_desk_per_slot_on_both_layouts(world, tmp_
     assert "0 of 3 slots" in shown["phone"]["factory"]["text"]  # the Factory counts the same slots
 
 
+def test_the_office_has_a_desk_for_every_configured_slot_beyond_twelve(world, tmp_path):  # noqa: F811
+    gh, s, repo, pr = _office_world(world)
+    wide = dict(s, repos=[dict(repo, slots=16, jobs=[])])
+    shown = _render(tmp_path, wide, routes=("office", "factory"))
+    for view in _views(shown, "office"):
+        assert view["html"].count('class="odesk free"') == 16 and "0 of 16 slots" in view["text"]
+    assert "0 of 16 slots" in shown["phone"]["factory"]["text"]
+
+
 def test_each_running_job_is_a_figure_at_a_desk_with_its_role_model_pr_and_time(world, tmp_path):  # noqa: F811
     gh, s, repo, pr = _office_world(world)
     n = pr["number"]
@@ -1595,10 +1604,16 @@ def test_what_could_not_be_read_is_unknown_in_the_office_never_an_empty_tray_or_
         assert "GitHub did not answer for" in text and "Bad credentials" in text
         assert "Unknown for" in text and "Not all read for part" in text and "parked tickets" in text
         assert "Nothing is parked" not in text and "Nothing merged today yet" not in text
+        assert "Nothing parked" not in text  # the shelf header does not call unread data empty
+        assert "Unknown: not all could be read" in text and re.search(
+            r'data-k="shelf-count">\?<', view["html"]
+        )
         assert "Pull requests unknown" in text and "No pull request is waiting" not in text
     reading = dict(repo, pending=True, jobs=[], merged_today=[], **{k: None for k in lists})
     for view in _views(_render(tmp_path, dict(s, repos=[reading]), routes=("office",)), "office"):
         assert "Reading GitHub for" in view["text"] and "Nothing is parked" not in view["text"]
+        assert "Nothing parked" not in view["text"] and "Reading GitHub…" in view["text"]
+        assert re.search(r'data-k="shelf-count">\?<', view["html"])
         assert "Unknown for" not in view["text"]  # on its way, not lost
 
 

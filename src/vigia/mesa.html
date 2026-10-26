@@ -1505,7 +1505,7 @@ a.ev { min-height: 44px; }
   // One desk per slot (never fewer than running jobs). A job keeps its desk from poll to poll: it takes the lowest
   // free one when it first appears and gives it back when it ends.
   function officeDesks() {
-    var ss = sessions(), total = slotsTotal(), n = Math.max(ss.length, Math.min(total, 12)), seat = S.office.seat;
+    var ss = sessions(), total = slotsTotal(), n = Math.max(ss.length, total), seat = S.office.seat;
     var live = {}, taken = {}, count = {}, desks = [], i;
     ss.forEach(function (s) { s.key = jobKey(s, count); live[s.key] = 1; });
     Object.keys(seat).forEach(function (k) { if (!live[k] || seat[k] >= n) delete seat[k]; else taken[seat[k]] = 1; });
@@ -1586,9 +1586,12 @@ a.ev { min-height: 44px; }
   }
   function officeShelf(next) {
     var sh = shelfItems(next), n = sh.items.length, names = function (l) { return l.map(function (r) { return short(r.repo); }).join(", "); };
+    // Not every list was read: the header says so instead of asserting that nothing is waiting.
+    var open = sh.unknown.length > 0 || sh.reading.length > 0;
+    var meta = n ? plural(n, "parked item") + " need a person" + (open ? ", more may be waiting" : "") : sh.unknown.length ? "Unknown: not all could be read" : sh.reading.length ? "Reading GitHub…" : "Nothing parked";
     return h("section", { "class": "ocorner", "aria-labelledby": "office-shelf-h" },
       h("div", { "class": "chd" }, shelfArt(n), h("div", { "class": "stack" }, h("h2", { id: "office-shelf-h" }, "Waiting for you"),
-        h("p", { "class": "meta" }, n ? plural(n, "parked item") + " need a person" : "Nothing parked")), h("span", { "class": n ? "badge md" : "fact", "data-k": "shelf-count" }, String(n))),
+        h("p", { "class": "meta" }, meta)), h("span", { "class": n ? "badge md" : "fact", "data-k": "shelf-count" }, n ? String(n) + (open ? "+" : "") : open ? "?" : "0")),
       n ? h("ul", { "class": "merged-list" }, sh.items.map(shelfRow)) : sh.unknown.length || sh.reading.length ? null : h("p", { "class": "note" }, "Nothing is parked. Anything else that needs you is in Your turn."),
       sh.unknown.length ? h("p", { "class": "note c-danger" }, "! Unknown for " + names(sh.unknown) + ": its parked pull requests and tickets could not be read, so more may be waiting.") : null,
       sh.reading.length ? h("p", { "class": "note" }, "Reading GitHub for " + names(sh.reading) + "…") : null,
