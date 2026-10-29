@@ -1,0 +1,8 @@
+pr = 104
+head = "28df5bdc9de29930b9d9411e17a80d67c8faf1a0"
+base = "d8a9c5dbf3e576cd226b241dc36f6748230509dc"
+tier = "T1"
+builder = { engine = "claude", model = "claude-sonnet-5-5" }
+expect = "p1"
+files = ["src/vigia/mesa.html"]
+why = "The Office drew at most 12 desks whatever the configured slots, and called an unread parked shelf empty; fixed in e3df71de."
