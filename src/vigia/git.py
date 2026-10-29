@@ -41,6 +41,10 @@ class Git:
     def rev(self, ref: str, cwd: Path | None = None) -> str:
         return self._git("rev-parse", ref, cwd=cwd).stdout.strip()
 
+    def has_commit(self, sha: str) -> bool:
+        """Whether the clone has the commit `sha` (a fetch may be needed before a PR's head is here)."""
+        return self._git("cat-file", "-e", f"{sha}^{{commit}}", check=False).code == 0
+
     def remote_branch_sha(self, branch: str) -> str:
         """Fetch `branch` from origin and return the commit it points to."""
         self.fetch(f"+refs/heads/{branch}:refs/remotes/origin/{branch}")

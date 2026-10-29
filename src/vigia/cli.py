@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import argparse
 import errno
+import itertools
 import json
+import os
 import signal
 import sys
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, builder, doctor, gate, jobs, status, tickets, watch, workspace
+from . import __version__, builder, doctor, evals, gate, jobs, status, tickets, watch, workspace
 from . import config as config_mod
 from . import init as init_mod
 from .config import ConfigError
@@ -324,6 +327,57 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _positive(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        number = 0
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {value!r}")
+    return number
+
+
+def _write_eval_result(directory: Path, text: str) -> Path:
+    """Write `text` to a result file no other evaluation has: timestamp and pid, exclusive create, counter on clash."""
+    directory.mkdir(parents=True, exist_ok=True)
+    stem = f"gate-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}"
+    for n in itertools.count():
+        out = directory / f"{stem}{f'-{n}' if n else ''}.json"
+        try:
+            with out.open("x", encoding="utf-8") as fh:
+                fh.write(text)
+        except FileExistsError:
+            continue
+        return out
+
+
+def cmd_eval_gate(args: argparse.Namespace) -> int:
+    ctx = Ctx.load(Path.cwd())
+    override = None
+    if args.engine or args.model or args.effort:
+        if not (args.engine and args.model):
+            raise SystemExit("vigia: --engine and --model go together (--effort needs both)")
+        override = config_mod._seat(
+            {"engine": args.engine, "model": args.model, **({"effort": args.effort} if args.effort else {})},
+            "--engine/--model/--effort",
+        )
+    directory = Path(args.directory) if args.directory else ctx.clone / "evals" / "gate"
+    if not directory.is_dir():
+        raise SystemExit(f"vigia: {directory} is not a directory of eval cases")
+    report = evals.prepare(ctx, directory, args.runs, args.case or None, override)
+    for name, reason in report.refused:
+        print(f"refused {name}: {reason}")
+    sessions = len(report.jobs) * args.runs
+    print(f"{len(report.jobs)} case(s) x {args.runs} run(s) = {sessions} engine session(s)")
+    evals.execute(ctx, report)
+    print("\n".join(report.summary()))
+    out = _write_eval_result(
+        ctx.state / "evals", json.dumps(report.to_json(), indent=2, ensure_ascii=False) + "\n"
+    )
+    print(f"result: {out}")
+    return 1 if report.failed else 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     checks = doctor.collect(Path.cwd())
     print(doctor.to_json(checks) if args.json else doctor.render(checks))
@@ -436,6 +490,19 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ticket", help="check a ticket body (a file, or - for stdin) against the template")
     s.add_argument("file", help="the ticket body, or - to read it from stdin")
     s.set_defaults(func=cmd_ticket)
+
+    s = sub.add_parser("eval", help="measure the gate against past pull requests with a known outcome")
+    ev = s.add_subparsers(dest="eval_command", required=True)
+    g = ev.add_parser(
+        "gate", help="replay the cases in a directory through the tier's gate and score what it catches"
+    )
+    g.add_argument("directory", nargs="?", help="the cases (default: evals/gate in this clone)")
+    g.add_argument("--runs", type=_positive, default=2, help="sessions per case (default 2)")
+    g.add_argument("--case", action="append", help="run only this case (a directory name); repeatable")
+    g.add_argument("--engine", choices=sorted(config_mod.FAMILIES), help="replace the tier's gate engine")
+    g.add_argument("--model", help="replace the tier's gate model (with --engine)")
+    g.add_argument("--effort", help="the effort for the replacement seat")
+    g.set_defaults(func=cmd_eval_gate)
 
     s = sub.add_parser(
         "doctor", help="check that vigia can work in this clone, with the fix for each problem"
