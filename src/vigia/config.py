@@ -63,7 +63,9 @@ MODEL_ALIASES = {"opus", "sonnet", "haiku", "fable", "default", "best", "latest"
 EFFORTS = {
     "claude": {"low", "medium", "high", "xhigh", "max"},
     "codex": {"low", "medium", "high", "xhigh"},
+    "opencode": {"minimal", "low", "medium", "high", "xhigh", "max"},  # passed as `--variant`
 }
+ENGINES = (*FAMILIES, *sorted(ROUTED_ENGINES))
 
 
 # Labels `vigia plan` files with, whatever vigia.toml says: a ticket waiting for a person, and work only a person can do.
@@ -230,6 +232,9 @@ DEFAULT_ENGINE_ARGS: dict[str, dict[str, tuple[str, ...]]] = {
         "builder": ("--sandbox", "workspace-write"),
         "reviewer": ("--sandbox", "read-only"),
     },
+    # OpenCode has no sandbox flag: vigia sets every session's permissions through OPENCODE_CONFIG_CONTENT on an empty
+    # configuration home (`engines.opencode_env`), and `parse` refuses any override for it.
+    "opencode": {"builder": (), "reviewer": ()},
 }
 
 
@@ -247,15 +252,24 @@ def _seat(raw: object, where: str, required: bool = True) -> Seat | None:
     if unknown:
         raise ConfigError(f"{where}: unknown keys {sorted(unknown)}")
     engine, model, effort = raw.get("engine"), raw.get("model"), raw.get("effort")
-    if engine == "opencode":
-        raise ConfigError(f"{where}.engine: OpenCode is not available yet (#107)")
-    if engine not in FAMILIES:
-        raise ConfigError(f"{where}.engine: {engine!r} is not one of {sorted(FAMILIES)}")
+    if engine not in ENGINES:
+        raise ConfigError(f"{where}.engine: {engine!r} is not one of {sorted(ENGINES)}")
     if not isinstance(model, str) or not model.strip():
         raise ConfigError(f"{where}.model: an explicit model id is required")
-    if model.strip().lower() in MODEL_ALIASES:
+    if engine in ROUTED_ENGINES and "/" not in model:
+        raise ConfigError(
+            f"{where}.model: {model!r} must be 'provider/model' (e.g. github-copilot/gpt-6-sol)"
+        )
+    if model.strip().lower() in MODEL_ALIASES or (
+        engine in ROUTED_ENGINES and model.strip().partition("/")[2].strip().lower() in MODEL_ALIASES
+    ):
         raise ConfigError(
             f"{where}.model: {model!r} is an alias; write the exact model id (e.g. claude-opus-5-5)"
+        )
+    if lab_of(engine, model.strip()) is None:
+        raise ConfigError(
+            f"{where}.model: vigia cannot tell which lab trains {model!r}; "
+            "write 'provider/model' with a model name from a known family"
         )
     if effort is not None and effort not in EFFORTS[engine]:
         raise ConfigError(f"{where}.effort: {effort!r} is not valid for {engine} ({sorted(EFFORTS[engine])})")
@@ -347,13 +361,20 @@ def parse(data: dict, path: Path | None = None) -> Config:
 
     engine_args = default_engine_args()
     for engine, roles in (data.get("engines") or {}).items():
-        if engine not in FAMILIES:
+        if engine not in ENGINES:
             raise ConfigError(f"engines.{engine}: unknown engine")
         for role, args in (roles or {}).items():
             if role not in ("builder", "reviewer"):
                 raise ConfigError(f"engines.{engine}.{role}: expected 'builder' or 'reviewer'")
             if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
                 raise ConfigError(f"engines.{engine}.{role}: expected a list of CLI arguments")
+            if engine == "opencode" and args:
+                # fail closed: `--command`, `--session`, `--attach`, `--agent`, `--auto`... each undoes part of the
+                # reviewer's read-only rule or the seat's model, and an allowlist of safe ones does not exist yet
+                raise ConfigError(
+                    f"engines.opencode.{role}: OpenCode {role} sessions take no extra arguments in this version "
+                    f"(got {args!r}); remove the list"
+                )
             engine_args[engine][role] = tuple(args)
 
     return Config(

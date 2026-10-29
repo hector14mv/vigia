@@ -5,13 +5,14 @@ inside tmp_path.
 """
 
 import json
+import os
 from dataclasses import replace
 
 import pytest
 
-from fakes import APPROVE, CHANGES, Clock, FakeGitHub, engine, make_repo
+from fakes import APPROVE, CHANGES, OPENCODE_EMPTY_CONFIG, Clock, FakeGitHub, FakeOpencode, engine, make_repo
 from vigia import comments
-from vigia.config import Config, default_tiers
+from vigia.config import Config, Seat, default_tiers
 from vigia.context import Ctx
 from vigia.engines import Engines
 from vigia.git import Git
@@ -876,3 +877,27 @@ def test_a_long_title_gives_a_branch_that_ends_on_a_word(world):
     tick(ctx)
     pr = next(iter(gh.prs_))
     assert gh.prs_[pr]["branch"] == f"vigia/{n}-feat-every-textkit-function-imports"
+
+
+def test_an_opencode_gate_reviews_a_claude_build_and_the_pr_merges(world, tmp_path, monkeypatch):
+    fake = FakeOpencode(tmp_path / "bin", OPENCODE_EMPTY_CONFIG)
+    monkeypatch.setenv("PATH", f"{fake.dir}{os.pathsep}{os.environ['PATH']}")  # for `opencode debug config`
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # no ~/.opencode: the session starts
+    for var in ("XDG_CONFIG_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT"):
+        monkeypatch.delenv(var, raising=False)  # no user config routes the provider: the session starts
+    gh, build = world
+    tiers = dict(default_tiers("claude"))
+    tiers["T0"] = replace(tiers["T0"], gate=Seat("opencode", "github-copilot/gpt-6-sol"))
+    cfg = Config(repo=gh.repo, base="main", tiers=tiers, test_command="true")
+    ctx, run = build([APPROVE], cfg=cfg)
+    gh.add_issue("Add a helper", TICKET, ["vigia:ready", "tier:T0"])
+    tick(ctx)
+    pr = next(iter(gh.prs_))
+    assert decisions(tick(ctx)) == [(pr, "gate")]
+    assert run.calls[-1]["engine"] == "opencode" and run.calls[-1]["role"] == "reviewer"
+    assert (
+        "Reviewer: opencode · github-copilot/gpt-6-sol · lab openai (built by lab anthropic)"
+        in gh.bodies(pr)[-1]
+    )
+    assert decisions(tick(ctx)) == [(pr, "merge")]
+    assert gh.merged and gh.merged[0][0] == pr
