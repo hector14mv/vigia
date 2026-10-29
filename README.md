@@ -192,6 +192,11 @@ A P1 starts one **fix round**: a new builder session from the same lab, with onl
 The gate then reviews the new head. There are at most two gate rounds per PR; after that the PR is parked for a
 person.
 
+**Gate evals** (`vigia eval gate`) replay a fixed set of past PRs, each with a known defect or known to be clean,
+through the tier's gate and report how many defects it caught and how many clean changes it blocked, so a gate
+model or prompt change can be compared before it touches real PRs. It never touches GitHub or the ledger; the case
+format is in [`evals/gate/README.md`](evals/gate/README.md).
+
 **T1 and T2** add a second reviewer on the same exact head, by default from the builder's lab: when Claude builds,
 Claude Opus 5.5 on T1 and Claude Fable 5.1 on T2; when Codex builds, GPT-6.1 Sol (the builder's own model, in a
 fresh read-only session) on T1 and GPT-6 Astra on T2. **T2** also waits for a person to add `vigia:human-ok` on that head. The label counts only if
@@ -348,6 +353,7 @@ folder to see every repository.
 | `vigia mesa [--host H] [--port P] [--allow-host NAME]` | the read-only status page in a browser (default http://127.0.0.1:8790) |
 | `vigia plan "<goal>" [--max N] [--dry-run]` | turn a goal into proposed tickets for you to ratify |
 | `vigia report [--days N] [--json]` | the engine table: per builder and reviewer model, PRs, first-round P1s, gate rounds and minutes to merge |
+| `vigia eval gate [DIR] [--runs N] [--case NAME] [--engine E --model M [--effort L]]` | replay past PRs from `evals/gate/` through the tier's gate and score it: caught defects, false alarms, unavailable runs; the full result goes to `.vigia/evals/gate-<time>.json`; exit code 1 if a case was refused or a run was unavailable |
 | `vigia workspace [--slots N] [--force]` | write `vigia.workspace.toml` for the clones below this folder |
 | `vigia review --pr N [--kind gate\|review]` | run the gate or the tier reviewer on a PR's head now |
 | `vigia fix --pr N [--stage gate\|review\|ci]` | run one fix round now |
