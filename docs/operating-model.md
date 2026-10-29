@@ -18,15 +18,16 @@ Every ticket carries one **tier**, and the tier decides how much review the chan
 | Tier | What it touches | Review stack before the merge |
 |---|---|---|
 | **T0** | cosmetic changes, docs, tests, internal tooling | CI green → one cross-lab gate |
-| **T1** | product logic with no money and no other people's data | CI green → cross-lab gate → a second reviewer |
+| **T1** | product logic with no money and no other people's data | CI green → cross-lab gate → a second reviewer (the default; `vigia.toml` may leave it out) |
 | **T2** | money, auth, personal data, migrations, messages to customers, credentials, the process itself | CI green → cross-lab gate → a second reviewer → a human label on the exact head |
 
 When a change fits two tiers, the higher one wins. A ticket that turns out to touch a T2 surface is
 re-tiered upward as soon as that is known, never downward mid-flight. The model that wrote the
 change does not lower the bar, and a strong model does not buy a lighter review.
 
-*Where:* `[tiers.T0|T1|T2]` in `vigia.toml`; `rules.decide()` steps 4–6. T2 cannot drop the human
-(`config.parse` refuses it).
+*Where:* `[tiers.T0|T1|T2]` in `vigia.toml`; `rules.decide()` steps 4–6. The T1 second reviewer is the
+default and `vigia.toml` may leave it out: a T1 PR then merges on green CI plus the gate on the exact head. T2
+can drop neither its second reviewer nor the human (`config.parse` refuses both).
 
 ## 2. The ticket says what, not how
 
@@ -124,8 +125,8 @@ the watcher before the session starts, so no two sessions ever work on the same 
    builds next stays a person's call. Work only a person can do becomes a `vigia:human-task` issue.
 2. **Build.** `vigia watch` takes the oldest ready ticket into a free slot: a builder session in its own
    worktree, then vigia commits, pushes, opens the PR and posts the handoff.
-3. **Check.** CI on the head; then the cross-lab gate; a P1 starts a fresh fix round; on T1/T2 the stronger
-   reviewer; on T2, a person's label on the exact head.
+3. **Check.** CI on the head; then the cross-lab gate; a P1 starts a fresh fix round; on T1 (unless
+   `vigia.toml` leaves it out) and T2 the stronger reviewer; on T2, a person's label on the exact head.
 4. **Merge or park.** The decision table merges with `--match-head-commit`, or parks with the reason written
    on the PR. Nothing loops past a cap.
 5. **See it.** `vigia mesa` shows what needs a person, every PR's path and the last events, on a laptop or a

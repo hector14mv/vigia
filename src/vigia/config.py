@@ -98,7 +98,8 @@ class Seat:
 
 @dataclass(frozen=True)
 class TierPolicy:
-    """T0: builder + cross-lab gate. T1: + a stronger reviewer. T2: + a human label on the exact head."""
+    """T0: builder + cross-lab gate. T1: + a stronger reviewer by default, which vigia.toml may leave out.
+    T2: + a stronger reviewer, always, and a human label on the exact head."""
 
     builder: Seat
     gate: Seat
@@ -293,7 +294,7 @@ def parse(data: dict, path: Path | None = None) -> Config:
             raise ConfigError(f"tiers.{tier}: unknown keys {sorted(unknown)}")
         builder = _seat(t.get("builder"), f"tiers.{tier}.builder")
         gate = _seat(t.get("gate"), f"tiers.{tier}.gate")
-        reviewer = _seat(t.get("reviewer"), f"tiers.{tier}.reviewer", required=tier != "T0")
+        reviewer = _seat(t.get("reviewer"), f"tiers.{tier}.reviewer", required=tier == "T2")
         assert builder and gate
         if gate.family == builder.family:
             raise ConfigError(
@@ -428,7 +429,7 @@ def render(cfg: Config) -> str:
         "",
         "# One table per damage tier. The gate must come from the other lab, not the builder's.",
         "# T0: cosmetic, docs, tests, internal tooling — builder + gate.",
-        "# T1: product logic with no money and no other people's data — + a stronger reviewer.",
+        "# T1: product logic with no money and no other people's data — + a stronger reviewer (the default; may be left out).",
         "# T2: money, auth, personal data, migrations, messages to customers, credentials — + a human label.",
     ]
     for tier in TIERS:

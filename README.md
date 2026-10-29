@@ -29,7 +29,7 @@ Idle time is compressed; nothing else is edited.*
 2. **The gate is always from the other lab.** A model from the other lab (the other company's model) reviews
    every change on the exact commit, in a read-only checkout: Codex gates Claude's work, and Claude gates
    Codex's work when a tier's builder is Codex (`vigia init --builder codex`). T1 and T2 add a second reviewer
-   after the gate, and T2 waits for a person's label. No verdict means no merge.
+   after the gate (T1 may leave it out in `vigia.toml`, T2 never), and T2 waits for a person's label. No verdict means no merge.
 3. **The merge is a decision table, not a judgement.** `rules.decide()` is a pure function (no model, no I/O)
    over CI status, verdicts and labels on the exact head, tested row by row in `tests/test_rules.py`. vigia
    merges only when it says so, with `gh pr merge --match-head-commit`.
@@ -197,7 +197,8 @@ through the tier's gate and report how many defects it caught and how many clean
 model or prompt change can be compared before it touches real PRs. It never touches GitHub or the ledger; the case
 format is in [`evals/gate/README.md`](evals/gate/README.md).
 
-**T1 and T2** add a second reviewer on the same exact head, by default from the builder's lab: when Claude builds,
+**T1 and T2** add a second reviewer on the same exact head (`vigia.toml` may leave it out on T1, never on T2), by
+default from the builder's lab: when Claude builds,
 Claude Opus 5.5 on T1 and Claude Fable 5.1 on T2; when Codex builds, GPT-6.1 Sol (the builder's own model, in a
 fresh read-only session) on T1 and GPT-6 Astra on T2. **T2** also waits for a person to add `vigia:human-ok` on that head. The label counts only if
 GitHub recorded it after vigia first saw the head, so an approval never carries over to a later push (vigia also

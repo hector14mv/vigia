@@ -1,4 +1,5 @@
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -69,11 +70,43 @@ def test_t2_cannot_drop_the_human():
         parse(doc)
 
 
-def test_t1_needs_a_reviewer():
+def test_t1_may_leave_out_the_reviewer():
     doc = base_doc()
     del doc["tiers"]["T1"]["reviewer"]
-    with pytest.raises(ConfigError, match="T1.reviewer"):
+    cfg = parse(doc)
+    assert cfg.tiers["T1"].reviewer is None
+    assert cfg.tiers["T1"].gate == default_tiers("claude")["T1"].gate  # the gate stays
+    assert parse(tomllib.loads(render(cfg))).tiers == cfg.tiers  # and renders back without a reviewer
+
+
+def test_t1_with_a_reviewer_parses_as_before():
+    cfg = parse(base_doc())
+    assert cfg.tiers == default_tiers("claude")
+    assert cfg.tiers["T1"].reviewer == Seat("claude", "claude-opus-5-5", "high")
+
+
+def test_t2_needs_a_reviewer():
+    doc = base_doc()
+    del doc["tiers"]["T2"]["reviewer"]
+    with pytest.raises(ConfigError, match=r"tiers\.T2\.reviewer: missing"):
         parse(doc)
+
+
+def test_this_repo_trials_t1_without_a_second_reviewer():
+    path = Path(__file__).resolve().parents[1] / "vigia.toml"
+    cfg = load(path)
+    assert cfg.tiers["T1"].reviewer is None and cfg.tiers["T1"].gate.family != cfg.tiers["T1"].builder.family
+    assert cfg.tiers["T2"].reviewer is not None and cfg.tiers["T2"].human
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[lines.index("[tiers.T1]") - 1].startswith(
+        "# Trial until 2026-11-12: no second reviewer on T1."
+    )
+
+
+def test_rendered_t1_comment_says_the_reviewer_may_be_left_out():
+    text = render(Config(repo="acme/app", base="main", tiers=default_tiers("claude")))
+    line = next(x for x in text.splitlines() if x.startswith("# T1:"))
+    assert "may be left out" in line
 
 
 def test_missing_tier_and_bad_repo():
