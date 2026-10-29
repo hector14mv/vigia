@@ -306,7 +306,13 @@ def run_once(ctx: Ctx, case: Case, seat: Seat, run: int) -> RunResult:
         if wt is not None:
             ctx.git.remove_worktree(wt)
     result.seconds = outcome.seconds
-    parsed = parse_verdict(outcome.text) if outcome.code == 0 and not outcome.timed_out else None
+    parsed = None
+    if outcome.code == 0 and not outcome.timed_out:
+        try:
+            parsed = parse_verdict(outcome.text)
+        except Exception as exc:  # a malformed verdict is an unavailable run, never an aborted eval
+            result.failure = f"unparsable verdict ({type(exc).__name__}: {exc})"
+            return result
     if parsed is None:
         result.failure = (
             "timed out"

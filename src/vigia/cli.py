@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import errno
+import itertools
 import json
+import os
 import signal
 import sys
 from contextlib import contextmanager
@@ -335,6 +337,20 @@ def _positive(value: str) -> int:
     return number
 
 
+def _write_eval_result(directory: Path, text: str) -> Path:
+    """Write `text` to a result file no other evaluation has: timestamp and pid, exclusive create, counter on clash."""
+    directory.mkdir(parents=True, exist_ok=True)
+    stem = f"gate-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}"
+    for n in itertools.count():
+        out = directory / f"{stem}{f'-{n}' if n else ''}.json"
+        try:
+            with out.open("x", encoding="utf-8") as fh:
+                fh.write(text)
+        except FileExistsError:
+            continue
+        return out
+
+
 def cmd_eval_gate(args: argparse.Namespace) -> int:
     ctx = Ctx.load(Path.cwd())
     override = None
@@ -355,9 +371,9 @@ def cmd_eval_gate(args: argparse.Namespace) -> int:
     print(f"{len(report.jobs)} case(s) x {args.runs} run(s) = {sessions} engine session(s)")
     evals.execute(ctx, report)
     print("\n".join(report.summary()))
-    out = ctx.state / "evals" / f"gate-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report.to_json(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    out = _write_eval_result(
+        ctx.state / "evals", json.dumps(report.to_json(), indent=2, ensure_ascii=False) + "\n"
+    )
     print(f"result: {out}")
     return 1 if report.failed else 0
 

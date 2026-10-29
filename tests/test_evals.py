@@ -359,6 +359,37 @@ def test_a_timeout_or_failed_exit_is_unavailable_never_a_pass(lab):
     assert result_file(clone)["cases"][0]["runs"][0]["outcome"] == "unavailable"
 
 
+def test_a_malformed_verdict_is_unavailable_and_the_eval_goes_on(lab):
+    gh, start, cases, base, head, clone = lab
+    write_case(cases, "a", base, head)
+    write_case(cases, "b", base, head)
+    ctx, run = start([{"verdict": "APPROVE", "findings": 42}, p1()])
+    assert eval_cli(cases, "--runs", "1") == 1
+    assert len(run.calls) == 2  # the second session still ran
+    first, second = (c["runs"][0] for c in result_file(clone)["cases"])
+    assert first["outcome"] == "unavailable" and "unparsable verdict" in first["failure"]
+    assert second["outcome"] == "caught"
+    assert not [p for p in ctx.root.iterdir() if p.name.startswith("eval-")]
+
+
+def test_two_evaluations_in_the_same_second_keep_both_result_files(lab, monkeypatch):
+    gh, start, cases, base, head, clone = lab
+    write_case(cases, "c", base, head)
+
+    class Frozen(cli.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 29, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(cli, "datetime", Frozen)
+    start([p1(), APPROVE])
+    assert eval_cli(cases, "--runs", "1") == 0
+    assert eval_cli(cases, "--runs", "1") == 0
+    first, second = sorted((clone / ".vigia" / "evals").glob("gate-*.json"))
+    outcomes = {json.loads(f.read_text())["cases"][0]["runs"][0]["outcome"] for f in (first, second)}
+    assert outcomes == {"caught", "missed"}
+
+
 def test_score_reads_only_p1_on_exact_paths():
     case = evals.Case("c", 1, "a" * 40, "b" * 40, "T1", Seat("claude", "m"), "p1", ("src/a.py",), "", "", "")
     parsed = {"findings": [{"severity": "P2", "file": "src/a.py"}]}
