@@ -1,0 +1,8 @@
+pr = 63
+head = "3effd12f7a58b461b4749e6d94a06f82ac678ff8"
+base = "4ecd967ae7b16743bff920733e37ebabbbad43f0"
+tier = "T1"
+builder = { engine = "claude", model = "claude-opus-5-5" }
+expect = "p1"
+files = ["src/vigia/mesa.py", "src/vigia/mesa.html"]
+why = "Two defects, both fixed in 651685b3: the backoff computed 2 ** fails before the cap (a float overflow after many failures in a row), and a partial GitHub failure did not show the last good read."

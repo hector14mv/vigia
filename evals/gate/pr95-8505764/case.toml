@@ -1,0 +1,8 @@
+pr = 95
+head = "85057643a6581a40de0e1b3cb2c021a7310553fa"
+base = "86d2ffa6c024e64239eebf5d1d4a0f2db63183fb"
+tier = "T2"
+builder = { engine = "claude", model = "claude-opus-5-5" }
+expect = "p1"
+files = ["src/vigia/engines.py"]
+why = "Codex sessions ran with --ignore-user-config, which drops cli_auth_credentials_store and breaks keyring logins; fixed in d30e899a."

@@ -1,0 +1,7 @@
+pr = 113
+head = "7fb02c83f942670f709804f2b0d6cdb06f7f5e02"
+base = "e746d56fa3b4460b16893906dec3335f427f04f8"
+tier = "T2"
+builder = { engine = "claude", model = "claude-opus-5-5" }
+expect = "clean"
+why = "Merged after gate, reviewer and human approval; no later fix touched it up to 2026-10-29."

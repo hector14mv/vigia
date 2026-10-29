@@ -1,0 +1,8 @@
+pr = 17
+head = "3615fd135c96b0115d8f66f4e3cd19c5975f8e6e"
+base = "6d34df901d0ba35b5fdb5828d886ffcd1990fd95"
+tier = "T1"
+builder = { engine = "claude", model = "claude-sonnet-5-5" }
+expect = "p1"
+files = ["src/vigia/gh.py"]
+why = "prs() kept PRs that were closed or had lost the label between the listing and the fresh view; fixed in c548f5de."

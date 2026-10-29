@@ -1,0 +1,8 @@
+pr = 34
+head = "d920b3200255d4e94591f9e8861877a26c2f4d5c"
+base = "31d902f601ea463ba5cec327b9412ccb458f3abd"
+tier = "T1"
+builder = { engine = "claude", model = "claude-sonnet-5-5" }
+expect = "p1"
+files = ["src/vigia/tickets.py"]
+why = "Fence delimiters were not recognised in CRLF ticket bodies, so headings inside a fence counted; fixed in 2e8aa097."

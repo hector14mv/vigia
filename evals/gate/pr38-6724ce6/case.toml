@@ -1,0 +1,8 @@
+pr = 38
+head = "6724ce6188304462214b7302bdf9002a540c169e"
+base = "fc2f8b5137212c5883b6cdbe8c5cd6fbc57cd816"
+tier = "T2"
+builder = { engine = "claude", model = "claude-opus-5-5" }
+expect = "p1"
+files = ["src/vigia/engines.py"]
+why = "An empty GH_CONFIG_DIR does not log gh out: gh falls back to the OS keyring token. The gate approved this head; the T2 reviewer found it; fixed in 230a4dad."

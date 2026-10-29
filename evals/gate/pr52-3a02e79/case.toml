@@ -1,0 +1,7 @@
+pr = 52
+head = "3a02e79cc4e7bd39551e4904be2a902d1ceea064"
+base = "722a89feb0bac1e00d18e7f1e72ff871a90d508d"
+tier = "T1"
+builder = { engine = "claude", model = "claude-sonnet-5-5" }
+expect = "clean"
+why = "Merged after gate and reviewer approval; no later fix touched it up to 2026-10-29."
