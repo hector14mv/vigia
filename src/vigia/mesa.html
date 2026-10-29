@@ -1211,8 +1211,8 @@ a.ev { min-height: 44px; }
   }
 
   /* ---------- Factory: who does what (read-only; the assignment lives in vigia.toml) ---------- */
-  function seatCell(seat) {
-    if (!seat) return h("td", null, h("span", { "class": "c-3" }, "none"));
+  function seatCell(seat, empty) {
+    if (!seat) return h("td", null, h("span", { "class": "c-3" }, empty || "none"));
     return h("td", null, h("div", { "class": "seat" },
       h("div", { "class": "id" }, seat.engine + " · " + seat.model),
       seat.effort ? h("div", { "class": "sub" }, "effort " + seat.effort) : null,
@@ -1228,7 +1228,9 @@ a.ev { min-height: 44px; }
       : h("div", { "class": "who-wrap" }, h("table", { "class": "who-table" },
           h("thead", null, h("tr", null, ["Tier", "Builder", "Gate", "Reviewer", "Human label"].map(function (c) { return h("th", { scope: "col" }, c); }))),
           h("tbody", null, tiers.map(function (t) {
-            return h("tr", null, h("th", { scope: "row" }, tierChip(t.tier)), seatCell(t.builder), seatCell(t.gate), seatCell(t.reviewer),
+            return h("tr", null, h("th", { scope: "row" }, tierChip(t.tier)), seatCell(t.builder), seatCell(t.gate),
+              // T0 never has a second reviewer; T1 may leave it out in vigia.toml, and then says so
+              seatCell(t.reviewer, t.tier === "T0" ? "none" : "no second reviewer"),
               h("td", null, t.human ? "required" : "no"));
           }))));
     return h("section", { "class": "who", "aria-label": "Who does what in " + short(r.repo), "data-k": "who-" + r.repo },

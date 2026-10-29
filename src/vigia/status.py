@@ -1,4 +1,5 @@
-"""`vigia status`: the queue, the open PRs with their next step, what is parked and why, recent events."""
+"""`vigia status`: the queue, the open PRs with their next step, what is parked and why, recent events, and
+(in the text view) who builds, gates and reviews each tier."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ from html import escape
 from pathlib import Path
 
 from . import tickets
+from .config import Config
 from .context import Ctx
 from .watch import sense
 
@@ -94,9 +96,28 @@ def render(data: dict) -> str:
     return "\n".join(out)
 
 
+NO_REVIEWER = "no second reviewer"
+
+
+def render_tiers(cfg: Config) -> str:
+    """Who builds, gates and reviews each tier, from the loaded vigia.toml. T1 may leave its reviewer out."""
+    out = ["Tiers (vigia.toml)"]
+    for tier, p in cfg.tiers.items():
+        out += [
+            f"  {tier}  builder   {p.builder.label()}",
+            f"      gate      {p.gate.label()}",
+            f"      reviewer  {p.reviewer.label() if p.reviewer else NO_REVIEWER}",
+        ]
+        if p.human:
+            out.append("      human     label required on the exact head")
+    return "\n".join(out)
+
+
 def show(ctx: Ctx, as_json: bool = False) -> str:
     data = collect(ctx)
-    return json.dumps(data, indent=2, default=str) if as_json else render(data)
+    if as_json:
+        return json.dumps(data, indent=2, default=str)
+    return render(data) + "\n\n" + render_tiers(ctx.cfg)
 
 
 _CSS = """

@@ -151,6 +151,23 @@ def test_t1_review_changes_asks_for_a_fix():
     assert (d.action, d.stage) == ("fix", "review")
 
 
+# A vigia.toml may leave out T1's reviewer: the PR then merges on green CI plus the gate on the exact head.
+NO_T1_REVIEWER = replace(CFG, tiers={**CFG.tiers, "T1": replace(CFG.tiers["T1"], reviewer=None)})
+
+
+def test_t1_with_no_reviewer_merges_on_green_ci_and_gate_approve_of_exact_head():
+    d = decide(pr(tier="T1", verdicts=(gate(),)), NO_T1_REVIEWER)
+    assert (d.action, d.sha) == ("merge", H1)
+    assert act(pr(tier="T1", verdicts=(gate(),)), CFG)[0] == "review"  # with a reviewer, the same PR waits
+
+
+def test_t1_with_no_reviewer_still_needs_green_ci_and_the_gate_on_this_head():
+    assert act(pr(tier="T1", ci="pending", verdicts=(gate(),)), NO_T1_REVIEWER)[0] == "wait"
+    assert act(pr(tier="T1"), NO_T1_REVIEWER)[0] == "gate"
+    assert act(pr(tier="T1", head=H2, verdicts=(gate(sha=H1),)), NO_T1_REVIEWER)[0] == "gate"
+    assert act(pr(tier="T1", verdicts=(gate(verdict="CHANGES", p1=1),)), NO_T1_REVIEWER)[0] == "fix"
+
+
 def test_reasons_read_as_plain_english():
     assert decide(pr(), CFG).reason == "round 1 on this head"
     assert decide(pr(tier="T1", verdicts=(gate(),)), CFG).reason == "T1 round 1 on this head"

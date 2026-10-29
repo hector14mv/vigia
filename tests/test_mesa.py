@@ -1797,6 +1797,25 @@ def test_the_factory_shows_who_does_what_on_both_layouts(world, tmp_path):  # no
             assert "lab anthropic" in cells[1] and "lab openai" in cells[2]
 
 
+def test_a_t1_with_no_reviewer_shows_no_second_reviewer(world, tmp_path):  # noqa: F811
+    gh, build = world
+    ctx, _ = build([])
+    tiers = {**ctx.cfg.tiers, "T1": replace(ctx.cfg.tiers["T1"], reviewer=None)}
+    ctx, _ = build([], cfg=replace(ctx.cfg, tiers=tiers))
+    s = mesa.state([ctx])
+    t1 = s["repos"][0]["tiers"][1]
+    assert t1["tier"] == "T1" and t1["reviewer"] is None and t1["gate"]["lab"] == "openai"
+    shown = _render(tmp_path, s, routes=("factory",))
+    for view in _views(shown, "factory"):
+        rows = view["html"].split("<tbody>")[1].split("</tbody>")[0].split("<tr>")[1:]
+        assert len(rows) == 3
+        t0_reviewer, t1_reviewer, t2_reviewer = (row.split("<td>")[3] for row in rows)
+        assert "no second reviewer" in t1_reviewer and "claude" not in t1_reviewer
+        assert "none" in t0_reviewer and "no second reviewer" not in t0_reviewer
+        assert "claude-fable-5-1" in t2_reviewer
+        assert "could not be read" not in view["text"]
+
+
 def test_a_repo_without_a_readable_assignment_shows_an_error_not_an_empty_table(world, tmp_path):  # noqa: F811
     gh, build = world
     ctx, _ = build([])

@@ -1,5 +1,6 @@
 import json
 import re
+from dataclasses import replace
 
 import pytest
 
@@ -163,6 +164,38 @@ def test_cli_json_prints_the_same_keys(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli.Ctx, "load", classmethod(lambda cls, root: ctx))
     assert cli.main(["status", "--json"]) == 0
     assert set(json.loads(capsys.readouterr().out)) == {
+        "repo",
+        "base",
+        "queue",
+        "building",
+        "parked_issues",
+        "prs",
+        "recent",
+        "merged",
+    }
+
+
+def test_text_shows_who_builds_gates_and_reviews_each_tier(tmp_path):
+    ctx, _ = fake_ctx(tmp_path)
+    text = status.show(ctx)
+    tiers = text.split("Tiers (vigia.toml)\n")[1]
+    t0, rest = tiers.split("\n  T1  ")
+    t1, t2 = rest.split("\n  T2  ")
+    assert "builder   claude · claude-sonnet-5-5 · effort high" in t1
+    assert "gate      codex · gpt-6.1-sol · effort medium" in t1
+    assert "reviewer  claude · claude-opus-5-5 · effort high" in t1
+    assert "reviewer  no second reviewer" in t0
+    assert "reviewer  claude · claude-fable-5-1 · effort high" in t2 and "human" in t2 and "human" not in t1
+
+
+def test_text_shows_a_t1_with_no_reviewer_as_no_second_reviewer(tmp_path):
+    ctx, _ = fake_ctx(tmp_path)
+    tiers = {**ctx.cfg.tiers, "T1": replace(ctx.cfg.tiers["T1"], reviewer=None)}
+    ctx = replace(ctx, cfg=replace(ctx.cfg, tiers=tiers))
+    t1 = status.show(ctx).split("\n  T1  ")[1].split("\n  T2  ")[0]
+    assert "reviewer  no second reviewer" in t1 and "claude-opus-5-5" not in t1
+    assert "gate      codex · gpt-6.1-sol · effort medium" in t1
+    assert set(json.loads(status.show(ctx, as_json=True))) == {
         "repo",
         "base",
         "queue",

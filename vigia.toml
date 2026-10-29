@@ -14,10 +14,10 @@ base = "main"
 builder = { engine = "claude", model = "claude-sonnet-5-5", effort = "medium" }
 gate = { engine = "codex", model = "gpt-6.1-sol", effort = "medium" }
 
+# Trial until 2026-11-12: no second reviewer on T1. Baseline (vigia eval gate, 2026-10-29): gate caught 11/12, 0/8 false alarms; the T1 reviewer blocked 0 of 20 gate-approved heads. Put the reviewer back if a T1 defect escapes.
 [tiers.T1]
 builder = { engine = "claude", model = "claude-sonnet-5-5", effort = "high" }
 gate = { engine = "codex", model = "gpt-6.1-sol", effort = "medium" }
-reviewer = { engine = "claude", model = "claude-opus-5-5", effort = "high" }
 
 [tiers.T2]
 builder = { engine = "claude", model = "claude-opus-5-5", effort = "high" }
